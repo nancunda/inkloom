@@ -10,6 +10,7 @@ import {
 } from '../../api/src/services/element-service.js'
 import { type ExportFormat, exportBook } from '../../api/src/services/export-service.js'
 import { generateChapter } from '../../api/src/services/generate-service.js'
+import { importChapters } from '../../api/src/services/import-service.js'
 import { softDeleteElement } from '../../api/src/services/invariant-service.js'
 import {
   createCheckpoint,
@@ -66,6 +67,24 @@ export async function create({ positional, flags }: CommandCtx): Promise<void> {
   await db.$disconnect()
   console.log(`✓ 建书完成：${created.project.name}（${dir}）`)
   console.log(`  folderId = ${created.folderId}`)
+}
+
+/** inkloom import <dir> --from <file> [--name …] [--genre …] */
+export async function importCmd({ positional, flags }: CommandCtx): Promise<void> {
+  const dir = requirePositional(
+    positional,
+    0,
+    'inkloom import <dir> --from <file> [--name …] [--genre …]',
+  )
+  const r = await importChapters({
+    rootPath: dir,
+    sourcePath: requireFlag(flags, 'from'),
+    ...(flags['name'] === undefined ? {} : { name: flags['name'] }),
+    ...(flags['genre'] === undefined ? {} : { genre: flags['genre'] }),
+  })
+  console.log(`✓ 已导入 ${r.chapters} 章（${r.words} 字），从第 ${r.startChapterNo} 章开始`)
+  for (const w of r.warnings) console.warn(`  ⚠ ${w}`)
+  console.log('  下一步：inkloom scenes <dir> --chapter N 查看，或直接 write 续写')
 }
 
 /** inkloom reindex <dir> */

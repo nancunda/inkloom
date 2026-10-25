@@ -7,6 +7,8 @@ const USAGE = `inkloom <command> [options]
 
 建书与索引
   create <dir> --name <书名> --genre <题材> [--core-idea …] [--premise …] [--theme …] [--tone …]
+  import <dir> --from <file.txt|file.md> [--name …] [--genre …]
+                                               导入已有正文（已是书则追加，否则新建）
   reindex <dir>                                从文件重建索引（索引删了也能救回来）
 
 生成
@@ -59,6 +61,9 @@ async function main(): Promise<void> {
       break
     case 'reindex':
       await cmd.reindexCmd(ctx)
+      break
+    case 'import':
+      await cmd.importCmd(ctx)
       break
     case 'write':
       await cmd.write(ctx)

@@ -17,7 +17,8 @@ interface SessionState {
  *   两份真相会导致「操作后界面不更新」这种最难查的 bug。
  */
 export const useSessionStore = create<SessionState>((set) => ({
-  chapterNo: 4,
+  // 从第 1 章开始；书的第一章不是 1 时，WritingPage 会在拿到列表后校正
+  chapterNo: 1,
   selectedScene: null,
   view: 'write',
   setChapter: (n) => set({ chapterNo: n, selectedScene: null }),

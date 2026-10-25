@@ -1,8 +1,10 @@
 import { InkloomError } from '@inkloom/shared'
 import { Hono } from 'hono'
 import type { FetchLike } from '../llm/types.js'
+import { getContext } from '../services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
 import { generateChapter } from '../services/generate-service.js'
+import { importChapters } from '../services/import-service.js'
 import { rewriteSceneSeg } from '../services/rewrite-service.js'
 import { acceptScene, editSceneSeg, rejectScene } from '../services/scene-review-service.js'
 import {
@@ -42,6 +44,16 @@ function requireApiKey(deps: ActionDeps): string {
 
 export function createActions(deps: ActionDeps = {}): Hono {
   const actions = new Hono()
+
+  actions.post('/import', async (c) => {
+    const { root } = getContext()
+    const body = (await c.req.json().catch(() => ({}))) as { sourcePath?: string }
+    if (body.sourcePath === undefined || body.sourcePath.trim().length === 0) {
+      throw new InkloomError('INVALID_INPUT', '缺少 sourcePath（本机 txt/md 路径）')
+    }
+    // 单书模式：追加到当前这本书，章号接在现有最大章之后
+    return c.json(await importChapters({ rootPath: root, sourcePath: body.sourcePath }))
+  })
 
   actions.post('/chapters/:n/generate', async (c) => {
     const chapterNo = intParam(c.req.param('n'), 'chapterNo')

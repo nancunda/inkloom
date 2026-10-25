@@ -60,6 +60,15 @@ async function listBlueprints(): Promise<BlueprintLite[]> {
   return chapters.sort((a, b) => a.chapterNo - b.chapterNo)
 }
 
+interface BookChapterRow {
+  chapterNo: number
+  title: string | null
+  status: string
+  wordCount: number
+  summary: string | null
+  finalizedAt: string | null
+}
+
 read.get('/book', async (c) => {
   const { project, db } = getContext()
   const [chapters, bps, draftChapters] = await Promise.all([
@@ -85,20 +94,39 @@ read.get('/book', async (c) => {
 
   const drafted = new Set(draftChapters.map((r) => r.chapterNo))
 
-  // 以蓝图为准拼接 Chapter 状态
-  // ★ 没有 Chapter 行不代表没写：生成了候选稿就是 drafting，
+  // ★ 章节集合 = Chapter 行 ∪ 蓝图，而不是「以蓝图为准」。
+  //   导入的正文只有 ch-NNN.md 与 Chapter 行，没有蓝图；只认同蓝图的话，
+  //   界面会把刚导入的三章说成「0 章」——文件是唯一真相，这里不能例外。
+  // ★ 没有 Chapter 行也不代表没写：生成了候选稿就是 drafting，
   //   否则界面会把「有 5 张待审场景卡」的章说成「计划中」。
-  const merged = bps.map((b) => {
-    const ch = chapters.find((x) => x.chapterNo === b.chapterNo)
-    return {
-      chapterNo: b.chapterNo,
-      title: b.title ?? ch?.title ?? null,
-      status: ch?.status ?? (drafted.has(b.chapterNo) ? 'drafting' : 'planned'),
-      wordCount: ch?.wordCount ?? 0,
-      summary: ch?.summary ?? null,
-      finalizedAt: ch?.finalizedAt?.toISOString() ?? null,
+  const byNo = new Map<number, BookChapterRow>()
+  for (const ch of chapters) {
+    byNo.set(ch.chapterNo, {
+      chapterNo: ch.chapterNo,
+      title: ch.title,
+      status: ch.status,
+      wordCount: ch.wordCount,
+      summary: ch.summary,
+      finalizedAt: ch.finalizedAt?.toISOString() ?? null,
+    })
+  }
+  for (const b of bps) {
+    const existing = byNo.get(b.chapterNo)
+    if (existing === undefined) {
+      byNo.set(b.chapterNo, {
+        chapterNo: b.chapterNo,
+        title: b.title,
+        status: drafted.has(b.chapterNo) ? 'drafting' : 'planned',
+        wordCount: 0,
+        summary: null,
+        finalizedAt: null,
+      })
+    } else if (existing.title === null && b.title !== null) {
+      // 正文没写标题时用蓝图标题补上（不覆盖正文里的标题）
+      existing.title = b.title
     }
-  })
+  }
+  const merged = [...byNo.values()].sort((a, b) => a.chapterNo - b.chapterNo)
 
   return c.json({ ...project, chapters: merged })
 })

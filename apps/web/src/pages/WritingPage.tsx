@@ -1,6 +1,7 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import {
   useAcceptScene,
+  useBook,
   useChapter,
   useDiff,
   useRejectScene,
@@ -70,10 +71,23 @@ function WriteView() {
   const chapterNo = useSessionStore((s) => s.chapterNo)
   const selectedScene = useSessionStore((s) => s.selectedScene)
   const selectScene = useSessionStore((s) => s.selectScene)
+  const setChapter = useSessionStore((s) => s.setChapter)
 
   const { data: chapter, isLoading } = useChapter(chapterNo)
   const accept = useAcceptScene()
   const reject = useRejectScene()
+
+  // ★ 当前章不存在时跳到第一章：默认章号是 1，而这本导入的书可能
+  //   从别的章号开始（或用户在看一本空书），不校正会停在空页面上。
+  const { data: book } = useBook()
+  useEffect(() => {
+    const list = book?.chapters ?? []
+    if (list.length === 0) return
+    if (!list.some((c) => c.chapterNo === chapterNo)) {
+      const first = list[0]
+      if (first !== undefined) setChapter(first.chapterNo)
+    }
+  }, [book, chapterNo, setChapter])
 
   const scenes = chapter?.scenes ?? []
   const grouped = groupByScene(scenes)
