@@ -216,12 +216,12 @@ describe('POST 接口', () => {
     }
   })
 
-  it('★ 有 candidate 时定稿 → 400（业务规则拒绝，不是 500）', async () => {
+  it('★ 有 candidate 时定稿 → 409（状态冲突，不是参数错误也不是 500）', async () => {
     const r = await appWithLlm().request('/api/chapters/4/finalize', {
       method: 'POST',
       body: JSON.stringify({}),
     })
-    expect(r.status).toBe(400)
+    expect(r.status).toBe(409)
     const j = (await r.json()) as { error: { message: string } }
     expect(j.error.message).toContain('candidate')
   })

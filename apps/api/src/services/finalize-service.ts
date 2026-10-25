@@ -49,7 +49,7 @@ export async function finalizeChapter(input: {
   })
   if (candidates > 0) {
     throw new InkloomError(
-      'INVALID_INPUT',
+      'CONFLICT',
       `第 ${input.chapterNo} 章还有 ${candidates} 个段处于 candidate（未确认），不能定稿`,
     )
   }
@@ -65,7 +65,7 @@ export async function finalizeChapter(input: {
     orderBy: [{ sceneNo: 'asc' }, { seq: 'asc' }],
   })
   if (accepted.length === 0) {
-    throw new InkloomError('INVALID_INPUT', `第 ${input.chapterNo} 章没有已接受的场景，不能定稿`)
+    throw new InkloomError('CONFLICT', `第 ${input.chapterNo} 章没有已接受的场景，不能定稿`)
   }
 
   // 每个场景取 accepted 的那一版（Ruling 36 保证同场景只有一个 accepted）
@@ -140,7 +140,7 @@ export async function unfinalizeChapter(input: { chapterNo: number }): Promise<v
   })
   if (ch === null || ch.status !== 'finalized') {
     throw new InkloomError(
-      'INVALID_INPUT',
+      'CONFLICT',
       `第 ${input.chapterNo} 章当前状态是 ${ch?.status ?? '不存在'}，只有 finalized 才能撤销`,
     )
   }

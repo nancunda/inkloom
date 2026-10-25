@@ -9,6 +9,7 @@ import { mergeChapter } from './chapters.js'
 import { writeJsonElement } from './elements.js'
 import { createProject } from './project.js'
 import { reindex } from './reindex.js'
+import { markAccepted, markRejected } from './review-state.js'
 import { appendRevision } from './revisions.js'
 import { writeSceneFile } from './scenes.js'
 
@@ -148,6 +149,50 @@ describe('reindex', () => {
     await reindex(root, db)
     const seg = await db.draftSegment.findFirst({ where: { chapterNo: 4, sceneNo: 1 } })
     expect(seg?.wordCount).toBeGreaterThan(0)
+  })
+
+  it('★ 已定稿章重建后 wordCount 不为 0（Ruling 48）', async () => {
+    await createProject({ rootPath: root, name: '七霞', genre: '玄幻' })
+    await mergeChapter(root, {
+      chapterNo: 4,
+      title: '第四章 剑冢',
+      scenes: [{ sceneNo: 1, text: '剑气贴着面颊削过去。' }],
+    })
+    await reindex(root, db)
+    const ch = await db.chapter.findFirst({ where: { chapterNo: 4 } })
+    expect(ch?.status).toBe('finalized')
+    expect(ch?.wordCount).toBeGreaterThan(0)
+    expect(ch?.finalizedAt).not.toBeNull()
+  })
+
+  it('★ review.json 决定重建后的场景状态（Ruling 47：重建不得把 accepted 变回 candidate）', async () => {
+    await createProject({ rootPath: root, name: '七霞', genre: '玄幻' })
+    for (const v of [1, 2]) {
+      await writeSceneFile(
+        root,
+        { sceneNo: 1, version: v, segments: [{ segId: 'aaaa', text: `第 ${v} 版。` }] },
+        4,
+      )
+    }
+    await writeSceneFile(
+      root,
+      { sceneNo: 2, version: 1, segments: [{ segId: 'bbbb', text: '另一场。' }] },
+      4,
+    )
+    // 场景 1 接受 v2、拒绝 v1；场景 2 未审阅
+    await markAccepted(root, 4, 1, 2)
+    await markRejected(root, 4, 1, 1)
+
+    await reindex(root, db)
+    // 直接查表：本测试文件不建 AppContext，listChapterScenes 需要在 context 下才能跑
+    const segs = await db.draftSegment.findMany({ where: { chapterNo: 4 } })
+    const statusOf = (sceneNo: number, fileSuffix: string): string | undefined =>
+      segs.find((s) => s.sceneNo === sceneNo && s.filePath.endsWith(fileSuffix))?.status
+    expect(statusOf(1, 's1.v2.md')).toBe('accepted')
+    expect(statusOf(1, 's1.v1.md')).toBe('rejected')
+    expect(statusOf(2, 's2.v1.md')).toBe('candidate')
+    const acceptedSeg = segs.find((s) => s.filePath.endsWith('s1.v2.md'))
+    expect(acceptedSeg?.acceptedAt).not.toBeNull()
   })
 
   it('幂等：连续 reindex 两次结果相同，不重复插入', async () => {

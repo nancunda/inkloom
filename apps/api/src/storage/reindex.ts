@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { countWords, parseChapterFile, parseSceneFile, type SceneFile } from '@inkloom/core'
 import { InkloomError } from '@inkloom/shared'
@@ -6,6 +6,7 @@ import type { IndexDb } from '../index-db/client.js'
 import { hashContent } from './atomic-write.js'
 import { readJsonArray, readJsonElement } from './elements.js'
 import { bookPaths } from './paths.js'
+import { emptyChapterReview, readChapterReview } from './review-state.js'
 import { parseRevisionRelPath, readAllRevisionFiles } from './revisions.js'
 
 export interface ReindexReport {
@@ -41,6 +42,15 @@ async function listDir(dir: string): Promise<string[]> {
   }
 }
 
+/** 文件 mtime；拿不到就退回当前时间（不能让整个重建因此失败） */
+async function statFile(path: string): Promise<Date> {
+  try {
+    return (await stat(path)).mtime
+  } catch {
+    return new Date()
+  }
+}
+
 /**
  * 从文件重建索引（P0-18）。
  *
@@ -56,6 +66,14 @@ async function listDir(dir: string): Promise<string[]> {
 export async function reindex(root: string, db: IndexDb): Promise<ReindexReport> {
   const paths = bookPaths(root)
   const warnings: string[] = []
+
+  // 0. 清空前先抓住「无法从文件内容推导」的元数据（Ruling 48）：
+  //    finalizedAt 是定稿发生的时刻，正文里没有它。虽然下面会用文件 mtime 兜底，
+  //    但 mtime 会被 checkout/拷文件改掉，索引里已有的值更可信。
+  const prevFinalizedAt = new Map<number, Date>()
+  for (const row of await db.chapter.findMany({ select: { chapterNo: true, finalizedAt: true } })) {
+    if (row.finalizedAt !== null) prevFinalizedAt.set(row.chapterNo, row.finalizedAt)
+  }
 
   // 1. 清空（顺序：先子后父，避免外键冲突）
   await db.draftSegment.deleteMany()
@@ -296,6 +314,12 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
     const raw = await readFile(join(paths.chapters, name), 'utf8')
     try {
       const parsed = parseChapterFile(raw)
+      // ❗字数必须从正文算：之前漏了这一行，重建后 Chapter.wordCount 全是 0，
+      //   界面上「已定稿 0 字」比不显示更糟（Ruling 48）。
+      //   注意 ChapterScene 只有 { sceneNo, text }（定稿正文不再带段标记）。
+      const wordCount = parsed.scenes.reduce((n, s) => n + countWords(s.text), 0)
+      // finalizedAt：索引已有值优先，否则用文件 mtime（唯一诚实信号）
+      const stat = await statFile(join(paths.chapters, name))
       await db.chapter.create({
         data: {
           id: `ch_${chapterNo}`,
@@ -303,7 +327,8 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
           chapterNo,
           title: parsed.title,
           status: 'finalized',
-          finalizedAt: new Date(),
+          wordCount,
+          finalizedAt: prevFinalizedAt.get(chapterNo) ?? stat,
           summaryStale: true,
         },
       })
@@ -318,10 +343,30 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
     const dirMatch = /^ch-(\d+)$/.exec(dirName)
     if (dirMatch?.[1] === undefined) continue
     const chapterNo = Number(dirMatch[1])
+    // ★ 审阅状态从 `chapters/ch-NNN/review.json` 读（Ruling 47）：
+    //   不接受“重建后全部变 candidate”——那会让已定稿的章显示成一堆待确认。
+    const review = await readChapterReview(root, chapterNo).catch((e: Error) => {
+      warnings.push(`ch-${String(chapterNo).padStart(3, '0')}/review.json 读取失败：${e.message}`)
+      return emptyChapterReview(chapterNo)
+    })
     for (const fileName of await listDir(join(paths.chapters, dirName, 'scenes'))) {
       const m = /^s(\d+)\.v(\d+)\.md$/.exec(fileName)
       if (m?.[1] === undefined || m[2] === undefined) continue
       const sceneNo = Number(m[1])
+      const version = Number(m[2])
+      const saved = review.scenes[String(sceneNo)]
+      const status =
+        saved === undefined
+          ? 'candidate'
+          : saved.acceptedVersion === version
+            ? 'accepted'
+            : saved.rejectedVersions.includes(version)
+              ? 'rejected'
+              : 'candidate'
+      const acceptedAt =
+        status === 'accepted' && saved?.acceptedAt !== null && saved?.acceptedAt !== undefined
+          ? new Date(saved.acceptedAt)
+          : null
       const rel = `chapters/${dirName}/scenes/${fileName}`
       const raw = await readFile(join(root, rel), 'utf8')
       let scene: SceneFile
@@ -349,7 +394,8 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
               contentHash: hashContent(seg.text),
               // ❗字数必须算：不然 `scenes` 显示 0 字，用户无法判断候选稿多长
               wordCount: countWords(seg.text),
-              status: 'candidate',
+              status,
+              acceptedAt,
             },
           })
           report.segments += 1

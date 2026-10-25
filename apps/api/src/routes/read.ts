@@ -20,21 +20,87 @@ function intParam(raw: string | undefined, name: string): number {
   return n
 }
 
+interface BlueprintLite {
+  chapterNo: number
+  title: string | null
+  goal: string
+  conflict: string
+  tensionLevel: number
+  beatType: string
+}
+
+/**
+ * 扫蓝图目录。
+ *
+ * ★ 章节列表必须以蓝图为准：Chapter 表只有定稿/审阅过的章才有行，
+ *   用它渲染左侧列表的话，还没生成的章会直接消失。
+ */
+async function listBlueprints(): Promise<BlueprintLite[]> {
+  const { root } = getContext()
+  const dir = join(bookPaths(root).story, 'blueprints')
+  const names = await readdir(dir).catch(() => [] as string[])
+
+  const chapters: BlueprintLite[] = []
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    const raw = await readJsonElement(root, `story/blueprints/${name}`)
+    if (raw === null) continue
+    const parsed = blueprintSchema.safeParse(raw)
+    if (!parsed.success) continue
+    const b = parsed.data
+    chapters.push({
+      chapterNo: b.chapterNo,
+      title: b.title ?? null,
+      goal: b.goal,
+      conflict: b.conflict,
+      tensionLevel: b.tensionLevel,
+      beatType: b.beatType,
+    })
+  }
+  return chapters.sort((a, b) => a.chapterNo - b.chapterNo)
+}
+
 read.get('/book', async (c) => {
   const { project, db } = getContext()
-  const chapters = await db.chapter.findMany({
-    where: { projectId: project.id },
-    orderBy: { chapterNo: 'asc' },
-    select: {
-      chapterNo: true,
-      title: true,
-      status: true,
-      wordCount: true,
-      summary: true,
-      finalizedAt: true,
-    },
+  const [chapters, bps, draftChapters] = await Promise.all([
+    db.chapter.findMany({
+      where: { projectId: project.id },
+      select: {
+        chapterNo: true,
+        title: true,
+        status: true,
+        wordCount: true,
+        summary: true,
+        finalizedAt: true,
+      },
+    }),
+    listBlueprints(),
+    // 哪些章已经有候选场景（没定稿就没有 Chapter 行，但它的场景是有的）
+    db.draftSegment.findMany({
+      where: { projectId: project.id },
+      select: { chapterNo: true },
+      distinct: ['chapterNo'],
+    }),
+  ])
+
+  const drafted = new Set(draftChapters.map((r) => r.chapterNo))
+
+  // 以蓝图为准拼接 Chapter 状态
+  // ★ 没有 Chapter 行不代表没写：生成了候选稿就是 drafting，
+  //   否则界面会把「有 5 张待审场景卡」的章说成「计划中」。
+  const merged = bps.map((b) => {
+    const ch = chapters.find((x) => x.chapterNo === b.chapterNo)
+    return {
+      chapterNo: b.chapterNo,
+      title: b.title ?? ch?.title ?? null,
+      status: ch?.status ?? (drafted.has(b.chapterNo) ? 'drafting' : 'planned'),
+      wordCount: ch?.wordCount ?? 0,
+      summary: ch?.summary ?? null,
+      finalizedAt: ch?.finalizedAt?.toISOString() ?? null,
+    }
   })
-  return c.json({ ...project, chapters })
+
+  return c.json({ ...project, chapters: merged })
 })
 
 read.get('/chapters/:n', async (c) => {
@@ -49,7 +115,8 @@ read.get('/chapters/:n', async (c) => {
   return c.json({
     chapterNo,
     title: chapter?.title ?? null,
-    status: chapter?.status ?? 'planned',
+    // ★ 同 /book：没定稿过的章没有 Chapter 行，但有场景就是 drafting
+    status: chapter?.status ?? (scenes.length > 0 ? 'drafting' : 'planned'),
     wordCount: chapter?.wordCount ?? 0,
     summary: chapter?.summary ?? null,
     scenes,
@@ -100,34 +167,5 @@ read.get('/chapters/:n/scenes/:sceneNo/diff', async (c) => {
 })
 
 read.get('/blueprints', async (c) => {
-  const { root } = getContext()
-  const dir = join(bookPaths(root).story, 'blueprints')
-  const names = await readdir(dir).catch(() => [] as string[])
-
-  const chapters: {
-    chapterNo: number
-    title: string | null
-    goal: string
-    conflict: string
-    tensionLevel: number
-    beatType: string
-  }[] = []
-  for (const name of names) {
-    if (!name.endsWith('.json')) continue
-    const raw = await readJsonElement(root, `story/blueprints/${name}`)
-    if (raw === null) continue
-    const parsed = blueprintSchema.safeParse(raw)
-    if (!parsed.success) continue
-    const b = parsed.data
-    chapters.push({
-      chapterNo: b.chapterNo,
-      title: b.title ?? null,
-      goal: b.goal,
-      conflict: b.conflict,
-      tensionLevel: b.tensionLevel,
-      beatType: b.beatType,
-    })
-  }
-  chapters.sort((a, b) => a.chapterNo - b.chapterNo)
-  return c.json({ chapters })
+  return c.json({ chapters: await listBlueprints() })
 })

@@ -2,6 +2,7 @@ import { countWords } from '@inkloom/core'
 import { InkloomError } from '@inkloom/shared'
 import { commitAll, initRepo } from '../git/runner.js'
 import { hashContent } from '../storage/atomic-write.js'
+import { markAccepted, markRejected } from '../storage/review-state.js'
 import { readSceneFile, writeSceneFile } from '../storage/scenes.js'
 import { getContext } from './context.js'
 
@@ -98,7 +99,8 @@ async function assertVersionExists(input: AcceptSceneInput): Promise<string> {
  * ★ 同场景其他 accepted 版本自动降为 rejected（Ruling 36）：
  *   定稿只能把「一个版本」合并进正文文件，允许多个 accepted 会让定稿产生歧义。
  * ★ 不写 EntityRevision：正文历史归 Git（ADR-27）。
- * ★ 文件内容不变：accept 只改索引状态 + commit（让"接受了哪版"进版本历史）。
+ * ★ 文件内容不变，但要写 `chapters/ch-NNN/review.json`（Ruling 47）：
+ *   「接受了哪一版」是决策而不是缓存，索引重建后必须还在。
  */
 export async function acceptScene(input: AcceptSceneInput): Promise<{ relPath: string }> {
   const { root, db, project } = getContext()
@@ -126,6 +128,9 @@ export async function acceptScene(input: AcceptSceneInput): Promise<{ relPath: s
     })
   })
 
+  // 先落文件真相，再提交：反过来的话 commit 里会有一份「没有 accepted 记录」的 review.json
+  await markAccepted(root, input.chapterNo, input.sceneNo, input.version)
+
   await initRepo(root)
   await commitAll(
     root,
@@ -147,6 +152,7 @@ export async function rejectScene(input: AcceptSceneInput): Promise<void> {
     },
     data: { status: 'rejected', acceptedAt: null },
   })
+  await markRejected(root, input.chapterNo, input.sceneNo, input.version)
   await initRepo(root)
   await commitAll(
     root,
@@ -218,6 +224,9 @@ export async function editSceneSeg(
       })),
     })
   })
+
+  // 被编辑的旧版本等于被拒绝（内容已被新版本取代），同步进 review.json
+  await markRejected(root, input.chapterNo, input.sceneNo, input.version)
 
   await initRepo(root)
   await commitAll(
