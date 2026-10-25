@@ -4,6 +4,7 @@ import {
   useCheck,
   useFinalize,
   useGenerate,
+  useJobs,
   usePropose,
   useSearch,
   useUnfinalize,
@@ -29,6 +30,8 @@ export function Toolbar({ chapter }: Props) {
   const apply = useApplyProposals()
   const check = useCheck()
   const search = useSearch()
+  const { data: jobsData } = useJobs()
+  const jobs = (jobsData?.jobs ?? []).slice(0, 4)
 
   const [guidance, setGuidance] = useState('')
   const [proposals, setProposals] = useState<ProposeResult | null>(null)
@@ -215,6 +218,37 @@ export function Toolbar({ chapter }: Props) {
             </div>
           )}
         </section>
+
+        {jobs.length > 0 && (
+          <section>
+            <p className="mb-1 text-xs font-medium tracking-wide text-neutral-500">生成任务</p>
+            <div className="space-y-1">
+              {jobs.map((j) => (
+                <div
+                  key={j.id}
+                  className="rounded border border-neutral-200 bg-white px-2 py-1 text-[11px]"
+                >
+                  <span className="text-neutral-700">第 {j.chapterNo} 章</span>
+                  <span
+                    className={
+                      j.status === 'running'
+                        ? 'ml-2 text-amber-700'
+                        : j.status === 'done'
+                          ? 'ml-2 text-emerald-700'
+                          : 'ml-2 text-rose-700'
+                    }
+                  >
+                    {j.status === 'running'
+                      ? '生成中…'
+                      : j.status === 'done'
+                        ? `完成（${j.result?.scenes.length ?? 0} 场景）`
+                        : '失败'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section>
           <p className="mb-1 text-xs font-medium tracking-wide text-neutral-500">查资料（联网）</p>

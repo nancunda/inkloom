@@ -28,6 +28,16 @@ export function useChapter(n: number) {
   })
 }
 
+export function useJobs() {
+  return useQuery({
+    queryKey: ['jobs'],
+    queryFn: () => api<{ jobs: GenerateJob[] }>('/jobs'),
+    // 有运行中的任务才轮询；全部结束就停，不白耗请求
+    refetchInterval: (query) =>
+      (query.state.data?.jobs ?? []).some((j) => j.status === 'running') ? 2000 : false,
+  })
+}
+
 export function useWorld() {
   return useQuery({
     queryKey: ['world'],

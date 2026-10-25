@@ -72,6 +72,11 @@ export function getJob(id: string): JobSnapshot | undefined {
   return jobs.get(id)
 }
 
+/** 最近的任务（新→旧）；任务中心用它渲染列表 */
+export function listJobs(limit = 20): JobSnapshot[] {
+  return [...jobs.values()].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)).slice(0, limit)
+}
+
 /** 测试用：避免用例之间互相污染 */
 export function clearJobs(): void {
   jobs.clear()

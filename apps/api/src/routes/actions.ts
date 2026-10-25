@@ -9,7 +9,7 @@ import { getContext } from '../services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
 import { generateChapter } from '../services/generate-service.js'
 import { importChapters } from '../services/import-service.js'
-import { getJob, submitGenerate } from '../services/job-service.js'
+import { getJob, listJobs, submitGenerate } from '../services/job-service.js'
 import { createRelation } from '../services/relation-service.js'
 import { rewriteSceneSeg } from '../services/rewrite-service.js'
 import { acceptScene, editSceneSeg, rejectScene } from '../services/scene-review-service.js'
@@ -113,6 +113,8 @@ export function createActions(deps: ActionDeps = {}): Hono {
     const chapterNo = intParam(c.req.param('n'), 'chapterNo')
     return c.json({ jobId: submitGenerate({ chapterNo, apiKey: requireApiKey(deps) }) }, 202)
   })
+
+  actions.get('/jobs', (c) => c.json({ jobs: listJobs() }))
 
   actions.get('/jobs/:id', (c) => {
     const job = getJob(c.req.param('id'))
