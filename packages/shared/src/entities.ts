@@ -101,23 +101,37 @@ export const characterSignatureSchema = z.object({
   id,
   projectId: id,
   characterId: id,
+  /**
+   * 七种签名（spec §3.16）。分类不是随意选的：
+   * 出场/退场诗是玄幻标配手法，而“动作”与“意象道具”是更隐形的印象加深。
+   */
   kind: z.enum([
-    'entrance_poem',
+    'entrance_verse',
+    'exit_verse',
     'catchphrase',
-    'gesture',
+    'verbal_tick',
+    'signature_action',
+    'motif',
     'epithet',
-    'theme_song',
-    'costume',
-    'habit',
   ]),
+  /** 诗号全文 / 台词 / 动作描述 */
   content: z.string().min(1),
+  /**
+   * ★ 场合触发器（spec §3.16 必填）。
+   * frequency 只说“多频繁”，trigger 说“什么场合演出”——缺一不可。
+   * 没有 trigger 就无法表达“退场时留一句话”这种手法。
+   */
+  trigger: z.enum(['entrance', 'exit', 'battle', 'anger', 'death', 'first_meet', 'always']),
   /**
    * 频率控制（ADR-20）：不控制的话每次出场都吟诗会变成尴尬的套路。
    * once = 仅首次正式出场；key_moment = 生死关头；every_scene = 口头禅。
    */
   frequency: z.enum(['once', 'key_moment', 'every_scene']).default('key_moment'),
+  /** JSON: { good, bad } 示例 */
+  examples: z.string().optional(),
   firstUsedChapter: z.number().int().positive().optional(),
-  note: z.string().optional(),
+  isActive: z.boolean().default(true),
+  deletedAt: isoDate.optional(),
 })
 export type CharacterSignature = z.infer<typeof characterSignatureSchema>
 
@@ -175,20 +189,35 @@ export const routeSchema = z.object({
   fromId: id,
   toId: id,
   mode: z.enum(['walk', 'ride', 'fly', 'teleport', 'boat', 'caravan']),
-  /** 系统算，AI 不得改（P0-13 / ADR-16） */
-  days: z.number().positive(),
-  note: z.string().optional(),
+  /** 标准行进天数，系统算，AI 不得改（P0-13 / ADR-16）。spec 为 Int */
+  days: z.number().int().positive(),
+  /** “需过魔渊关，冬季封闭三个月”这类通行条件 */
+  condition: z.string().optional(),
+  /** 是否双向可走。传送阵/断桥为 false */
+  bidirectional: z.boolean().default(true),
 })
 export type Route = z.infer<typeof routeSchema>
 
+/**
+ * 对应 spec §3.18 的 `model Reference`。
+ *
+ * 为什么类型名不同：TS 全局环境（lib.dom）已有 `Reference` 接口，同名会在
+ * 搜索结果里混淆。字段与 spec 完全一致，只改类型名。
+ */
 export const loreReferenceSchema = z.object({
   id,
   projectId: id,
   query: z.string().min(1),
+  /** tavily | bocha | searxng —— 换 provider 后不能混用缓存（spec 硬规则 3） */
+  provider: z.string().min(1),
   title: z.string().optional(),
   url: z.string().url().optional(),
   snippet: z.string().optional(),
+  /** 清洗后的正文 */
+  content: z.string().optional(),
   fetchedAt: isoDate,
+  /** JSON: 被哪些 generation_run 引用过（可追溯，P0 的“可复现”依赖它） */
+  usedInRunIds: z.string().optional(),
   /** L3 级别：必须显式授权才进 prompt */
   approved: z.boolean().default(false),
 })
@@ -198,7 +227,14 @@ export type LoreReference = z.infer<typeof loreReferenceSchema>
 // 结构层
 // ---------------------------------------------------------------------------
 
-export const beatTypeSchema = z.enum(['setup', 'rising', 'climax', 'twist', 'resolution'])
+export const beatTypeSchema = z.enum([
+  'setup',
+  'rising',
+  'climax',
+  'twist',
+  'falling',
+  'resolution',
+])
 export type BeatType = z.infer<typeof beatTypeSchema>
 
 export const blueprintSchema = z.object({
@@ -210,9 +246,12 @@ export const blueprintSchema = z.object({
   conflict: z.string().min(1),
   turn: z.string().optional(),
   hook: z.string().min(1),
-  castIds: z.array(id).default([]),
+  castIds: z.array(id).default(() => []),
   locationId: z.string().optional(),
+  /** 数值化故事时间（第 N 日），供时间线校验与 Route.days 累加 */
   storyDay: z.number().int().nonnegative().optional(),
+  /** 描述性故事时间：“第 12 日 · 辰时”。时辰信息无法数值化，必须单独存 */
+  storyTime: z.string().optional(),
   beatType: beatTypeSchema.default('rising'),
   /** 1..5，叙事地图的纵轴 */
   tensionLevel: z.number().int().min(1).max(5).default(3),
@@ -225,11 +264,14 @@ export const plotThreadSchema = z.object({
   id,
   projectId: id,
   kind: z.enum(['setup', 'payoff', 'foreshadow', 'callback', 'running_gag']),
-  name: z.string().min(1),
+  /** 与 spec §3.7 对齐（原写作 name 是错的） */
+  title: z.string().min(1),
   description: z.string().optional(),
-  plantedChapter: z.number().int().positive(),
-  advancedChapters: z.array(z.number().int().positive()).default([]),
-  resolutionChapter: z.number().int().positive().optional(),
+  /** 埋设章。spec 为 Int? —— “先登记、后埋设”（status=planned）是正常起点 */
+  plantedChapter: z.number().int().positive().optional(),
+  advancedChapters: z.array(z.number().int().positive()).default(() => []),
+  /** 回收章。字段名与 spec §3.7 一致（原写作 resolutionChapter 是错的） */
+  resolvedChapter: z.number().int().positive().optional(),
   status: z.enum(['planned', 'active', 'resolved', 'abandoned']).default('active'),
   payoffHint: z.string().optional(),
   /**
@@ -262,11 +304,17 @@ export const styleAssetSchema = z.object({
   projectId: id,
   name: z.string().min(1),
   description: z.string().min(1),
-  samples: z.array(z.string()).default([]),
-  bannedWords: z.array(z.string()).default([]),
-  bannedPatterns: z.array(z.string()).default([]),
+  samples: z.array(z.string()).default(() => []),
+  bannedWords: z.array(z.string()).default(() => []),
+  bannedPatterns: z.array(z.string()).default(() => []),
   /** 量化上限：{ "仿佛": 3 } 表示全章最多出现 3 次 */
-  quantLimits: z.record(z.string(), z.number()).default({}),
+  quantLimits: z.record(z.string(), z.number()).default(() => ({})),
+  /**
+   * ★ 默认文风。一本书可以有多套（冷硬短句 / 绵密长句 / 谈谐），
+   * 但装配时 S2 段只能进一套 —— 没有这个标记就只能“取第一个”或全塞入。
+   */
+  isDefault: z.boolean().default(false),
+  deletedAt: isoDate.optional(),
 })
 export type StyleAsset = z.infer<typeof styleAssetSchema>
 
@@ -281,20 +329,39 @@ export const writingTechniqueSchema = z
     category: z.enum(['rhythm', 'description', 'dialogue', 'foreshadow', 'emotion', 'entrance']),
     content: z.string().min(1),
     scope: techniqueScopeSchema,
-    /** 作用域指针：scope 决定哪个字段必填，其余为 null */
-    arcId: z.string().optional(),
+    /**
+     * 作用域指针：scope 决定哪个字段必填，其余必须为空。
+     * ★ 用 id（min 1）而非 z.string()：空串指针会通过校验但指向不存在的对象，
+     *   注入时静默失效且不报错 —— 这是 spec 二次审查专门修掉的洞，不能重新打开。
+     */
+    arcId: id.optional(),
     chapterNo: z.number().int().positive().optional(),
-    characterId: z.string().optional(),
+    characterId: id.optional(),
     examples: z.string().optional(),
     priority: z.number().int().default(3),
     isActive: z.boolean().default(true),
   })
   .refine(
-    (t) =>
-      t.scope === 'global' ||
-      (t.scope === 'arc' && t.arcId !== undefined) ||
-      (t.scope === 'chapter' && t.chapterNo !== undefined) ||
-      (t.scope === 'character' && t.characterId !== undefined),
-    { message: 'scope 与对应指针字段不匹配（spec §3.17）' },
+    (t) => {
+      const hasArc = t.arcId !== undefined
+      const hasChapter = t.chapterNo !== undefined
+      const hasCharacter = t.characterId !== undefined
+      switch (t.scope) {
+        case 'global':
+          // 全局手法不得携带任何指针，否则装配时会被误当成局部手法
+          return !hasArc && !hasChapter && !hasCharacter
+        case 'arc':
+          // 同一时间只能属于一个作用域：混带指针会让注入优先级不确定
+          return hasArc && !hasChapter && !hasCharacter
+        case 'chapter':
+          return hasChapter && !hasArc && !hasCharacter
+        case 'character':
+          return hasCharacter && !hasArc && !hasChapter
+      }
+    },
+    {
+      message:
+        'scope 与指针字段不匹配：global 不得带指针，其余 scope 必须且只能带对应指针（spec §3.17）',
+    },
   )
 export type WritingTechnique = z.infer<typeof writingTechniqueSchema>

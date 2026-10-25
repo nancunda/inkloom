@@ -2,22 +2,26 @@
   "name": "inkloom",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.6.0",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "tsc": "tsc --build tsconfig.base.json",
     "test": "vitest run --project unit",
+    "test:cov": "vitest run --project unit --coverage",
     "test:int": "vitest run --project integration",
     "biome": "biome check .",
     "biome:fix": "biome check --write .",
     "check-deps": "node scripts/check-deps.mjs",
+    "cli": "tsx apps/cli/src/index.ts",
     "verify": "pnpm biome && pnpm tsc && pnpm check-deps && pnpm test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.2",
     "@types/node": "^26.6.5",
     "@vitest/coverage-v8": "^5.0.5",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }

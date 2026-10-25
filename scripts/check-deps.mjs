@@ -17,10 +17,22 @@ const BANNED = [
   'prisma',
   '@prisma/client',
   'hono',
+  'better-sqlite3',
+  'node:sqlite',
+  'undici',
   'node:child_process',
   'node:net',
   'node:http',
 ]
+
+/**
+ * 把注释替换为等长空白（保留行号）。
+ * 否则 `// core 层不 import node:fs` 这样的说明性注释会被误判为违规，
+ * 而报告位置指向注释 —— 排查成本很高。
+ */
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => c.replace(/[^\n]/g, ' '))
+}
 
 function walk(dir) {
   const out = []
@@ -34,7 +46,7 @@ function walk(dir) {
 
 const violations = []
 for (const file of walk(CORE_DIR)) {
-  const src = readFileSync(file, 'utf8')
+  const src = stripComments(readFileSync(file, 'utf8'))
   const re = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g
   let m
   while ((m = re.exec(src)) !== null) {
