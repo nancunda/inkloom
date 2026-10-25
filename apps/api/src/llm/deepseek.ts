@@ -21,6 +21,7 @@ interface DeepSeekResponse {
     prompt_tokens?: number
     completion_tokens?: number
     prompt_cache_hit_tokens?: number
+    completion_tokens_details?: { reasoning_tokens?: number }
   }
 }
 
@@ -114,6 +115,7 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
     usage: {
       input: json.usage?.prompt_tokens ?? 0,
       output: json.usage?.completion_tokens ?? 0,
+      reasoning: json.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
       cacheHit: json.usage?.prompt_cache_hit_tokens ?? 0,
     },
     finishReason: json.choices?.[0]?.finish_reason ?? 'unknown',

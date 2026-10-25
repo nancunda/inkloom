@@ -233,7 +233,7 @@ export async function write({ positional, flags }: CommandCtx): Promise<void> {
   console.log(`  runId        = ${r.runId}`)
   console.log(`  token 估算   = ${r.tokenEstimate}`)
   console.log(
-    `  usage        = 输入 ${r.usage.input} / 输出 ${r.usage.output} / 缓存命中 ${r.usage.cacheHit}`,
+    `  usage        = 输入 ${r.usage.input} / 输出 ${r.usage.output}（含思考 ${r.usage.reasoning}）/ 缓存命中 ${r.usage.cacheHit}`,
   )
   if (r.degradedReason !== null) console.log(`  ⚠ 降级       = ${r.degradedReason}`)
   for (const w of r.warnings) console.log(`  ⚠ ${w}`)

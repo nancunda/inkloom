@@ -6,6 +6,14 @@ export interface ChatMessage {
 export interface ChatUsage {
   input: number
   output: number
+  /**
+   * 其中用于「思考」的 token。
+   *
+   * ★ deepseek-flash 是推理模型：会先输出 reasoning（不计入 content），
+   *   但 reasoning 也计入 completion_tokens。所以 output = reasoning + 正文。
+   *   不单独记录的话，用户会以为“我只要 2000 字怎么花了 7000 token”。
+   */
+  reasoning: number
   /** DeepSeek 的前缀缓存命中 token 数；缺失记 0 */
   cacheHit: number
 }

@@ -108,11 +108,24 @@ describe('blockS5 输出格式约定', () => {
   it('★ 含场景标记约定（与 §4.6 一致）', () => {
     const c = blockS5({ wordsPerChapter: 3000 }).content ?? ''
     expect(c).toContain('===场景1===')
-    expect(c).toContain('空行')
+    expect(c).toContain('===场景2===')
   })
 
-  it('含目标字数', () => {
-    expect(blockS5({ wordsPerChapter: 3000 }).content ?? '').toContain('3000')
+  it('★ 给出全章字数区间而不是单一目标值', () => {
+    const c = blockS5({ wordsPerChapter: 3000 }).content ?? ''
+    expect(c).toContain('2700')
+    expect(c).toContain('3300')
+  })
+
+  it('★ 给出每个场景的字数配额（防止靠多写短场景凑数）', () => {
+    const c = blockS5({ wordsPerChapter: 3000 }).content ?? ''
+    expect(c).toContain('600')
+    expect(c).toContain('780')
+    expect(c).toContain('每个场景')
+  })
+
+  it('★ 含约束句数：句子不得跨行', () => {
+    expect(blockS5({ wordsPerChapter: 3000 }).content ?? '').toContain('不要把一个句子拆到两行')
   })
 
   it('★ 明确禁止输出 JSON', () => {
@@ -121,6 +134,24 @@ describe('blockS5 输出格式约定', () => {
   })
 
   it('wordsPerChapter 为 null 时用 3000 兜底', () => {
-    expect(blockS5({ wordsPerChapter: null }).content ?? '').toContain('3000')
+    const c = blockS5({ wordsPerChapter: null }).content ?? ''
+    expect(c).toContain('2700')
+  })
+
+  it('★ 配额随目标字数缩放', () => {
+    const small = blockS5({ wordsPerChapter: 2000 }).content ?? ''
+    const large = blockS5({ wordsPerChapter: 5000 }).content ?? ''
+    expect(small).toContain('1800')
+    expect(small).toContain('2200')
+    expect(large).toContain('4500')
+    expect(large).toContain('5500')
+  })
+
+  it('★ 不规定“正好 N 个场景”（三条硬约束互相冲突会让模型撞 max_tokens 或放弃）', () => {
+    const c = blockS5({ wordsPerChapter: 2000 }).content ?? ''
+    expect(c).not.toContain('正好')
+    expect(c).not.toContain('必须正好')
+    // 场景数是建议区间，不是硬约束
+    expect(c).toContain('一般 4–6 个')
   })
 })

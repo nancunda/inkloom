@@ -51,6 +51,31 @@ describe('chat — 成功路径', () => {
     }
     const r = await chat({ ...base, fetchImpl: fakeFetch(200, body) })
     expect(r.usage.cacheHit).toBe(0)
+    expect(r.usage.reasoning).toBe(0)
+  })
+
+  it('★ 解析 reasoning_tokens（deepseek-flash 是推理模型，输出包含思考）', async () => {
+    const body = {
+      choices: [{ message: { content: '甲' }, finish_reason: 'stop' }],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 900,
+        completion_tokens_details: { reasoning_tokens: 700 },
+      },
+    }
+    const r = await chat({ ...base, fetchImpl: fakeFetch(200, body) })
+    expect(r.usage.output).toBe(900)
+    expect(r.usage.reasoning).toBe(700)
+    // 正文只占 200 token，思考占了 700——不记录 reasoning 会让人以为花了 900 写正文
+  })
+
+  it('★ finish_reason=length 要能透传（截断必须可检测）', async () => {
+    const body = {
+      choices: [{ message: { content: '写到一半' }, finish_reason: 'length' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5000 },
+    }
+    const r = await chat({ ...base, fetchImpl: fakeFetch(200, body) })
+    expect(r.finishReason).toBe('length')
   })
 
   it('baseUrl 被拼成 /chat/completions', async () => {
