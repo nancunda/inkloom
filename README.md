@@ -105,6 +105,7 @@ my-novel/
 | `inkloom accept <dir> --chapter N --scene M --version V` | 接受某版本（同场景其他版本自动 rejected） |
 | `inkloom reject <dir> --chapter N --scene M --version V` | 拒绝（文件保留，可再接受） |
 | `inkloom edit <dir> --chapter N --scene M --version V --seg XXXX --text "…"` | 改一段 → 产新版本 |
+| `inkloom rewrite <dir> --chapter N --scene M --version V --seg XXXX [--guidance "…"]` | 模型重写这一段（其余段不动） |
 | `inkloom diff <dir> --chapter N --scene M --from V1 --to V2` | 字符级 diff |
 | `inkloom finalize <dir> --chapter N` | 定稿（还有 candidate 时拒绝，409） |
 | `inkloom unfinalize <dir> --chapter N` | 撤销定稿（正文保留） |
@@ -134,6 +135,7 @@ pnpm verify:p0   # P0 验收：建书 / 索引 / 回退 / 导出，11 条
 pnpm verify:p1a  # P1-a 验收：装配 → 生成 → 落盘，6 条
 pnpm verify:p1b  # P1-b 验收：确认 / diff / 定稿 / 提案，11 条
 pnpm verify:p1c  # P1-c 验收：HTTP 接口 + 启动自愈，18 条
+pnpm verify:p2a  # P2-a 验收：局部重写，7 条
 pnpm fixture     # 重新生成 fixtures/qixia（玄幻示例书）
 pnpm test:cov    # 覆盖率（core 门槛 >80%）
 ```
@@ -157,6 +159,8 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 **P1-b（确认与定稿）已完成**：逐场景 accept/reject/edit + 字符级 diff + 定稿（含蓝图摘要）+ 状态提案（逐条确认）。`pnpm verify:p1b` 11-11 通过。
 
 **P1-c（HTTP + 前端）已完成**：Hono 12 个接口 + 错误映射 + 单书启动器；React 19 写作页（章节列表 / 场景卡片 / 版本切换 / diff 面板 / 状态提案）+ 叙事地图（React Flow + dagre）。219 单元 + 238 集成测试 / `pnpm verify:p1c` 18-18 通过。
+
+**P2-a（局部重写）已完成**：指定一段让模型改写，其余段逐字节不变、段 ID 不变；产物作为新版本候选，旧版自动 rejected。四条拒绝落盘的情形（空/过短/过长/带段标记）在写盘前拦下，失败不留半成品。CLI / HTTP / 写作页三个入口，`pnpm verify:p2a` 7-7 通过。
 
 ### 写作界面
 

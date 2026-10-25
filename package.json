@@ -22,6 +22,7 @@
     "verify:p1a": "tsx scripts/verify-p1a.ts",
     "verify:p1b": "tsx scripts/verify-p1b.ts",
     "verify:p1c": "tsx scripts/verify-p1c.ts",
+    "verify:p2a": "tsx scripts/verify-p2a.ts",
     "verify": "pnpm biome && pnpm tsc && pnpm check-deps && pnpm test && pnpm test:int"
   },
   "devDependencies": {
