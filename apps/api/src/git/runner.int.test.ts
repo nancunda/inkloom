@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -37,6 +37,30 @@ describe('initRepo / isRepo', () => {
 
   it('重复 init 不报错（幂等）', async () => {
     await expect(initRepo(dir)).resolves.toBeUndefined()
+  })
+
+  it('★ 父仓库内的子目录 isRepo 为 false（否则书会把 commit 落进父仓库）', async () => {
+    const sub = join(dir, 'sub-book')
+    await mkdir(sub, { recursive: true })
+    // 子目录在父仓库内，但自己还不是仓库
+    expect(await isRepo(sub)).toBe(false)
+
+    // 先在父仓库提交（此时 sub 还没有 .git，不会被 git add -A 拒绝）
+    await writeFile(join(dir, 'a.md'), '甲', 'utf8')
+    await commitAll(dir, 'parent 1')
+    const before = Number((await git(dir, ['rev-list', '--count', 'HEAD'])).trim())
+
+    // 子目录初始化自己的仓库后，两边的 commit 互不干扰
+    await initRepo(sub)
+    expect(await isRepo(sub)).toBe(true)
+    expect(await isRepo(dir)).toBe(true)
+
+    await writeFile(join(sub, 'x.md'), 'x', 'utf8')
+    const r = await commitAll(sub, 'sub commit')
+    expect(r.committed).toBe(true)
+
+    const after = Number((await git(dir, ['rev-list', '--count', 'HEAD'])).trim())
+    expect(after).toBe(before)
   })
 })
 

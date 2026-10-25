@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { InkloomError } from '@inkloom/shared'
 import { WriteQueue } from '../storage/queue.js'
@@ -22,10 +22,18 @@ const IDENTITY_ENV = {
   GIT_COMMITTER_EMAIL: 'inkloom@localhost',
 }
 
+/**
+ * 本目录本身就是 git 仓库根吗？
+ *
+ * ★ 不能用 `git rev-parse --git-dir`：它会**向上查找**父仓库。
+ *   后果：书建在任何已有 git 仓库的目录下时（比如仓库内的 fixtures/），
+ *   initRepo 会误判“已是仓库”而不创建自己的 .git，
+ *   于是这本书的每一次 commit 都落进**父仓库**，污染用户的仓库历史。
+ */
 export async function isRepo(cwd: string): Promise<boolean> {
   try {
-    await exec('git', ['rev-parse', '--git-dir'], { cwd })
-    return true
+    const { stdout } = await exec('git', ['rev-parse', '--show-toplevel'], { cwd })
+    return resolve(stdout.trim()) === resolve(cwd)
   } catch {
     return false
   }
