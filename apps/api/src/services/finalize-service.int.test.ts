@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InkloomError } from '@inkloom/shared'
@@ -143,16 +143,32 @@ describe('finalizeChapter', () => {
 })
 
 describe('unfinalizeChapter', () => {
-  it('★ finalized → review，正文文件保留', async () => {
+  it('★ finalized → review，正文反解回场景（内容不丢，正文文件删除）', async () => {
     await seedScene(4, 1, 1, [['aaaa', '甲']], 'accepted')
     const r = await finalizeChapter({ chapterNo: 4 })
     await unfinalizeChapter({ chapterNo: 4 })
+
     const ch = await db.chapter.findUnique({
       where: { projectId_chapterNo: { projectId: pid, chapterNo: 4 } },
     })
     expect(ch?.status).toBe('review')
     expect(ch?.finalizedAt).toBeNull()
-    await expect(readFile(join(root, r.relPath), 'utf8')).resolves.toContain('甲')
+
+    // ★ 正文文件必须删掉：reindex 把「有 ch-NNN.md」当成已定稿，
+    //   留着它会让下一次重建把章节又变回 finalized。
+    await expect(readFile(join(root, r.relPath), 'utf8')).rejects.toThrow()
+
+    // 内容不丢：反解出的场景文件里还在，而且段 ID 是新的
+    const scenesDir = join(root, 'chapters', 'ch-004', 'scenes')
+    const names = await readdir(scenesDir)
+    expect(names.length).toBeGreaterThan(0)
+    const sceneRaw = await readFile(join(scenesDir, names[0] ?? ''), 'utf8')
+    expect(sceneRaw).toContain('甲')
+    expect(sceneRaw).toMatch(/<!-- seg:[0-9a-z]{4} -->/)
+
+    // 索引里出现 candidate 段，旧版 accepted 记录被清掉
+    const segs = await db.draftSegment.findMany({ where: { chapterNo: 4 } })
+    expect(segs.some((s) => s.status === 'candidate')).toBe(true)
   })
 
   it('★ 不是 finalized 时拒绝撤销', async () => {

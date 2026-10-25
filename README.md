@@ -81,7 +81,7 @@ my-novel/
 
 - **候选稿保留段标记** → 支持单段回退（精确定位到某一段）
 - **定稿只保留场景边界** → 成品干净可读
-- 撤销定稿时按 `<!-- scene:N -->` 反解，段 ID 重新分配（正文一字节不丢）
+- 撤销定稿时按 `<!-- scene:N -->` 反解成场景（段 ID 重新分配、正文文件删除）：内容一字节不丢，但 reindex 不会再把这一章当已定稿
 
 ---
 
@@ -90,6 +90,7 @@ my-novel/
 | 命令 | 作用 |
 |---|---|
 | `inkloom create <dir> --name --genre` | 建书（目录树 + 身份锚 + Git 初始提交） |
+| `inkloom import <dir> --from <file.txt\|file.md> [--name --genre]` | 导入已有正文（已是书则追加，否则新建） |
 | `inkloom reindex <dir>` | 从文件完全重建索引（索引删了也能救回来） |
 | `inkloom element set/rollback/delete/history` | 要素的写入、回退、软删除、历史 |
 | `inkloom checkpoint <dir> --label` | 建检查点（Git ref + 要素历史行号） |
@@ -161,6 +162,8 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 **P1-c（HTTP + 前端）已完成**：Hono 12 个接口 + 错误映射 + 单书启动器；React 19 写作页（章节列表 / 场景卡片 / 版本切换 / diff 面板 / 状态提案）+ 叙事地图（React Flow + dagre）。219 单元 + 238 集成测试 / `pnpm verify:p1c` 18-18 通过。
 
 **P2-a（局部重写）已完成**：指定一段让模型改写，其余段逐字节不变、段 ID 不变；产物作为新版本候选，旧版自动 rejected。四条拒绝落盘的情形（空/过短/过长/带段标记）在写盘前拦下，失败不留半成品。CLI / HTTP / 写作页三个入口，`pnpm verify:p2a` 7-7 通过。
+
+**P2-b（txt/md 导入）已完成**：按「第X章 / Chapter N」切章（中英文数字、markdown 井号都认），章号按出现顺序重排；三种降级都进 warnings（首标题前正文保留为「前言」、无标题整本一章、空章保留）。导入写成定稿章节，`/api/book` 的章节集合改为「Chapter 行 ∪ 蓝图」——否则导入的书在界面上显示为「0 章」。集成测试 5 条 + Chrome 端到端实测（导入 → 界面可见 → 撤销定稿 → 场景反解）。
 
 ### 写作界面
 

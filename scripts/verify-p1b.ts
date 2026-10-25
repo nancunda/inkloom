@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // P1-b 验收：生成 → 逐场景确认 → 编辑 → diff → 定稿 → 状态提案 → 撤销。
 // 全部用假 LLM，零网络零花费。
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { commitAll, git, initRepo } from '../apps/api/src/git/runner.js'
@@ -226,13 +226,25 @@ try {
     if (payload['stateStale'] !== false) throw new Error('revision 的 stateStale 应为 false')
   })
 
-  await check('★ 撤销定稿：finalized → review，正文保留', async () => {
+  await check('★ 撤销定稿：finalized → review，正文反解回场景', async () => {
     await unfinalizeChapter({ chapterNo: 4 })
     if (db === null) throw new Error('db 未初始化')
     const ch = await db.chapter.findFirst({ where: { chapterNo: 4 } })
     if (ch?.status !== 'review') throw new Error(`Chapter 应为 review，实际 ${ch?.status}`)
-    const raw = await readFile(join(book, finalRel), 'utf8')
-    if (!raw.includes('碑上刻着她自己的名字')) throw new Error('撤销后正文应保留')
+
+    // ★ 正文文件必须消失：留着它 reindex 会把这一章又当已定稿
+    const stillThere = await readFile(join(book, finalRel), 'utf8').catch(() => null)
+    if (stillThere !== null) throw new Error('撤销后正文文件应被删除（内容已转入场景）')
+
+    // 内容不丢：场景文件里还找得到原句
+    const scenesDir = join(book, 'chapters', 'ch-004', 'scenes')
+    const names = await readdir(scenesDir)
+    let found = false
+    for (const name of names) {
+      const raw = await readFile(join(scenesDir, name), 'utf8')
+      if (raw.includes('碑上刻着她自己的名字')) found = true
+    }
+    if (!found) throw new Error('撤销后正文内容没能反解回场景')
   })
 
   await check('Git 有多次提交（初始化/接受/编辑/定稿/撤销 ≥5）', async () => {
