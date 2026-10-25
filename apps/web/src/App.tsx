@@ -65,7 +65,9 @@ export function App() {
       { id: 'view-map', label: '切到地图视图', run: () => setView('map') },
       {
         id: 'focus',
-        label: '进入纯编辑模式',
+        // 用「专注」而不是「纯编辑」：用户心里想的是「专注写作」，
+        // 搜「专注」找不到就白做了这个入口。
+        label: '进入专注模式（纯编辑）',
         hint: 'Ctrl+Shift+E',
         run: () => setFocus(true),
       },
