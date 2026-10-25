@@ -1,5 +1,12 @@
 import { lazy, Suspense, useState } from 'react'
-import { useAcceptScene, useChapter, useDiff, useRejectScene, useScene } from '../api/hooks'
+import {
+  useAcceptScene,
+  useChapter,
+  useDiff,
+  useRejectScene,
+  useRewriteScene,
+  useScene,
+} from '../api/hooks'
 import type { SceneRow } from '../api/types'
 import { ChapterList } from '../components/ChapterList'
 import { DiffView } from '../components/DiffView'
@@ -160,6 +167,8 @@ function WriteView() {
             sceneNo={selectedScene}
             versions={grouped.get(selectedScene) ?? []}
             version={versionOf(selectedScene, grouped.get(selectedScene) ?? []).version ?? 0}
+            canRewrite={chapter?.status !== 'finalized'}
+            onRewritten={(nv) => setViewVersion((m) => ({ ...m, [selectedScene]: nv }))}
           />
         )}
       </main>
@@ -169,22 +178,51 @@ function WriteView() {
   )
 }
 
-/** 场景正文预览（段带 segId，方便后续做按段编辑） */
+/** 场景正文预览；每段可让模型重写（其余段与段 ID 保持不变） */
 function ScenePreview({
   chapterNo,
   sceneNo,
   versions,
   version,
+  canRewrite,
+  onRewritten,
 }: {
   chapterNo: number
   sceneNo: number
   versions: SceneRow[]
   version: number
+  /** 章节已定稿时为 false：定稿后正文不可再变 */
+  canRewrite: boolean
+  onRewritten: (newVersion: number) => void
 }) {
   const { data, isLoading } = useScene(chapterNo, sceneNo, version)
+  const rewrite = useRewriteScene()
+  const [openSeg, setOpenSeg] = useState<string | null>(null)
+  const [guidance, setGuidance] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
   const row = versions.find((v) => v.version === version)
   if (row === undefined) return null
   if (isLoading) return <p className="mt-6 text-sm text-neutral-500">读取场景…</p>
+
+  const submit = async (segId: string): Promise<void> => {
+    setErr(null)
+    try {
+      const r = await rewrite.mutateAsync({
+        chapterNo,
+        sceneNo,
+        version,
+        segId,
+        ...(guidance.trim().length === 0 ? {} : { guidance: guidance.trim() }),
+      })
+      setOpenSeg(null)
+      setGuidance('')
+      // 新版本已经产生，把预览切过去，用户能直接看到改写结果
+      onRewritten(r.newVersion)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   return (
     <section className="mt-8 border-t border-neutral-200 pt-6">
@@ -197,9 +235,56 @@ function ScenePreview({
             <span className="absolute -left-14 top-1 select-none font-mono text-[10px] text-neutral-300 group-hover:text-neutral-500">
               {s.segId}
             </span>
-            <p className="whitespace-pre-wrap font-serif text-[15px] leading-8 text-neutral-800">
-              {s.text}
-            </p>
+            <div className="flex items-start gap-2">
+              <p className="flex-1 whitespace-pre-wrap font-serif text-[15px] leading-8 text-neutral-800">
+                {s.text}
+              </p>
+              <button
+                type="button"
+                disabled={!canRewrite || rewrite.isPending}
+                onClick={() => {
+                  setOpenSeg(openSeg === s.segId ? null : s.segId)
+                  setErr(null)
+                }}
+                title={
+                  canRewrite
+                    ? '让模型改写这一段（其余段与段 ID 不动）'
+                    : '本章已定稿，先撤销定稿才能重写'
+                }
+                className="shrink-0 rounded border border-neutral-300 px-2 py-0.5 text-[10px] text-neutral-600 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:text-neutral-300"
+              >
+                重写这段
+              </button>
+            </div>
+            {openSeg === s.segId && (
+              <div className="mt-2 rounded border border-neutral-200 bg-neutral-50 p-2">
+                <textarea
+                  value={guidance}
+                  onChange={(e) => setGuidance(e.target.value)}
+                  rows={2}
+                  placeholder="可选：告诉模型怎么改（例如：更克制、少用比喻）"
+                  className="w-full resize-none rounded border border-neutral-300 px-2 py-1.5 text-xs focus:border-neutral-500 focus:outline-none"
+                />
+                <div className="mt-1.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={rewrite.isPending}
+                    onClick={() => void submit(s.segId)}
+                    className="rounded bg-neutral-900 px-2.5 py-1 text-xs text-white disabled:cursor-not-allowed disabled:bg-neutral-300"
+                  >
+                    {rewrite.isPending ? '重写中…' : '确认重写'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOpenSeg(null)}
+                    className="text-xs text-neutral-500 hover:text-neutral-800"
+                  >
+                    取消
+                  </button>
+                  {err !== null && <span className="text-xs text-rose-600">{err}</span>}
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>

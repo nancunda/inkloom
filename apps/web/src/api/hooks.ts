@@ -109,6 +109,28 @@ export function useEditScene() {
   })
 }
 
+export function useRewriteScene() {
+  const invalidate = useInvalidateChapter()
+  return useMutation({
+    mutationFn: (v: {
+      chapterNo: number
+      sceneNo: number
+      version: number
+      segId: string
+      guidance?: string
+    }) =>
+      post<{ newVersion: number; relPath: string; original: string; rewritten: string }>(
+        `/chapters/${v.chapterNo}/scenes/${v.sceneNo}/rewrite`,
+        {
+          version: v.version,
+          segId: v.segId,
+          ...(v.guidance === undefined ? {} : { guidance: v.guidance }),
+        },
+      ),
+    onSuccess: (_d, v) => invalidate(v.chapterNo),
+  })
+}
+
 export function useFinalize() {
   const invalidate = useInvalidateChapter()
   return useMutation({
