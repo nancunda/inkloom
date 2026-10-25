@@ -7,6 +7,11 @@ export type ErrorCode =
   | 'SEG_NOT_FOUND'
   | 'GIT_FAILED'
   | 'INDEX_STALE'
+  // ★ 外部依赖类（Ruling 46）：
+  //   AUTH 与 INVALID_INPUT 必须分开——「没配置 key」和「字段填错了」
+  //   在 UI 上是两种提示（一个让你去填 key，一个让你改输入）。
+  | 'AUTH'
+  | 'UNAVAILABLE'
 
 /**
  * 领域错误的唯一类型。

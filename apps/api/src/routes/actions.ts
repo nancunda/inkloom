@@ -1,0 +1,142 @@
+import { InkloomError } from '@inkloom/shared'
+import { Hono } from 'hono'
+import type { FetchLike } from '../llm/types.js'
+import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
+import { generateChapter } from '../services/generate-service.js'
+import { acceptScene, editSceneSeg, rejectScene } from '../services/scene-review-service.js'
+import {
+  applyStateProposals,
+  loadLatestProposals,
+  proposeStateChanges,
+} from '../services/state-proposal-service.js'
+
+/**
+ * 依赖注入（Ruling：测试注入假 LLM，不污染生产代码）。
+ *
+ * ★ 为什么不用 `INKLOOM_FAKE_LLM=1` 环境变量开关：
+ *   那种做法会让生产代码里长期存在一条"测试专用分支"，
+ *   一旦忘了关就是线上接假 LLM。依赖注入让假实现只活在测试进程里。
+ */
+export interface ActionDeps {
+  fetchImpl?: FetchLike
+  /** 覆盖环境变量里的 key（测试用） */
+  apiKey?: string
+}
+
+function intParam(raw: string | undefined, name: string): number {
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new InkloomError('INVALID_INPUT', `${name} 必须是正整数`)
+  }
+  return n
+}
+
+function requireApiKey(deps: ActionDeps): string {
+  const key = deps.apiKey ?? process.env['DEEPSEEK_API_KEY']
+  if (key === undefined || key.trim().length === 0) {
+    throw new InkloomError('AUTH', '缺少 DEEPSEEK_API_KEY（见 .env.example）')
+  }
+  return key
+}
+
+export function createActions(deps: ActionDeps = {}): Hono {
+  const actions = new Hono()
+
+  actions.post('/chapters/:n/generate', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const body = (await c.req.json().catch(() => ({}))) as { guidance?: string; model?: string }
+    const r = await generateChapter({
+      chapterNo,
+      apiKey: requireApiKey(deps),
+      ...(body.guidance === undefined ? {} : { userGuidance: body.guidance }),
+      ...(body.model === undefined ? {} : { model: body.model }),
+      ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+    })
+    return c.json(r)
+  })
+
+  actions.post('/chapters/:n/scenes/:s/accept', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const sceneNo = intParam(c.req.param('s'), 'sceneNo')
+    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
+    if (body.version === undefined) throw new InkloomError('INVALID_INPUT', '缺少 version')
+    return c.json(await acceptScene({ chapterNo, sceneNo, version: body.version }))
+  })
+
+  actions.post('/chapters/:n/scenes/:s/reject', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const sceneNo = intParam(c.req.param('s'), 'sceneNo')
+    const body = (await c.req.json().catch(() => ({}))) as { version?: number }
+    if (body.version === undefined) throw new InkloomError('INVALID_INPUT', '缺少 version')
+    await rejectScene({ chapterNo, sceneNo, version: body.version })
+    return c.json({ ok: true })
+  })
+
+  actions.post('/chapters/:n/scenes/:s/edit', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const sceneNo = intParam(c.req.param('s'), 'sceneNo')
+    const body = (await c.req.json().catch(() => ({}))) as {
+      version?: number
+      segId?: string
+      newText?: string
+    }
+    if (body.version === undefined || body.segId === undefined || body.newText === undefined) {
+      throw new InkloomError('INVALID_INPUT', '需要 version / segId / newText')
+    }
+    return c.json(
+      await editSceneSeg({
+        chapterNo,
+        sceneNo,
+        version: body.version,
+        segId: body.segId,
+        newText: body.newText,
+      }),
+    )
+  })
+
+  actions.post('/chapters/:n/finalize', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const body = (await c.req.json().catch(() => ({}))) as { title?: string }
+    return c.json(
+      await finalizeChapter({
+        chapterNo,
+        ...(body.title === undefined ? {} : { title: body.title }),
+      }),
+    )
+  })
+
+  actions.post('/chapters/:n/unfinalize', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    await unfinalizeChapter({ chapterNo })
+    return c.json({ ok: true })
+  })
+
+  actions.post('/chapters/:n/propose', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const body = (await c.req.json().catch(() => ({}))) as { model?: string }
+    return c.json(
+      await proposeStateChanges({
+        chapterNo,
+        apiKey: requireApiKey(deps),
+        ...(body.model === undefined ? {} : { model: body.model }),
+        ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+      }),
+    )
+  })
+
+  actions.get('/chapters/:n/proposals', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    return c.json({ proposals: await loadLatestProposals(chapterNo) })
+  })
+
+  actions.post('/chapters/:n/proposals/apply', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const body = (await c.req.json().catch(() => ({}))) as { acceptIds?: unknown }
+    if (!Array.isArray(body.acceptIds) || !body.acceptIds.every((x) => typeof x === 'string')) {
+      throw new InkloomError('INVALID_INPUT', 'acceptIds 必须是字符串数组')
+    }
+    return c.json(await applyStateProposals({ chapterNo, acceptIds: body.acceptIds }))
+  })
+
+  return actions
+}

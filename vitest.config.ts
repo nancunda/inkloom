@@ -23,7 +23,7 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['packages/**/src/**/*.test.ts'],
+          include: ['packages/**/src/**/*.test.ts', 'apps/api/src/**/*.test.ts'],
           // ★ project 级 exclude 会**完全覆盖**默认值（默认包含 node_modules/dist），
           //   所以必须把默认忽略项也写一遍，否则会把依赖包自带的测试一并跑掉。
           exclude: ['**/node_modules/**', '**/dist/**', '**/*.int.test.ts'],
@@ -33,7 +33,7 @@ export default defineConfig({
       {
         test: {
           name: 'integration',
-          include: ['apps/**/src/**/*.int.test.ts'],
+          include: ['apps/**/src/**/*.int.test.ts', 'apps/**/src/**/*.http.test.ts'],
           environment: 'node',
           testTimeout: 30_000,
         },
