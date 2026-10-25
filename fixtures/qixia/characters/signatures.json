@@ -1,7 +1,7 @@
 [
   {
     "id": "sig1",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "characterId": "c3",
     "kind": "entrance_verse",
     "content": "一壶一剑一山秋，懒向人间问去留。",
@@ -11,7 +11,7 @@
   },
   {
     "id": "sig2",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "characterId": "c3",
     "kind": "catchphrase",
     "content": "酒没了，人就该走了。",
@@ -21,10 +21,10 @@
   },
   {
     "id": "sig3",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "characterId": "c1",
     "kind": "signature_action",
-    "content": "按住腰间玉牌，指节泛白",
+    "content": "按住腰间短刀柄，拇指顶开卡扣又推回去",
     "trigger": "anger",
     "frequency": "key_moment",
     "isActive": true

@@ -1,0 +1,38 @@
+{
+  "id": "ps1",
+  "projectId": "proj_f81c8babe4d642c2",
+  "name": "灵阶",
+  "description": "练气 → 筑基 → 金丹 → 元婴 → 化神",
+  "tiers": [
+    {
+      "id": "t1",
+      "systemId": "ps1",
+      "name": "练气",
+      "level": 1
+    },
+    {
+      "id": "t2",
+      "systemId": "ps1",
+      "name": "筑基",
+      "level": 2
+    },
+    {
+      "id": "t3",
+      "systemId": "ps1",
+      "name": "金丹",
+      "level": 3
+    },
+    {
+      "id": "t4",
+      "systemId": "ps1",
+      "name": "元婴",
+      "level": 4
+    },
+    {
+      "id": "t5",
+      "systemId": "ps1",
+      "name": "化神",
+      "level": 5
+    }
+  ]
+}

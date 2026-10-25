@@ -1,10 +1,16 @@
 {
-  "id": "proj_3f08765a0e3240ec",
-  "folderId": "1bdef3a1fb35436c82873ab3b91524d2",
+  "id": "proj_f81c8babe4d642c2",
+  "folderId": "da306728bfc640b4abfd9cdeb845b618",
   "rootPath": "fixtures/qixia",
-  "name": "qixia",
-  "genre": "xuanhuan",
+  "name": "七霞",
+  "genre": "玄幻",
+  "totalChapters": 5,
+  "wordsPerChapter": 2000,
+  "coreIdea": "剑冢的碑上刻着一个名字，那是她自己的",
+  "premise": "守碑人的养女林岚，为确认碑上刻的是不是自己的名字而闯入剑冢",
+  "theme": "名字与身份：一个人的名字是被给的，还是自己挣来的",
+  "toneContract": "冷峻克制，少抒情；短句；情绪靠动作与物象承载，不写心理独白",
   "anchorLocked": false,
   "status": "draft",
-  "createdAt": "2026-10-25T11:20:58.706Z"
+  "createdAt": "2026-10-25T11:54:23.413Z"
 }

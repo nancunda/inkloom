@@ -41,13 +41,22 @@ export interface CommandCtx {
   flags: Record<string, string>
 }
 
-/** inkloom create <dir> --name <书名> --genre <题材> */
+/** inkloom create <dir> --name <书名> --genre <题材> [锚点参数] */
 export async function create({ positional, flags }: CommandCtx): Promise<void> {
-  const dir = requirePositional(positional, 0, 'inkloom create <dir> --name <书名> --genre <题材>')
+  const dir = requirePositional(
+    positional,
+    0,
+    'inkloom create <dir> --name <书名> --genre <题材> [--core-idea …] [--premise …] [--theme …] [--tone …]',
+  )
+  // ★ 锚点是 P0-2 的“锁定后 AI 无权修改”字段，建书时必须能传入
   const created = await createProject({
     rootPath: dir,
     name: requireFlag(flags, 'name'),
     genre: requireFlag(flags, 'genre'),
+    ...(flags['core-idea'] === undefined ? {} : { coreIdea: flags['core-idea'] }),
+    ...(flags['premise'] === undefined ? {} : { premise: flags['premise'] }),
+    ...(flags['theme'] === undefined ? {} : { theme: flags['theme'] }),
+    ...(flags['tone'] === undefined ? {} : { toneContract: flags['tone'] }),
   })
   await initRepo(dir)
   // 建书即产生第一个 commit，否则 git log / checkpoint 都没有基线可回

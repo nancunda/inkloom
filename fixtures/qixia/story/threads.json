@@ -1,22 +1,22 @@
 [
   {
     "id": "t1",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "kind": "foreshadow",
     "title": "碑上的名字",
-    "description": "林岚想找的那个名字",
+    "description": "林岚想确认的那个名字",
     "plantedChapter": 1,
     "advancedChapters": [
       2,
       3
     ],
     "status": "active",
-    "payoffHint": "林岚最终读出碑上刻的是自己的名字",
-    "payoffWindow": 30
+    "payoffHint": "林岚读出碑上刻的是自己的名字",
+    "payoffWindow": 5
   },
   {
     "id": "t2",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "kind": "running_gag",
     "title": "玄阳子讨酒",
     "description": "每次出场必问酒",
@@ -26,13 +26,13 @@
   },
   {
     "id": "t3",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "kind": "setup",
     "title": "左眉的疤",
     "description": "林岚与老仆同位置的疤",
     "plantedChapter": 2,
     "advancedChapters": [],
     "status": "active",
-    "payoffWindow": 60
+    "payoffWindow": 5
   }
 ]

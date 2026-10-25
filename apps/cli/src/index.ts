@@ -5,7 +5,7 @@ import { parseFlags } from './flags.js'
 const USAGE = `inkloom <command> [options]
 
 建书与索引
-  create <dir> --name <书名> --genre <题材>     建一本新书
+  create <dir> --name <书名> --genre <题材> [--core-idea …] [--premise …] [--theme …] [--tone …]
   reindex <dir>                                从文件重建索引（索引删了也能救回来）
 
 生成

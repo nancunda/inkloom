@@ -1,7 +1,7 @@
-# qixia
+# 七霞
 
-由 inkloom 管理。
+inkloom 的示例书（fixture）。一物四用：单测输入、集成数据、E2E 种子、人工评估样本。
 
-- 正文在 `chapters/`（定稿为 `ch-NNN.md`，候选稿在 `chapters/ch-NNN/scenes/`）
-- 设定在 `world/` 与 `characters/`
-- 索引在 `.inkloom/index.sqlite`（可删，执行 `inkloom reindex` 可重建）
+5 个角色 / 5 章蓝图 / 3 条线索 / 5 个境界 / 前 3 章正文已完成。
+
+重新生成：`pnpm fixture`

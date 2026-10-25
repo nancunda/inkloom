@@ -1,7 +1,7 @@
 [
   {
     "id": "rel1",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "fromId": "c3",
     "toId": "c1",
     "kind": "master",
@@ -10,7 +10,7 @@
   },
   {
     "id": "rel2",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "fromId": "c2",
     "toId": "c1",
     "kind": "ally",
@@ -19,7 +19,7 @@
   },
   {
     "id": "rel3",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "fromId": "c4",
     "toId": "c1",
     "kind": "enemy",

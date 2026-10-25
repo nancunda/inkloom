@@ -1,34 +1,34 @@
 [
   {
     "id": "c1",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "name": "林岚",
     "role": "protagonist",
     "gender": "女",
     "age": "17",
     "appearance": "青灰道袍，眉间一点朱砂，左眉一道旧疤，腕上缠麻绳",
-    "personality": "执拗、认死理，对承诺看得比命重",
+    "personality": "执拗、认死理，对承诺看得比命重，话极少",
     "background": "剑冢守碑人的养女，不知自己姓氏来历",
-    "motivation": "找到刻在剑冢碑上的那个名字",
+    "motivation": "确认碑上刻的名字是不是自己的",
     "arc": "从「想被承认」到「自己定义名字」",
     "curPhysical": "健康",
     "curTierId": "t2",
     "stateChapter": 1,
-    "stateStale": false
+    "stateStale": false,
+    "visualAnchor": "青灰道袍，眉间一点朱砂，左眉一道旧疤，佩短刀在右腰，腕缠麻绳"
   },
   {
     "id": "c2",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "name": "苏婉",
     "role": "supporting",
     "personality": "冷静、话少，习惯先算代价再动手",
     "background": "药庐传人",
-    "curPhysical": "健康",
     "stateChapter": 1
   },
   {
     "id": "c3",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "name": "玄阳子",
     "role": "supporting",
     "personality": "散漫、爱酒，剑术极高",
@@ -37,16 +37,17 @@
   },
   {
     "id": "c4",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "name": "裴无咎",
     "role": "antagonist",
-    "personality": "温文尔雅，杀人时也笑着说抱歉",
-    "background": "天枢阁少主",
+    "personality": "温文尔雅，说话像在算账，杀人时也笑着说抱歉",
+    "background": "天枢阁阁主第四子，为姓这个姓杀了三个兄长",
+    "motivation": "弄清碑上那个名字，好证明自己配姓裴",
     "stateChapter": 1
   },
   {
     "id": "c5",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "name": "老仆",
     "role": "minor",
     "personality": "沉默，只在关键处说一句",

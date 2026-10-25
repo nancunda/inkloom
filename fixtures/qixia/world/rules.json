@@ -1,34 +1,34 @@
 [
   {
     "id": "w1",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "category": "power",
     "name": "灵潮",
-    "content": "灵气每甲子涨落一次，涨时突破成功率翻倍，落时强行突破必死",
+    "content": "灵气每甲子涨落一次。涨时突破成功率翻倍，落时强行突破必死",
     "priority": "hard"
   },
   {
     "id": "w2",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "category": "geography",
     "name": "剑冢不可越",
-    "content": "剑冢边界有剑气，未经允许者越过即被削去三魂之一",
+    "content": "剑冢边界有剑气，未经允许者越过即被削去三魂之一。越界后不可回头",
     "priority": "hard"
   },
   {
     "id": "w3",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "category": "taboo",
-    "name": "不可直呼碑上之名",
-    "content": "直呼剑冢碑上的名字会引来碑主残念",
+    "name": "碑名不可由他人念",
+    "content": "碑上的名字只有本人能念。他人代念会招来碑主残念，残念只认念名者",
     "priority": "hard"
   },
   {
     "id": "w4",
-    "projectId": "p",
+    "projectId": "proj_f81c8babe4d642c2",
     "category": "faction",
-    "name": "天枢阁",
-    "content": "掌门以下分四院，最强的那个才配姓裴",
+    "name": "天枢阁的姓",
+    "content": "掌门以下分四院，只有最强的那个才配姓裴。同辈相残不算罪",
     "priority": "soft"
   }
 ]

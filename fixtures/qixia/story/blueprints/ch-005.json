@@ -1,11 +1,16 @@
 {
   "id": "b5",
-  "projectId": "p",
+  "projectId": "proj_f81c8babe4d642c2",
   "chapterNo": 5,
   "title": "第五章 名字",
-  "goal": "决定是否读出名",
-  "conflict": "读名即召残念",
+  "goal": "决定是否念出名",
+  "conflict": "念名即召残念",
   "hook": "她开口了",
+  "castIds": [
+    "c1",
+    "c4"
+  ],
+  "locationId": "l2",
   "tensionLevel": 5,
   "beatType": "twist"
 }

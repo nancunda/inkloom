@@ -1,12 +1,17 @@
 {
   "id": "b2",
-  "projectId": "p",
+  "projectId": "proj_f81c8babe4d642c2",
   "chapterNo": 2,
   "title": "第二章 守碑人",
-  "goal": "得知自己的身世线索",
+  "goal": "问出自己身世的线索",
   "conflict": "老仆不肯说",
-  "turn": "老仆露出左眉同样的疤",
+  "turn": "老仆左眉有同样的疤",
   "hook": "他说：你不该问",
+  "castIds": [
+    "c1",
+    "c5",
+    "c2"
+  ],
   "tensionLevel": 3,
   "beatType": "rising"
 }
