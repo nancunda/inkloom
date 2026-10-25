@@ -258,7 +258,8 @@ function HealthReportView({ report }: { report: HealthReport }) {
       )}
       {report.findings.map((f) => (
         <p key={`${f.sceneNo}-${f.kind}`} className="text-neutral-700">
-          场景 {f.sceneNo} · {KIND_LABEL[f.kind]}：{String(f.value)}
+          场景 {f.sceneNo} · {KIND_LABEL[f.kind]}：
+          {typeof f.value === 'boolean' ? (f.value ? '疑似冲突' : '未发现冲突') : String(f.value)}
           <span className="ml-1 text-neutral-400">
             （置信 {f.confidence.toFixed(2)}
             {f.injectable ? '' : '，低于 0.75 不注入'}）
