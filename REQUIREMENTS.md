@@ -65,8 +65,8 @@
 | P0-6 | 章节蓝图 | `goal / conflict / turn / hook / castIds / beatType / tensionLevel / userGuidance` |
 | P0-7 | 剧情线索 | `setup/payoff/foreshadow/callback/running_gag` 五类；记录埋设/推进/回收章 |
 | P0-8 | 文风资产 | 描述 + 示例文本 + 反 AI 规则（禁用词/句式/量化上限） |
-| P0-9 | **版本机制** | 一切可变对象 append-only；每次修改生成 `EntityRevision`（存完整快照） |
-| P0-10 | 四种回退 | 单段 / 单场景 / 要素 / 时间点，全部可执行且回退本身也留痕 |
+| P0-9 | **版本机制** | 一切可变**要素** append-only；每次修改生成 `EntityRevision`（存完整快照）。**正文除外**：正文历史归 Git（见 P0-20） |
+| P0-10 | 四种回退 | 单段 / 单场景 / 要素 / 时间点，全部可执行且回退本身也留痕。载体：段标记 `<!-- seg:ID -->` / 场景文件 + Git / `revisions/*.jsonl` / checkpoint（Git ref + JSONL 行号同点） |
 | P0-11 | 软删除 | 删除要素为标记，可恢复 |
 | P0-12 | 备份与导出 | 可导出整本书为 JSON；可导出正文为 Markdown / TXT |
 | P0-13 | **地理与距离** | `Location` + `Route`；两地耗时由系统算，不得由 AI 估 |
@@ -91,7 +91,7 @@
 | P1-5 | 生成快照 | `generation_run.assembledPrompt` 存完整装配结果，可复现 |
 | P1-6 | 流式生成 | SSE 流式；可中断；中断后保留已生成部分（`status=partial`） |
 | P1-7 | 场景切分 | 按 `===场景N===` 标记切；不遵守则启发式降级 + warning |
-| P1-8 | 逐场景确认 | 接受 / 拒绝 / 编辑后接受；接受才落 `EntityRevision` |
+| P1-8 | 逐场景确认 | 接受 / 拒绝 / 编辑后接受；**接受 = 原子写场景文件 + git commit**（不写 `EntityRevision`）；编辑按 `<!-- seg:ID -->` 块进行 |
 | P1-9 | 差异展示 | 中文按**字符级** diff（非行级）；三种形态（新建/重写/局部） |
 | P1-10 | 定稿 | 汇总场景正文；可选标记角色 `stateStale` |
 | P1-11 | 未兑现清单 | 生成前自动产出并注入 prompt（纯 SQL，无需 AI） |

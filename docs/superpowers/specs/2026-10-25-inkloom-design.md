@@ -274,8 +274,14 @@ my-novel/                          ← 一本书的根目录，用户可自由�
 | 操作 | 说明 |
 |---|---|
 | 导入 | 选文件夹 → 校验 → 加载；或从 txt/md 导入（P2）|
-| 导出 | 复制文件夹即可；或导出为单文件 .md |
+| 导出·备份 | 复制文件夹即可（含 .inkloom/revisions 与 Git 仓库）|
+| 导出·整书 JSON | `inkloom export --format json` → 合并 novel.json + 全部要素 + revisions 为单文件 |
+| 导出·正文 Markdown | `inkloom export --format md` → 合并所有 `ch-NNN.md` 为单文件 |
+| 导出·正文 TXT | `inkloom export --format txt` → 纯文本，去 Markdown 标记与 HTML 注释 |
 | 迁移 | 换电脑 = 拷贝文件夹 |
+
+> ❗二次审查修正：P0-12 要求「导出整本书为 JSON」与「正文导出 Markdown / TXT」，
+> 原设计只写了“复制文件夹 / 导出单文件 .md”，**JSON 与 TXT 无对应功能**，P0 验收无法执行。
 
 ### 2.6 数据一致性与并发契约
 
@@ -320,34 +326,77 @@ JSONL 的好处：append-only、人类可读、损坏可逐行恢复、Git 友�
 #### 写入顺序（原子性）
 
 ```
+0. 写前 CAS：读目标文件算 contentHash，与索引记录比对
+   不一致 → 中止，转「外部修改冲突」流程（见下）
 1. 写临时文件 xxx.tmp
 2. fsync + rename          ← 原子替换，此刻文件已落盘
-3. 更新 index.sqlite（事务）
-4. 追加 revisions/*.jsonl  ← 仅结构化要素需要
+3. 追加 revisions/*.jsonl  ← 仅结构化要素需要；必须早于索引
+4. 更新 index.sqlite（事务）
 5. 若 versionMode=git 且属于“用户动作”节点 → git commit
 ```
 
+> ❗**二次审查修正**：原顺序把「索引」写在「revisions」之前，然后用补偿事务去回滚一个**本可丢弃**的派生层，
+> 去保护一个**必须先写**的事实源——顺序是反的。现在改为 `文件 → 历史 → 索引 → commit`。
+
 | 失败点 | 后果 | 处理 |
 |---|---|---|
+| 0 | 无副作用 | 转「外部修改冲突」流程，保留两版供用户选择 |
 | 1–2 | 无副作用 | 直接报错 |
-| 3 | 文件已写，索引旧 | 标记 dirty，下次读取时 reindex |
-| 4 | 索引已更新，历史缺失 | 回滚索引，重新执行 |
-| 5 | 文件正常，未提交 | 记 warning，下次动作时重试 |
+| 3 | 文件已写，历史缺一条 | 标该要素 `historyGap=true`；下次写该要素时用文件当前值补一条基线 revision |
+| 4 | 文件与历史已写，索引旧 | 标记 dirty，下次读取时 reindex（索引本就可丢弃） |
+| 5 | 全部已落盘，未提交 | 记 warning，下次动作时补 commit |
 
 #### 并发控制
 
 | 对象 | 机制 |
 |---|---|
 | 所有写操作 | **单一写队列（in-process mutex）**，强制串行 |
-| `version` 取号 | 事务内 `SELECT MAX(version)+1`，唯一约束冲突则重试 |
+| `version` 取号 | **在单一写队列内**读该要素 JSONL 末行的 `version` +1。文件系统无唯一约束可冲突，单调性由串行队列保证 |
 | Git 子进程 | 独立串行队列，同一时刻只允许一个 |
 | SQLite | `PRAGMA journal_mode=WAL` + `busy_timeout=5000` |
 
 **硬约束：即使将来恢复并行生成，写入必须串行。** 生成可并行，落库不可。
 
-#### 外部编辑检测
+#### `commitState` 与写入顺序的对齐（幂等依据）
 
-用户用 VSCode 改了 `.md`，系统必须不能静默覆盖：
+> ❗二次审查修正：`commitState` 上一轮定义了却**没有任何流程使用**，且 §7.2 冒出了集合外的 `pending`。现在把两者对齐。
+
+```
+[建 run]  GenerationRun.commitState = 'pending'
+            ↓
+步骤 0–4  全部落盘（文件 → JSONL → 索引）
+            ↓
+步骤 5    git commit 完成
+            ↓
+          commitState = 'committed'
+
+崩溃恢复：启动时扫 commitState='pending' 且超过 60s 的 run
+  ├─ 校验文件与 JSONL 是否已到位
+  ├─ 已到位  → 补 commit，置 'committed'
+  └─ 不确定  → 置 'unknown'，在任务中心标红提醒用户人工确认
+```
+
+**三态封闭**：`pending | committed | unknown`。任何其他值都是 bug。
+
+> ⚠️ `commitState` 只挂在 `GenerationRun` 上，但 §2.6 保护的是四类写入
+> （文件 / JSONL / 索引 / Git），其中「用户手工改要素」不产生 run。
+> 此类写入的幂等由**单一写队列 + 写前 CAS** 保证，不依赖 `commitState`。
+
+#### 外部编辑检测（两道防线，缺一不可）
+
+**防线 1：写前 CAS —— 唯一能真正防丢的手段**
+
+```
+写任何文件前：
+  1. 读目标文件，算 contentHash
+  2. 与索引里记录的 contentHash 比对
+  3. 不一致 → 中止写入，进入冲突流程：
+     a. 生成冲突副本 <name>.conflict.<timestamp>.md
+     b. UI 并排展示两版差异，由用户选「保留我的」/「保留外部」/「手工合并」
+  4. 一致 → 允许写入
+```
+
+**防线 2：写后轮询 —— 只用于 UI 同步，不用于保护数据**
 
 ```
 每 2s 轮询 mtime（或用 chokidar watch）：
@@ -358,13 +407,137 @@ JSONL 的好处：append-only、人类可读、损坏可逐行恢复、Git 友�
       3. 强制刷新 UI
 ```
 
+> ❗**二次审查修正**：原设计只有防线 2。轮询有 2 秒窗口，而 `rename` 是无条件替换——
+> 窗口内的手动编辑会被静默吞掉，正是本项要消灭的失败模式。必须有写前 CAS。
+
 #### 索引重建
 
 ```bash
 inkloom reindex <book-dir>
-# 扫描所有 .md/.json -> 重建 index.sqlite
-# 不碰 revisions/*.jsonl（它是事实源，不是索引）
+# 扫描三类文件 -> 重建 index.sqlite
+#   .md    -> Chapter / DraftSegment / 字数 / 场景边界
+#   .json  -> Project / Character / WorldRule / Blueprint / Location / Route ...
+#   .jsonl -> EntityRevision（要素历史：是事实源，但同时作为索引的输入）
+# 幂等：可重复执行；以文件内容为准，索引里的一切都可丢弃
 ```
+
+> ❗**二次审查修正**：原 reindex 只扫 `.md`/`.json` 且明写「不碰 .jsonl」，
+> 导致 `EntityRevision` 表无法从事实源重建——append-only 的唯一防线落在了一个不可重建的派生表上。
+
+---
+
+### 2.7 正文文件格式契约
+
+> ⚠️ **二次审查后新增，本节优先级最高。**
+> 它是 P0-10（四种回退）、P0-18（reindex）、撤销定稿、单场景重生成、字数统计的**共同前置**。
+> 缺了它，定稿就是一次不可逆合并——用户第一次点「撤销定稿」时数据已无法还原，
+> 而那时整本正文都已以不可解析的形态落盘。**这个问题无法用后续补丁修。**
+
+#### 一、候选稿（场景级文件）
+
+路径：`chapters/ch-NNN/scenes/s{sceneNo}.v{version}.md`
+
+```markdown
+<!-- scene:1 v:3 -->
+<!-- seg:a3f -->
+林岚踏上山道，风从袖口灌进来。
+
+<!-- seg:b71 -->
+她按住腰间玉牌，指节泛白。
+
+<!-- seg:c02 -->
+“再往上，就是剑冢了。”老仆的声音从身后传来。
+```
+
+| 规则 | 说明 |
+|---|---|
+| 场景头 | 首行 `<!-- scene:N v:M -->`，`N`=场景号，`M`=该场景版本号（同场景递增） |
+| 段标记 | 每段前一条 `<!-- seg:XXX -->`，`XXX` = 3 位 base36 段 ID |
+| 段 ID 唯一性 | **全书范围内唯一且永不复用**；删除段时 ID 进墓碑表 |
+| 新段分配 | 系统分配；用户在编辑器插入新段 → 编辑器分配新 ID |
+| 段内容边界 | 标记之间的内容即该段正文（段内可含软换行，不含标记） |
+| 渲染 | HTML 注释在 Markdown 渲染时不可见；纯文本打开可见但不干扰阅读 |
+
+#### 二、定稿文件（章级）
+
+路径：`chapters/ch-NNN.md`
+
+```markdown
+# 第四章 剑冢
+
+<!-- scene:1 -->
+林岚踏上山道，风从袖口灌进来。
+
+她按住腰间玉牌，指节泛白。
+
+“再往上，就是剑冢了。”老仆的声音从身后传来。
+
+<!-- scene:2 -->
+……
+```
+
+| 规则 | 说明 |
+|---|---|
+| 场景边界 | **保留** `<!-- scene:N -->`，它是场景边界的唯一载体 |
+| 段标记 | **不保留** —— 定稿是成品，此层回退粒度降为场景级 |
+| 章节标题 | `# 第N章 <title>` 一级标题 |
+
+**这是有意的不对称**：候选稿需要段粒度（支持单段回退），定稿只保留场景粒度。
+理由：定稿后的编辑走「打开文件直接改 + Git」，不再走应用的段级操作。
+
+#### 三、反解规则（撤销定稿）
+
+```
+撤销定稿（finalized → review）：
+  1. 读 ch-NNN.md，按 <!-- scene:N --> 切分为 M 个场景块
+  2. 每个场景块新建候选文件 s{N}.v{lastVer+1}.md
+     └ 段落按空行切分，重新分配段 ID（旧 ID 已随定稿丢弃）
+  3. Chapter.status = 'review'
+  4. git commit（message 含「撤销定稿」）
+```
+
+**代价（必须让用户知情）**：撤销定稿后段落身份是**新分配**的，旧的段级回退记录失效。
+这是可接受的——撤销定稿是罕见操作，且**正文内容一字节不丢**。
+
+#### 四、单段回退
+
+```
+把段落 P 回退到版本 V：
+  1. 读 s{sceneNo}.v{V}.md，取出 seg ID == P 的段内容
+  2. 读当前最新 s{sceneNo}.v{latest}.md，替换 seg ID == P 的段内容
+  3. 写 s{sceneNo}.v{latest+1}.md（不覆盖旧版本）
+  4. 更新 DraftSegment.contentHash；记 changeSource='rollback' 的 revision
+```
+
+**关键：回退 = 产生新版本，绝不改写旧版本。** 旧版本永远在 Git 里。
+
+#### 五、时间点回退（Checkpoint）
+
+`.inkloom/checkpoints.jsonl`：
+
+```json
+{"id":"ck-0007","label":"第 4 章定稿","createdAt":"2026-10-25T10:00:00Z",
+ "gitRef":"a1b2c3d","revisionsOffsets":{"character__lin-lan.jsonl":42,"plot_thread__t-001.jsonl":7}}
+```
+
+```
+回到检查点 K：
+  1. git checkout <K.gitRef> -- chapters/ characters/ world/ story/ styles/
+  2. 每个 revisions/*.jsonl 截断到 K.revisionsOffsets[file] 行
+  3. reindex
+  4. 追加一条 changeSource='rollback' 的 checkpoint（回退本身也留痕）
+```
+
+> ❗**为什么必须同时截断 JSONL**：只回 Git 会出现「正文回到第 7 章、角色状态还在第 12 章」。
+> 两个事实源必须同点回退，这就是 P0-10「时间点回退」的原子性方案。
+
+#### 六、字数统计口径（三处必须一致）
+
+| 层 | 算法 |
+|---|---|
+| 段字数 | 去掉标记与空白后的汉字数 + 英文按字母计 |
+| 场景字数 | 该场景所有段字数之和 |
+| 章字数 | `Chapter.wordCount` = 定稿文件字数（缓存）；未定稿时 = 该章 accepted 段之和 |
 
 ---
 
@@ -377,8 +550,8 @@ inkloom reindex <book-dir>
 model EntityRevision {
   id               String   @id @default(cuid())
   entityType       String   // project | character | world_rule | power_tier
-                            // | blueprint | draft_segment | plot_thread
-                            // | style_asset | story_arc
+                            // | blueprint | plot_thread | style_asset | story_arc
+                            // ❗不含 draft_segment：正文不进 revision（见 ADR-27）
   entityId         String
   version          Int
   parentRevisionId String?  // 形成链，可追溯"从哪一版改来"
@@ -421,6 +594,9 @@ model Project {
   anchorLocked    Boolean  @default(false)
 
   createdAt       DateTime @default(now())
+  /// ★ 书籍生命周期状态：draft | completed | archived
+  /// ❗二次审查修正：原设计只说了三态但 Project 无字段可落，P0-1「归档」无法验收
+  status          String   @default("draft")
   archivedAt      DateTime?
 
   characters      Character[]
@@ -613,28 +789,46 @@ model StyleAsset {
 
 ### 3.9 正文：场景 / 段落
 
+> ❗**二次审查修正**：原设计下 `DraftSegment` 是段级行但 `filePath` 指向场景级文件，
+> 同一场景的所有段行共享同一个 `filePath`/`contentHash`——`seq` 在文件里没有落点，
+> **段落根本无法寻址**，P0-10「单段回退」的回退对象不存在。现已按 §2.7 的段标记方案修复。
+
 ```prisma
 model DraftSegment {
   id          String @id @default(cuid())
   projectId   String
   chapterNo   Int
   sceneNo     Int     // 场景号 = 确认单位
-  seq         Int     // 场景内段序
+  /// ★ 段 ID：对应文件里的 <!-- seg:XXX -->，全书唯一、永不复用
+  /// (filePath, segId) 唯一定位一段 —— 这是单段回退的唯一凭据
+  segId       String
+  seq         Int     // 场景内段序（冗余，仅用于排序；位置可变，不作身份）
   /// ❗已删除 content 字段：正文在 .md 文件里，此处只存指纹
-  /// 候选稿在 chapters/ch-NNN/scenes/sX.vY.md，定稿后合并到 ch-NNN.md
-  filePath    String  // 相对书根目录的路径
-  contentHash String  // 用于外部编辑检测
+  /// 候选稿在 chapters/ch-NNN/scenes/sX.vY.md（含段标记，见 §2.7）
+  filePath    String  // 相对书根目录的路径（场景级文件）
+  contentHash String  // ★ 该**段**的哈希，非整个文件的哈希
   wordCount   Int?
   status      String  // candidate | accepted | rejected | superseded
   sourceRunId String?
   acceptedAt  DateTime?
   deletedAt   DateTime?
+  @@unique([projectId, segId])
   @@index([projectId, chapterNo, sceneNo, seq])
   @@index([projectId, chapterNo, status])
 }
 ```
 
-**不变量**：`status='accepted'` 的段落集合构成该章的"当前正文"。定稿 = 该章无 `candidate` 段落。
+**不变量（已修正，消除两个“当前正文”定义打架）：**
+
+| 概念 | 由谁表示 |
+|---|---|
+| **工作稿** | `status='accepted'` 的段落集合 |
+| **定稿正文** | `chapters/ch-NNN.md`（存在即已定稿） |
+| **装配读取** | **只读 `ch-NNN.md`**，不读 accepted 集合 |
+| **定稿条件** | 该章无 `candidate` 段落 |
+
+> 原设计写“accepted 集合构成该章的当前正文”，与 §3.12“只有 finalized 章节才计入已有正文”矛盾。
+> 装配到底读哪份直接决定跨章衔接内容，必须二选一——现在选**读定稿文件**。
 
 ### 3.10 生成记录（可复现的唯一凭据）
 
@@ -647,8 +841,10 @@ model GenerationRun {
   sceneNo         Int?
   /// ★ 父 run（并行/多阶段生成时形成树，便于失效传播）
   parentRunId     String?
-  /// ★ commitState：写操作幂等的三态（not_committed | committed | unknown）
-  commitState     String   @default("not_committed")
+  /// ★ commitState：写操作幂等的状态机
+  /// pending（已开始写，结果未知）| committed | unknown（进程崩溃后发现不确定）
+  /// 合法集合封闭为这三态；不得出现第四种
+  commitState     String   @default("pending")
   purpose         String   // draft | blueprint | review | repair | segment_split | vision
                           // | scene_skeleton | scene_fill | state_proposal | judge
 
@@ -668,7 +864,8 @@ model GenerationRun {
   cacheHitTokens  Int?
   costCents       Int?
 
-  status          String   // running | success | failed | aborted | partial
+  /// ★ 二次审查修正：加 queued——P1-18 任务中心要求展示「排队」态，原集合无此值
+  status          String   // queued | running | success | failed | aborted | partial
   errorMessage    String?
   /// ★ 降级留痕：{"kind":"trim","dropped":["history_raw"],"reason":"budget"}
   degradedReason  String?
@@ -723,7 +920,7 @@ model Asset {
 ### 3.12 章节聚合根与摘要
 
 > ⚠️ 自检补漏：原设计只有 `Blueprint`（计划）和 `DraftSegment`（正文），缺一个「章节」聚合根，
-> 导致章节状态、字数统计、L3 摘要无处存放。
+> 导致章节状态、字数统计、C3 摘要无处存放。
 
 ```prisma
 model Chapter {
@@ -735,7 +932,8 @@ model Chapter {
   status       String   @default("planned")
   wordCount    Int      @default(0)   // accepted 段落字数缓存
 
-  /// L3 压缩层的章节摘要（约 200 字），由 LLM 生成
+  /// C3 压缩层的章节摘要（约 200 字），由 LLM 生成
+  /// ❗命名为 C3 而非 L3：L 专用于信息供给分级（L0–L4）
   summary      String?
   /// 生成摘要时的正文指纹；正文变化则标脏重算
   summaryHash  String?
@@ -794,13 +992,16 @@ model ScenePlan {
   castIds     String?  // JSON
   transition  String?  // 与上一场景的转换（时间/地点/因果）
   wordBudget  Int?
-  status      String   @default("planned") // planned | filling | filled | accepted | rejected
+  status      String   @default("planned") // planned | filling | filled
+  /// ❗二次审查修正：删去 accepted / rejected——确认态一律归 DraftSegment.status，
+  /// 两套状态同时表示“已确认”会互相打架（失效传播时静默降级了用户的确认）
   latestRunId String?
   @@unique([projectId, chapterNo, sceneNo])
 }
 ```
 
-**失效传播规则**：场景 N 被重写时，N+1..M 的 `ScenePlan.status` 回退为 `planned`，并提示“后续场景可能需重生成”。
+**失效传播规则**：场景 N 被重写时，N+1..M 的 `ScenePlan.status` 回退为 `planned` 并标 `stale=true`，
+提示“后续场景可能需重生成”。**已 accepted 的 `DraftSegment` 不被静默降级**——由用户决定是否重生成。
 
 ### 3.12.2 模型注册表 ModelProfile
 
@@ -813,6 +1014,10 @@ model ModelProfile {
   displayName       String
   contextWindow     Int     // 1048576
   maxOutput         Int     // 393216
+  /// 价格来源：provider 官方定价页，首次配置时由用户录入并经一次真实调用对账
+  /// ❗二次审查修正：原表 deepseek-flash 三列价格均为「—」，
+  ///   导致 costCents / dailyCostLimitCents / runCostLimitCents 全部不可计算
+  /// ★ 为 null 时：costCents 必须记 null（**不得记 0**），UI 显示「未配置价格」
   inputPricePerM    Float?  // 元/百万 token
   outputPricePerM   Float?
   cacheHitPricePerM Float?
@@ -981,15 +1186,20 @@ model CharacterSignature {
 
 ```prisma
 model WritingTechnique {
-  id        String   @id @default(cuid())
-  projectId String
-  name      String   // 欲扬先抑 / 三幕式 / 反差萌 / 留白 / 悬念前置
-  category  String   // rhythm | description | dialogue | foreshadow | emotion | entrance
-  content   String   // 具体怎么做
-  scope     String   // global | arc | chapter | character
-  examples  String?  // JSON: { good, bad }
-  priority  Int      @default(3)
-  isActive  Boolean  @default(true)
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String   // 欲扬先抑 / 三幕式 / 反差萌 / 留白 / 悬念前置
+  category    String   // rhythm | description | dialogue | foreshadow | emotion | entrance
+  content     String   // 具体怎么做
+  scope       String   // global | arc | chapter | character
+  /// ★ 作用域指针；scope 决定哪个字段必填，其余为 null
+  /// ❗二次审查修正：原设计只有 scope 字符串，arc/chapter/character 三个作用域都无法定位到具体对象
+  arcId       String?  // scope=arc 时必填
+  chapterNo   Int?     // scope=chapter 时必填（直接指章号，不再用 beatType 推导）
+  characterId String?  // scope=character 时必填
+  examples    String?  // JSON: { good, bad }
+  priority    Int      @default(3)
+  isActive    Boolean  @default(true)
 }
 ```
 
@@ -1001,7 +1211,9 @@ model WritingTechnique {
 | `WritingTechnique` | **具体手法**（可开关、可测效果） | 书/卷/章/角色 | “欲扬先抑”、“留白” |
 | `CharacterSignature` | **角色专属标记** | 角色级 | 出场诗、口头禅 |
 
-**注入策略按 `scope`：** `global` → 每次进 system；`chapter` → 只在该 `beatType` 的章注入；`character` → 只在该角色出场时注入。
+**注入策略按 `scope`：** `global` → 每次进 system；`arc` → 在 `arcId` 对应卷的章范围内进 user；`chapter` → 只在 `chapterNo` 指定的章注入；`character` → 只在该角色出场时注入。
+
+> ❗二次审查修正：原写“`chapter` → 只在该 `beatType` 的章注入”，“该 beatType”指代不明（beatType 是蓝图字段，不是作用域指针），已改为直接给 `chapterNo`。
 
 ### 3.18 参考资料（联网搜索）
 
@@ -1037,7 +1249,10 @@ model Reference {
 ```
 [1] 用户点击「写第 N 章」
         │
-[2] 装载（core/context/loadChapterContext）
+[2] 装载（api/context/loadChapterContext —— 在 api 层做 IO）
+    │  ❗core/context 只接收已装载的数组，不读文件
+    ├─ ★ Chapter(chapterNo=N)          —— 不存在则创建（status=planned）
+    │     ❗二次审查修正：状态机从 planned 起，但原设计全文未定义谁插入该行
     ├─ Project（含锚点）
     ├─ Blueprint(chapterNo=N)          —— 必须存在，否则拒绝
     ├─ Characters[castIds]             —— 只取出场角色
@@ -1066,14 +1281,16 @@ model Reference {
 [6] 切分（core/text/splitScenes）
     ├─ 优先按 ===场景N=== 标记
     ├─ 失败降级：空行 + 长度启发式，记 warnings
+    ├─ ★ 为每段分配 segId（全书唯一、永不复用）并写入 <!-- seg:ID -->
     └─ 产出 DraftSegment[](status=candidate)
         │
 [7] 前端逐场景展示（新建 / 重写 / 局部）
         │
 [8] 用户逐场景操作
-    ├─ accept  → status=accepted + 写 EntityRevision
+    ├─ accept  → status=accepted + 原子写 scenes/sX.vY.md + git commit
+    │      ❗不写 EntityRevision（正文历史归 Git，见 ADR-27）
     ├─ reject  → status=rejected
-    └─ edit    → 用户改后 accept
+    └─ edit    → 用户改后 accept（编辑器按 <!-- seg:ID --> 块编辑，见 §2.7）
         │
 [9] 定稿
     ├─ 校验：该章无 candidate
@@ -1406,11 +1623,15 @@ resolveCharacterState(characterId, chapterNo, revisions[]):
 
 | 级别 | 内容 | 给不给 | 谁批准 | 缺了会怎样 |
 |---|---|---|---|---|
-| **L0 强制** | 锚点（coreIdea/theme/tone）、本章蓝图、hard 世界规则、出场角色状态 | **必须全给** | 建书时一次性 | 必然写崩 |
-| **L1 强约束** | 力量体系 tier、角色签名、角色关系、地理距离、未兑现清单 | **必须全给** | 创建要素时 | 一致性崩坏 |
+| **L0 强制** | 锚点（coreIdea/theme/tone）、本章蓝图、hard 世界规则、出场角色状态、**文风样本（S2）** | **必须全给** | 建书时一次性 | 必然写崩 |
+| **L1 强约束** | 力量体系 tier、角色签名、角色关系、地理距离、未兑现清单、**character.visualAnchor（有值时）** | **必须全给** | 创建要素时 | 一致性崩坏 |
 | **L2 上下文** | 前 3 章摘要、上章结尾 800 字、soft 规则 | 尽量给 | 不需批准（可降级但留痕） | 衔接生硬 |
 | **L3 参考** | 联网搜索结果、久远章节细节 | 按需 | **必须显式授权** | 可能引入噪声、跑偏 |
-| **L4 可选** | 视觉锚点、写作手法、文风样本 | 可选 | 需 | 影响风格，不影响正确性 |
+| **L4 可选** | 写作手法（WritingTechnique） | 可选 | **用户在设置里逐条开启** | 影响风格，不影响正确性 |
+
+> ❗**二次审查修正**：原表 L4 的「谁批准」只有“需”一字且与 S2 强制注入冲突：
+> 文风样本既是 L4「可选」又是 system 必需；`visualAnchor` 既是 L4「可选」又是 P1「不裁剪」。
+> 现改为：**文风样本归 L0、visualAnchor 归 L1、L4 只留写作手法**。
 
 **三条与审批相关的硬规则：**
 
@@ -1550,20 +1771,52 @@ React Flow 的 `custom node` 机制使得“章节块”可以直接把拖拽事
 
 #### 三层分工（按“需要什么能力”切，不是按阶段堆）
 
+> ❗**命名修正**：本节原用 `L1/L2/L3` 指代计算/判断/生成层，与 §4.14 的信息供给分级 `L0–L4` 撞名
+> （`L2` 在信息供给里是“上下文”、在压缩层里是 `C2`）。现统一改为 **Tier 1/2/3**，
+> 与 Stage（界面）/ C（压缩）/ L（信息供给）彻底分开。全库只有四个前缀：Stage / C / L / Tier。
+
 ```
 ┌───────────────────────────────────────────┐
-│ L3 生成层   写正文 / 生成诗号 / 生成蓝图      │  LLM
-│             只有一个，不需要多智能体          │  慢、贵、需创造力
+│ Tier 3 生成层  写正文 / 生成诗号 / 生成蓝图    │  LLM
+│              只有一个，不需要多智能体          │  慢、贵、需创造力
 ├───────────────────────────────────────────┤
-│ L2 判断层   一致性 / 反AI味 / 节奏 / 行为推演  │  ★ JEV
-│             大量、并行、需确定性              │  快、便宜、结构化
+│ Tier 2 判断层  一致性 / 反AI味 / 节奏 / 行为推演 │  ★ JEV
+│              大量、并行、需确定性              │  快、便宜、结构化
 ├───────────────────────────────────────────┤
-│ L1 计算层   距离/时间/年龄/战力比较/张力曲线   │  纯函数（core）
-│             零成本、零延迟、100% 确定         │  不算 LLM
+│ Tier 1 计算层  距离/时间/年龄/战力比较/张力曲线  │  纯函数（core）
+│              零成本、零延迟、100% 确定         │  不算 LLM
 └───────────────────────────────────────────┘
 ```
 
 #### JEV 在 inkloom 的具体用法（P2 起）
+
+**接口先行（P1 就把接口定下，不实现）**——P1-17 要求预留 `JudgeProvider`：
+
+```ts
+// packages/core/src/judge/types.ts  —— 纯类型，零实现，零依赖
+export type JudgePrimitive = 'choice' | 'score' | 'noul'
+
+export interface JudgeRequest {
+  primitive: JudgePrimitive
+  question: string          // “角色 X 在此情境会怎么做”
+  options?: string[]        // choice 必填
+  scale?: [number, number]  // score 必填，默认 [1,5]
+  context: string           // 判断所依据的情境描述
+}
+
+export interface JudgeResult {
+  value: string | number | boolean
+  confidence: number        // 0–1；★ <0.75 时不得注入 prompt（ADR-29）
+  distribution?: Record<string, number>
+}
+
+export interface JudgeProvider {
+  readonly id: string                      // typesafe-jev | local | mock
+  judge(reqs: JudgeRequest[]): Promise<JudgeResult[]>  // 批量并行
+}
+```
+
+> 实现放 `packages/adapters`，MVP 只提供 `mock` 实现（固定返回 + 单测用）。
 
 | 问题 | 原语 | 用途 |
 |---|---|---|
@@ -1581,12 +1834,12 @@ React Flow 的 `custom node` 机制使得“章节块”可以直接把拖拽事
 
 | 阶段 | 做什么 | 新增成本 |
 |---|---|---|
-| **MVP** | 只有 L1 + L3（单次调用） | 0 |
-| **P2** | 加 L2：先做“反 AI 味打分”+“一致性检查” | 一个 JEV provider（可接 TypeSafe API 或自部署 Laya） |
+| **MVP** | 只有 Tier 1 + Tier 3（单次调用） | 0 |
+| **P2** | 加 Tier 2：先做“反 AI 味打分”+“一致性检查” | 一个 JEV provider（可接 TypeSafe API 或自部署 Laya） |
 | **P3** | 角色级推演：20 个角色各问一次 Choice | 并发调用 |
 | **P4** | 多智能体分工：规划者/写作者/审稿者 | 角色分离 |
 
-**关键决策：L2 判断层不进 MVP。** 因为它的前提是“有东西可判断”——得先能生成，才谈得上判断。
+**关键决策：Tier 2 判断层不进 MVP。** 因为它的前提是“有东西可判断”——得先能生成，才谈得上判断。
 
 ### 4.17 JEV 与 LLM 的协作时序（写第 N 章的完整调用链）
 
@@ -1640,7 +1893,7 @@ React Flow 的 `custom node` 机制使得“章节块”可以直接把拖拽事
 | Cursor 3 的设计 | inkloom 的对应 | 价值 |
 |---|---|---|
 | 智能体优先界面 | **任务中心**（侧边栏统一管生成任务） | 不再“点了等” |
-| 并行运行多个智能体 | **并行生成多场景** | 一章 8 场景可同时跑 |
+| 并行运行多个智能体 | **并行生成多场景**（⚠️ **实验，默认关闭**，见下方关键借鉴一） | 一章 8 场景可同时跑，但章内因果会丢 |
 | 智能体产出成果一目了然 | 场景卡片实时状态 | 知道在干什么 |
 | 本地↔云端交接 | **后台任务**（关页面也继续） | 长任务不丢 |
 | 差异视图 | 场景级 diff | 已有 |
@@ -1718,7 +1971,7 @@ React Flow 的 `custom node` 机制使得“章节块”可以直接把拖拽事
 
 | 机制 | 说明 |
 |---|---|
-| 未兑现清单 | 每章生成前自动计算并注入 U2 |
+| 未兑现清单 | 每章生成前自动计算并注入 U3 |
 | running_gag 复用提醒 | 单独分组，超过 8 章未复用则提示 |
 | 回收校验 | 定稿时检查 `resolvedChapter` 是否被填入 |
 
@@ -1860,7 +2113,7 @@ unknown       → 超时且已开始写 → 绝不自动重试，标「待人工
 |---|---|---|
 | 1 | 建书 → 建 3 角色 → 建蓝图 | 数据落库可见 |
 | 2 | 生成 → 接受场景1 → 拒绝场景2 → 定稿 | 定稿只含场景1 |
-| 3 | 回退到上一版 | 正文恢复 + 多一条 revision |
+| 3 | 回退到上一版 | 正文恢复 + 新增一条 Git commit（正文不进 revision） |
 | 4 | 时间点回退 | 所有实体指向旧版本 |
 
 **E2E 不测"AI 写得好不好"**——无法自动断言。
@@ -1939,8 +2192,8 @@ pnpm depcheck           # 依赖卫生
 | 阶段 | DoD（可验证） |
 |---|---|
 | P0 | `prisma migrate` 通过；`core` 覆盖率 >80%；可建书/角色/蓝图；任意要素可回退且留痕 |
-| P1 | `prompt` 快照锁定；`generation_run` 存完整 `assembledPrompt`；能生成并切场景 |
-| P2 | 场景接受后落 `EntityRevision`；拒绝不落库；定稿章节可导出 |
+| P1 | `prompt` 快照锁定；`generation_run` 存完整 `assembledPrompt`；能生成并切场景；**场景接受后原子写文件 + commit（不写 revision）**；拒绝不落盘；定稿章节可导出 |
+| P2 | 局部重写可用；txt/md 导入可用；JEV 判断层可开关 |
 | P3 | `visualAnchor` 出现在装配结果中（快照可证） |
 | P4 | 生成图落本地；`Asset` 记录 prompt/provider/seed 可复现 |
 
@@ -2009,7 +2262,7 @@ draft（创作中） ──→ completed（完结） ──→ archived（归档
 | 密钥校验 | 启动时探测各 provider 可用性，失败则只禁用对应功能，不阻止启动 |
 | 本地服务绑定 | 默认 `127.0.0.1`，**不监听 `0.0.0.0`** |
 | 日志脱敏 | 日志中 `Authorization` / `sk-` 前缀一律星号化 |
-| 导出脱敏 | 导出 JSON 时制除密钥字段（本来就不在库里） |
+| 导出脱敏 | 导出 JSON 时剔除密钥字段（本来就不在库里） |
 
 ---
 
@@ -2017,7 +2270,7 @@ draft（创作中） ──→ completed（完结） ──→ archived（归档
 
 | 阶段 | 内容 | 预估 | 备注 |
 |---|---|---|---|
-| **P0** | 文件系统 + 索引可重建 + Git 版本 + 16 条 P0 需求 | **4–5 周** | 原估 2–3 周偏乐观（未计 reindex/Git/四种回退/地理）|
+| **P0** | 文件系统 + 索引可重建 + Git 版本 + **22 条 P0 需求** | **5–6 周** | 原估 2–3 周偏乐观（未计 reindex/Git/四种回退/地理/并发/正文契约）|
 | **P1** | 单章共创 + 叙事地图 + 关系网络 + 状态提案 | **4–5 周** | 含逐场景确认与 diff |
 | **P2** | 体验完善 + JEV 判断层 + 联网搜索 | **3 周** | |
 | **P3** | 视觉锚点 | **3 天** | |
@@ -2070,8 +2323,8 @@ draft（创作中） ──→ completed（完结） ──→ archived（归档
 | ADR-15 | 蓝图生成必须走“卷→章”两级 | 直接生成 100 章蓝图会失去起伏节奏 | 一次性生全书 |
 | ADR-16 | 距离/时间/年龄等事实由系统算，不让 AI 估 | AI 估算每次不同，必然前后矛盾 | 让 AI 自由发挥 |
 | ADR-17 | 可视化用 React Flow，不自写拖拽引擎 | 拖拽/连线/缩放/布局均有成熟实现 | D3 手写 / Canvas 自绘 |
-| ADR-18 | L2 判断层用 JEV 而非 LLM | 20 角色×4 判断用 LLM 既慢又贵（JEV 几百毫秒、几分钱） | 全部用 LLM 推演 |
-| ADR-19 | L2 判断层不进 MVP | 前提是“有东西可判断”，得先能生成 | MVP 就上判断层 |
+| ADR-18 | Tier 2 判断层用 JEV 而非 LLM | 20 角色×4 判断用 LLM 既慢又贵（JEV 几百毫秒、几分钱） | 全部用 LLM 推演 |
+| ADR-19 | Tier 2 判断层不进 MVP | 前提是“有东西可判断”，得先能生成 | MVP 就上判断层 |
 | ADR-20 | 角色签名必须带 `frequency` 控制 | 每次出场都吟诗会变成尴尬套路 | 只要有签名就每次都注入 |
 | ADR-21 | 正文用 Markdown 文件，不用数据库 | 用户可直接看、不被软件绑架、崩溃不丢、Git 友好 | DB 当主存储 |
 | ADR-22 | 版本用 Git，不自研 revision | 天然获得 diff/revert/分支/备份；自研成本高且易错 | 自研 revision 表为主 |
@@ -2082,7 +2335,10 @@ draft（创作中） ──→ completed（完结） ──→ archived（归档
 | ADR-27 | 正文**不进** revision，只进 Git | 消除两套版本系统；revision 只管结构化要素 | 正文也写 revision |
 | ADR-28 | 默认**整章**生成，并行降为实验 | 并行无法保证章内因果（邻场景正文尚不存在）| 并行作为默认 |
 | ADR-29 | JEV 输出为**建议**，置信度<0.75 不注入 | 小模型不应替大模型做人物决策 | 硬性强约束 |
-| ADR-30 | 三重 L 命名分离：Stage/C/L | 同一标识符三套含义会导致实现级 bug | 统一叫 L |
+| ADR-30 | 四套命名分离：Stage/C/L/Tier | 同一标识符多套含义会导致实现级 bug（实际发现有四套 L） | 统一叫 L |
+| ADR-31 | 正文用**场景文件 + 隐藏段标记**（`<!-- seg:ID -->`） | 保住 P0-10 四种回退；文件数可控（≈24 个/章）；标记渲染不可见 | 段级文件（文件爆炸）/ 场景级回退（需求降级）|
+| ADR-32 | 定稿文件**只保留场景边界**，不保留段标记 | 定稿是成品，此层回退粒度降为场景级；撤销定稿时重分配段 ID | 段标记一直保留到定稿 |
+| ADR-33 | 时间点回退 = Git + JSONL 截断，必须同点 | 只回 Git 会出现“正文回第 7 章、角色状态还第 12 章” | 只回 Git |
 
 ---
 
@@ -2090,7 +2346,7 @@ draft（创作中） ──→ completed（完结） ──→ archived（归档
 
 | 结论 | 来源 | 具体位置 |
 |---|---|---|
-| 三级上下文注入 L0/L1/L2 | Pagekin | `src/services/agent/context-builder.ts` |
+| 三级上下文注入（**对方项目叫 L0/L1/L2，与本文 L0–L4 无对应关系**） | Pagekin | `src/services/agent/context-builder.ts` |
 | 写操作 `commitState` 三态 | Pagekin | `src/services/agent/agent-engine.ts` L280–330 |
 | 角色字段级溯源 `cs_provenance` | Pagekin | `electron/migrations/baseline-schema.ts` L89 |
 | `global_summary` 从蓝图拼装 | Pagekin | `src/services/builtin-prompt-templates.ts` L798 |
