@@ -1,0 +1,527 @@
+// inkloom 索引数据库（可丢弃的派生层）
+//
+// 铁律：SQLite 只是索引，文件才是唯一事实源。
+// 删掉 index.sqlite 后执行 `inkloom reindex` 必须能完全重建。
+//
+// 为什么一次建全 19 张表：SQLite 的 ALTER TABLE 能力有限，Prisma 迁移经常需要
+// 重建表。P0 只实现 15 张的读写，但 schema 一次到位，P1 不必改结构。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("INKLOOM_DATABASE_URL")
+}
+
+/// 书项目。rootPath 是绝对路径，folderId 是书内的身份锚
+model Project {
+  id              String    @id
+  folderId        String    @unique
+  rootPath        String
+  name            String
+  genre           String
+  subGenre        String?
+  targetAudience  String?
+  totalChapters   Int?
+  wordsPerChapter Int?
+  narrativePov    String?
+  coreIdea        String?
+  premise         String?
+  theme           String?
+  toneContract    String?
+  anchorLocked    Boolean   @default(false)
+  status          String    @default("draft")
+  createdAt       DateTime  @default(now())
+  archivedAt      DateTime?
+
+  characters    Character[]
+  worldRules    WorldRule[]
+  powerSystems  PowerSystem[]
+  blueprints    Blueprint[]
+  plotThreads   PlotThread[]
+  styleAssets   StyleAsset[]
+  storyArcs     StoryArc[]
+  locations     Location[]
+  routes        Route[]
+  techniques    WritingTechnique[]
+  signatures    CharacterSignature[]
+  relations     CharacterRelation[]
+  chapters      Chapter[]
+  scenePlans    ScenePlan[]
+  segments      DraftSegment[]
+  revisions     EntityRevision[]
+  settings      ProjectSetting?
+  modelProfiles ModelProfile[]
+  assets        Asset[]
+  loreRefs      LoreReference[]
+  generations   GenerationRun[]
+}
+
+/// 要素版本快照。append-only，永不 UPDATE / DELETE。正文不进此表（ADR-27）
+model EntityRevision {
+  id               String   @id
+  projectId        String
+  entityType       String
+  entityId         String
+  version          Int
+  parentRevisionId String?
+  payload          String
+  changeSource     String
+  changeReason     String?
+  generationRunId  String?
+  createdAt        DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([entityType, entityId, version])
+  @@index([projectId, entityType, entityId])
+  @@index([generationRunId])
+}
+
+model Character {
+  id              String    @id
+  projectId       String
+  name            String
+  role            String
+  gender          String?
+  age             String?
+  appearance      String?
+  personality     String?
+  background      String?
+  abilities       String?
+  motivation      String?
+  relationships   String?
+  arc             String?
+  notes           String?
+  curLocation     String?
+  curTierId       String?
+  curPhysical     String?
+  curMental       String?
+  curItems        String?
+  curEvents       String?
+  stateChapter    Int?
+  stateProvenance String?
+  stateStale      Boolean   @default(false)
+  stateStaleSince Int?
+  visualAnchor    String?
+  deletedAt       DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, deletedAt])
+}
+
+model CharacterRelation {
+  id           String  @id
+  projectId    String
+  fromId       String
+  toId         String
+  kind         String
+  strength     Int     @default(3)
+  sinceChapter Int?
+  untilChapter Int?
+  note         String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, fromId])
+  @@index([projectId, toId])
+}
+
+model CharacterSignature {
+  id               String    @id
+  projectId        String
+  characterId      String
+  /// entrance_verse | exit_verse | catchphrase | verbal_tick
+  /// | signature_action | motif | epithet
+  kind             String
+  content          String
+  /// ★ 场合触发器（spec §3.16 必填）：entrance | exit | battle | anger | death | first_meet | always
+  /// frequency 只说“多频繁”，trigger 说“什么场合演出”——缺一不可
+  trigger          String
+  frequency        String    @default("key_moment")
+  examples         String?
+  firstUsedChapter Int?
+  isActive         Boolean   @default(true)
+  deletedAt        DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, characterId])
+}
+
+model PowerSystem {
+  id          String  @id
+  projectId   String
+  name        String
+  description String?
+
+  project Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tiers   PowerTier[]
+}
+
+model PowerTier {
+  id           String  @id
+  systemId     String
+  /// 整数可比，硬校验基础
+  level        Int
+  name         String
+  description  String?
+  breakthrough String?
+
+  system PowerSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+
+  @@unique([systemId, level])
+}
+
+model WorldRule {
+  id        String    @id
+  projectId String
+  category  String
+  name      String
+  content   String
+  priority  String
+  deletedAt DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, priority])
+}
+
+model StoryArc {
+  id           String  @id
+  projectId    String
+  name         String
+  startChapter Int
+  endChapter   Int
+  purpose      String?
+  turningPoint Int?
+  order        Int
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, order])
+}
+
+model Blueprint {
+  id           String    @id
+  projectId    String
+  chapterNo    Int
+  title        String?
+  goal         String
+  conflict     String
+  turn         String?
+  hook         String
+  castIds      String
+  locationId   String?
+  storyDay     Int?
+  /// 描述性故事时间：“第 12 日 · 辰时”。时辰信息无法数值化，必须单独存
+  storyTime    String?
+  beatType     String    @default("rising")
+  tensionLevel Int       @default(3)
+  userGuidance String?
+  deletedAt    DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, chapterNo])
+}
+
+model PlotThread {
+  id               String    @id
+  projectId        String
+  kind             String
+  /// 与 spec §3.7 对齐（原写作 name 是错的）
+  title            String
+  description      String?
+  /// 埋设章。可空：“先登记、后埋设”（status=planned）是正常起点
+  plantedChapter   Int?
+  advancedChapters String
+  /// 回收章（原写作 resolutionChapter 是错的）
+  resolvedChapter  Int?
+  status           String    @default("active")
+  payoffHint       String?
+  payoffWindow     Int?
+  deletedAt        DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+}
+
+model StyleAsset {
+  id             String    @id
+  projectId      String
+  name           String
+  description    String
+  samples        String
+  bannedWords    String
+  bannedPatterns String
+  quantLimits    String
+  /// ★ 默认文风：一本书可多套，但装配时 S2 段只能进一套
+  isDefault      Boolean   @default(false)
+  deletedAt      DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model WritingTechnique {
+  id          String  @id
+  projectId   String
+  name        String
+  category    String
+  content     String
+  scope       String
+  arcId       String?
+  chapterNo   Int?
+  characterId String?
+  examples    String?
+  priority    Int     @default(3)
+  isActive    Boolean @default(true)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, scope])
+}
+
+model Location {
+  id          String    @id
+  projectId   String
+  name        String
+  type        String
+  region      String?
+  description String?
+  x           Float?
+  y           Float?
+  deletedAt   DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Route {
+  id            String  @id
+  projectId     String
+  fromId        String
+  toId          String
+  mode          String
+  /// ★ 系统算，AI 不得改（P0-13）。spec 为 Int
+  days          Int
+  /// “需过魔渊关，冬季封闭三个月”这类通行条件
+  condition     String?
+  /// 是否双向可走。传送阵/断桥为 false
+  bidirectional Boolean @default(true)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, fromId, toId])
+}
+
+/// 对应 spec §3.18 的 model Reference。
+/// 类型名用 LoreReference 避开 lib.dom 的 Reference 同名冲突，字段与 spec 一致。
+model LoreReference {
+  id           String   @id
+  projectId    String
+  query        String
+  /// tavily | bocha | searxng —— 换 provider 后不能混用缓存
+  provider     String
+  title        String?
+  url          String?
+  snippet      String?
+  /// 清洗后的正文
+  content      String?
+  fetchedAt    DateTime @default(now())
+  /// JSON: 被哪些 generation_run 引用过（可追溯）
+  usedInRunIds String?
+  /// ★ L3：必须显式授权才进 prompt
+  approved     Boolean  @default(false)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, approved])
+}
+
+model Chapter {
+  id           String    @id
+  projectId    String
+  chapterNo    Int
+  title        String?
+  /// planned | drafting | review | finalized
+  status       String    @default("planned")
+  wordCount    Int       @default(0)
+  /// C3 压缩层的章节摘要（约 200 字）
+  summary      String?
+  summaryHash  String?
+  summaryStale Boolean   @default(true)
+  finalizedAt  DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, chapterNo])
+  @@index([projectId, status])
+}
+
+/// 场景骨架。status 只表示规划态，确认态一律归 DraftSegment（避免双轨）
+model ScenePlan {
+  id          String  @id
+  projectId   String
+  chapterNo   Int
+  sceneNo     Int
+  summary     String
+  locationId  String?
+  castIds     String?
+  transition  String?
+  wordBudget  Int?
+  status      String  @default("planned")
+  stale       Boolean @default(false)
+  latestRunId String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, chapterNo, sceneNo])
+}
+
+/// 正文段落索引。content 不存（正文在 .md 文件里），只存指纹
+model DraftSegment {
+  id          String    @id
+  projectId   String
+  chapterNo   Int
+  sceneNo     Int
+  /// ★ 对应文件里的 <!-- seg:XXXX -->，全书唯一、永不复用
+  segId       String
+  /// 场景内段序（冗余，仅用于排序；位置可变，不作身份）
+  seq         Int
+  /// 相对书根的路径（场景级文件）
+  filePath    String
+  /// ★ 该**段**的哈希，非整个文件的哈希
+  contentHash String
+  wordCount   Int?
+  status      String
+  sourceRunId String?
+  acceptedAt  DateTime?
+  deletedAt   DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, segId])
+  @@index([projectId, chapterNo, sceneNo, seq])
+  @@index([projectId, chapterNo, status])
+}
+
+model ProjectSetting {
+  projectId           String @id
+  unresolvedThreshold Int    @default(5)
+  unresolvedMaxItems  Int    @default(10)
+  runningGagThreshold Int    @default(8)
+  budgetWarnRatio     Float  @default(0.70)
+  budgetPromptRatio   Float  @default(0.85)
+  budgetForceRatio    Float  @default(0.95)
+  budgetTokens        Int?
+  generationMode      String @default("whole")
+  versionMode         String @default("git")
+  defaultTextModel    String @default("deepseek-flash")
+  defaultImageModel   String @default("Tongyi-MAI/Z-Image-Turbo")
+  defaultVisionModel  String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model ModelProfile {
+  id                String  @id
+  projectId         String
+  provider          String
+  displayName       String
+  contextWindow     Int
+  maxOutput         Int
+  /// 价格来源：provider 官方定价页，首次配置时由用户录入并经一次真实调用对账
+  /// ★ 为 null 时 costCents 必须记 null（不得记 0）
+  inputPricePerM    Float?
+  outputPricePerM   Float?
+  cacheHitPricePerM Float?
+  supportsVision    Boolean @default(false)
+  supportsCache     Boolean @default(false)
+  isActive          Boolean @default(true)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model PromptTemplate {
+  id        String   @id
+  key       String
+  version   Int
+  content   String
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@unique([key, version])
+}
+
+model GenerationRun {
+  id               String    @id
+  projectId        String
+  chapterNo        Int?
+  sceneNo          Int?
+  parentRunId      String?
+  /// pending | committed | unknown —— 合法集合封闭为这三态
+  commitState      String    @default("pending")
+  purpose          String
+  provider         String
+  model            String
+  params           String?
+  promptTemplateId String?
+  assembledPrompt  String
+  tokenEstimate    Int?
+  output           String?
+  usageInput       Int?
+  usageOutput      Int?
+  cacheHitTokens   Int?
+  costCents        Int?
+  /// queued | running | success | failed | aborted | partial
+  status           String
+  errorMessage     String?
+  degradedReason   String?
+  warnings         String?
+  startedAt        DateTime  @default(now())
+  finishedAt       DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, chapterNo])
+  @@index([commitState, startedAt])
+}
+
+model QualityReview {
+  id            String   @id
+  runId         String
+  chapterNo     Int
+  score         Int
+  issues        String?
+  note          String?
+  promptVersion String?
+  createdAt     DateTime @default(now())
+}
+
+model Asset {
+  id           String    @id
+  projectId    String
+  ownerType    String
+  ownerId      String
+  assetType    String
+  prompt       String?
+  provider     String?
+  model        String?
+  params       String?
+  filePath     String
+  width        Int?
+  height       Int?
+  mimeType     String?
+  visualAnchor String?
+  anchorSource String?
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, ownerType, ownerId])
+}

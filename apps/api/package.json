@@ -8,6 +8,11 @@
   },
   "dependencies": {
     "@inkloom/core": "workspace:*",
-    "@inkloom/shared": "workspace:*"
+    "@inkloom/shared": "workspace:*",
+    "@prisma/client": "^6.19.3",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3"
   }
 }

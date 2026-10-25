@@ -1,5 +1,13 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
+# pnpm 11 起，pnpm 专属配置从 package.json 的 "pnpm" 字段迁到这里。
+# 这些依赖需要执行 build script（下载平台二进制），默认被拦。
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
+  prisma: true
+  '@prisma/client': true
+  '@prisma/engines': true
+  # workerd 是 vitest 的间接依赖，本项目不用其运行时
+  workerd: false
