@@ -1,4 +1,5 @@
 export * from './assemble.js'
+export * from './blocks/rewrite.js'
 export * from './blocks/system.js'
 export * from './blocks/user.js'
 export * from './budget.js'
