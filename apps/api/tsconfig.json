@@ -2,7 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    // ★ 只有带 IO 的包声明 node 类型。core/shared 不声明，
+    //   这样在 core 里误用 process / setTimeout / Buffer 会直接编译失败。
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/core" }]
