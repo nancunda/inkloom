@@ -1,5 +1,8 @@
+import type { JudgeProvider } from '@inkloom/core'
 import { InkloomError } from '@inkloom/shared'
 import { Hono } from 'hono'
+import { checkChapter } from '../judge/health-check.js'
+import { resolveJudgeProvider } from '../judge/registry.js'
 import type { FetchLike } from '../llm/types.js'
 import { getContext } from '../services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
@@ -24,6 +27,8 @@ export interface ActionDeps {
   fetchImpl?: FetchLike
   /** 覆盖环境变量里的 key（测试用） */
   apiKey?: string
+  /** 判断层 provider；传 null = 关闭，不传 = 按 INKLOOM_JUDGE 解析 */
+  judgeProvider?: JudgeProvider | null
 }
 
 function intParam(raw: string | undefined, name: string): number {
@@ -44,6 +49,14 @@ function requireApiKey(deps: ActionDeps): string {
 
 export function createActions(deps: ActionDeps = {}): Hono {
   const actions = new Hono()
+
+  actions.post('/chapters/:n/check', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    // ★ 只读体检：不改任何文件。判断层关闭时 enabled=false，不是错误。
+    return c.json(
+      await checkChapter({ chapterNo, provider: resolveJudgeProvider(deps.judgeProvider) }),
+    )
+  })
 
   actions.post('/import', async (c) => {
     const { root } = getContext()
