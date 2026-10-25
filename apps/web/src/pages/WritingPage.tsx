@@ -27,6 +27,7 @@ const RelationGraph = lazy(() =>
 const ThreadTimeline = lazy(() =>
   import('../components/ThreadTimeline').then((m) => ({ default: m.ThreadTimeline })),
 )
+const WorldMap = lazy(() => import('../components/WorldMap').then((m) => ({ default: m.WorldMap })))
 
 /** 把同一场景的多个版本按 sceneNo 分组，最新版在前 */
 function groupByScene(rows: SceneRow[]): Map<number, SceneRow[]> {
@@ -61,7 +62,7 @@ export function WritingPage() {
 function MapView() {
   const setChapter = useSessionStore((s) => s.setChapter)
   const setView = useSessionStore((s) => s.setView)
-  const [sub, setSub] = useState<'chapters' | 'relations' | 'threads'>('chapters')
+  const [sub, setSub] = useState<'chapters' | 'relations' | 'threads' | 'world'>('chapters')
 
   const tabCls = (active: boolean): string =>
     `rounded px-2.5 py-1 text-xs ${
@@ -92,6 +93,9 @@ function MapView() {
         >
           线索轨迹
         </button>
+        <button type="button" onClick={() => setSub('world')} className={tabCls(sub === 'world')}>
+          世界地图
+        </button>
       </div>
       {/* ★ 给图一个确定高度：React Flow 要在父容器量到宽高（#004），
           flex-1 的百分比高度在 Suspense 层里量不到。 */}
@@ -106,8 +110,10 @@ function MapView() {
             />
           ) : sub === 'relations' ? (
             <RelationGraph />
-          ) : (
+          ) : sub === 'threads' ? (
             <ThreadTimeline />
+          ) : (
+            <WorldMap />
           )}
         </Suspense>
       </div>

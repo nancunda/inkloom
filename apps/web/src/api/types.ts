@@ -119,6 +119,33 @@ export interface ProposeResult {
   unparsed: string[]
 }
 
+export interface LocationRow {
+  id: string
+  name: string
+  type: string
+  region: string
+  description: string
+  /** 可选坐标；缺省时前端做圆环布局 */
+  x: number | null
+  y: number | null
+}
+
+export interface RouteRow {
+  id: string
+  fromId: string
+  toId: string
+  mode: string
+  /** 标准行进天数（系统算，AI 不得改） */
+  days: number
+  condition: string
+  bidirectional: boolean
+}
+
+export interface WorldData {
+  locations: LocationRow[]
+  routes: RouteRow[]
+}
+
 export interface ThreadRow {
   id: string
   kind: string

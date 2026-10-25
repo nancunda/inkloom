@@ -13,6 +13,7 @@ import type {
   SceneDetail,
   SearchResult,
   ThreadsData,
+  WorldData,
 } from './types'
 
 export function useBook() {
@@ -24,6 +25,13 @@ export function useChapter(n: number) {
     queryKey: ['chapter', n],
     queryFn: () => api<ChapterDetail>(`/chapters/${n}`),
     enabled: n > 0,
+  })
+}
+
+export function useWorld() {
+  return useQuery({
+    queryKey: ['world'],
+    queryFn: () => api<WorldData>('/world'),
   })
 }
 

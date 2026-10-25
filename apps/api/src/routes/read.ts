@@ -236,6 +236,67 @@ read.get('/threads', async (c) => {
   return c.json({ currentChapter, threads })
 })
 
+interface LocationRow {
+  id?: unknown
+  name?: unknown
+  type?: unknown
+  region?: unknown
+  description?: unknown
+  x?: unknown
+  y?: unknown
+}
+
+interface RouteRow {
+  id?: unknown
+  fromId?: unknown
+  toId?: unknown
+  mode?: unknown
+  days?: unknown
+  condition?: unknown
+  bidirectional?: unknown
+}
+
+/**
+ * 世界地图（spec 视图 5）：地点 + 路线。
+ *
+ * ★ 地点坐标是可选字段：旧书稿里往往只有名字没有坐标，
+ *   缺坐标由前端做圆环布局，不在后端偷偷生成假坐标。
+ */
+read.get('/world', async (c) => {
+  const { root } = getContext()
+  const [locRaw, routeRaw] = await Promise.all([
+    readJsonElement(root, 'world/locations.json'),
+    readJsonElement(root, 'world/routes.json'),
+  ])
+
+  const locs = Array.isArray(locRaw) ? (locRaw as LocationRow[]) : []
+  const locations = locs
+    .filter((l) => typeof l.id === 'string' && typeof l.name === 'string')
+    .map((l) => ({
+      id: String(l.id),
+      name: String(l.name),
+      type: typeof l.type === 'string' ? l.type : 'plain',
+      region: typeof l.region === 'string' ? l.region : '',
+      description: typeof l.description === 'string' ? l.description : '',
+      x: typeof l.x === 'number' ? l.x : null,
+      y: typeof l.y === 'number' ? l.y : null,
+    }))
+
+  const routes = (Array.isArray(routeRaw) ? (routeRaw as RouteRow[]) : [])
+    .filter((r) => typeof r.fromId === 'string' && typeof r.toId === 'string')
+    .map((r) => ({
+      id: String(r.id ?? `${String(r.fromId)}-${String(r.toId)}`),
+      fromId: String(r.fromId),
+      toId: String(r.toId),
+      mode: typeof r.mode === 'string' ? r.mode : 'walk',
+      days: typeof r.days === 'number' ? r.days : 1,
+      condition: typeof r.condition === 'string' ? r.condition : '',
+      bidirectional: r.bidirectional !== false,
+    }))
+
+  return c.json({ locations, routes })
+})
+
 read.get('/chapters/:n', async (c) => {
   const chapterNo = intParam(c.req.param('n'), 'chapterNo')
   const { db, project } = getContext()
