@@ -1,6 +1,8 @@
 export const PACKAGE_NAME = '@inkloom/core'
 
 export * from './diff/chars.js'
+export * from './judge/mock.js'
+export * from './judge/types.js'
 export * from './revision/next.js'
 export * from './revision/resolve.js'
 export * from './revision/types.js'
