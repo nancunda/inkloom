@@ -39,7 +39,7 @@ export function resolveJudgeProvider(override?: JudgeProvider | null): JudgeProv
       const model = (process.env['INKLOOM_JUDGE_MODEL'] ?? '').trim()
       return createOpenAiJudge({ apiKey: key, ...(model.length === 0 ? {} : { model }) })
     }
-    case 'off':
+    // 'off' 与非法值都是「不启用」
     default:
       return null
   }

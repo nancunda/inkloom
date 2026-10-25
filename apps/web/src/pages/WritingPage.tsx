@@ -11,6 +11,7 @@ import {
 import type { SceneRow } from '../api/types'
 import { ChapterList } from '../components/ChapterList'
 import { DiffView } from '../components/DiffView'
+import { FocusMode } from '../components/FocusMode'
 import { SceneCard } from '../components/SceneCard'
 import { Toolbar } from '../components/Toolbar'
 import { STATUS_LABEL } from '../lib/status'
@@ -126,6 +127,7 @@ function WriteView() {
   const selectedScene = useSessionStore((s) => s.selectedScene)
   const selectScene = useSessionStore((s) => s.selectScene)
   const setChapter = useSessionStore((s) => s.setChapter)
+  const focus = useSessionStore((s) => s.focus)
 
   const { data: chapter, isLoading } = useChapter(chapterNo)
   const accept = useAcceptScene()
@@ -159,6 +161,21 @@ function WriteView() {
   )
 
   const busy = accept.isPending || reject.isPending
+
+  // ★ Ctrl+Shift+E 切专注模式：spec §4.18「写得烦了再切回来」
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault()
+        const s = useSessionStore.getState()
+        s.setFocus(!s.focus)
+      } else if (e.key === 'Escape') {
+        useSessionStore.getState().setFocus(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -242,6 +259,7 @@ function WriteView() {
       </main>
 
       <Toolbar chapter={chapter} />
+      {focus && <FocusMode />}
     </div>
   )
 }

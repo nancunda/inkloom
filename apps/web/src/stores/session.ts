@@ -5,9 +5,12 @@ interface SessionState {
   selectedScene: number | null
   /** 主区在写作页还是叙事地图 */
   view: 'write' | 'map'
+  /** 纯编辑模式（全屏无干扰） */
+  focus: boolean
   setChapter: (n: number) => void
   selectScene: (s: number | null) => void
   setView: (v: 'write' | 'map') => void
+  setFocus: (on: boolean) => void
 }
 
 /**
@@ -21,7 +24,9 @@ export const useSessionStore = create<SessionState>((set) => ({
   chapterNo: 1,
   selectedScene: null,
   view: 'write',
+  focus: false,
   setChapter: (n) => set({ chapterNo: n, selectedScene: null }),
   selectScene: (s) => set({ selectedScene: s }),
   setView: (v) => set({ view: v }),
+  setFocus: (on) => set({ focus: on }),
 }))
