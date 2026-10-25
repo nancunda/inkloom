@@ -1,0 +1,24 @@
+{
+  "name": "inkloom",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "tsc": "tsc --build tsconfig.base.json",
+    "test": "vitest run --project unit",
+    "test:int": "vitest run --project integration",
+    "biome": "biome check .",
+    "biome:fix": "biome check --write .",
+    "check-deps": "node scripts/check-deps.mjs",
+    "verify": "pnpm biome && pnpm tsc && pnpm check-deps && pnpm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.2",
+    "@types/node": "^26.6.5",
+    "@vitest/coverage-v8": "^5.0.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

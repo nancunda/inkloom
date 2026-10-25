@@ -1,0 +1,13 @@
+{
+  "name": "@inkloom/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts"
+  },
+  "dependencies": {
+    "@inkloom/core": "workspace:*",
+    "@inkloom/shared": "workspace:*"
+  }
+}

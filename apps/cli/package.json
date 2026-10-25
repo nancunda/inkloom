@@ -1,0 +1,14 @@
+{
+  "name": "@inkloom/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "inkloom": "./src/index.ts"
+  },
+  "dependencies": {
+    "@inkloom/api": "workspace:*",
+    "@inkloom/core": "workspace:*",
+    "@inkloom/shared": "workspace:*"
+  }
+}
