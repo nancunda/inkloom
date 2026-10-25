@@ -18,10 +18,12 @@ const SYSTEM = `你是一个只做判断、不写正文的评审。严格按要�
  * OpenAI 兼容的判断器（默认接硅基流动，国内直连）。
  *
  * ★ 必须说清楚：它不是 JEV。JEV 输出的是真正的概率与分布，
- *   这里只能拿到一段文本，置信度是**启发式**（解析成功 0.8，模糊 0.4），
+ *   这里只能拿到一段文本，置信度是**启发式**（解析成功 0.8，模糊 0.2），
  *   报告里 provider 写 siliconflow-judge，不冒充 JEV。
- * ★ 每个问题单独一次调用、并行发出：兼容服务的结构化输出不可靠，
- *   合并成一个 JSON 反而更容易解析失败。
+ * ★ 一个场景的 N 个问题合成**一次**调用：实测把 3 问并行发出去，
+ *   15 个并发请求会被服务端排队，5 个场景反而跑 60 秒；
+ *   合成一次后总请求数降到 1/3，5 个场景约 8 秒。
+ *   代价是答案按行对齐，行数对不上时该问降为低置信（不瞎猜）。
  */
 export function createOpenAiJudge(opts: OpenAiJudgeOptions): JudgeProvider {
   const base = (opts.baseUrl ?? 'https://api.siliconflow.cn/v1').replace(/\/+$/, '')
@@ -29,35 +31,54 @@ export function createOpenAiJudge(opts: OpenAiJudgeOptions): JudgeProvider {
   const model = opts.model ?? 'deepseek-ai/DeepSeek-V4.1-Flash'
   const fetchImpl: FetchLike = opts.fetchImpl ?? ((url, init) => fetch(url, init))
 
-  async function ask(req: JudgeRequest): Promise<JudgeResult> {
+  async function chat(messages: { role: string; content: string }[]): Promise<string> {
     const res = await fetchImpl(`${base}/chat/completions`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${opts.apiKey}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: 16,
-        messages: [
-          { role: 'system', content: SYSTEM },
-          { role: 'user', content: buildPrompt(req) },
-        ],
-      }),
+      body: JSON.stringify({ model, temperature: 0, max_tokens: 64, messages }),
     })
     if (!res.ok) throw new Error(`judge http ${res.status}: ${await res.text()}`)
+    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    return (body.choices?.[0]?.message?.content ?? '').trim()
+  }
 
-    const body = (await res.json()) as {
-      choices?: { message?: { content?: string } }[]
-    }
-    return parseAnswer(req, (body.choices?.[0]?.message?.content ?? '').trim())
+  async function askOne(req: JudgeRequest): Promise<JudgeResult> {
+    const text = await chat([
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: buildPrompt(req) },
+    ])
+    return parseAnswer(req, text)
+  }
+
+  /** N 个问题合成一次调用：按序号逐行输出，行数对不上就降为低置信 */
+  async function askMany(requests: JudgeRequest[]): Promise<JudgeResult[]> {
+    const numbered = requests.map((r, i) => `${i + 1}. ${buildPrompt(r)}`).join('\n\n')
+    const text = await chat([
+      {
+        role: 'system',
+        content: `${SYSTEM}\n本次有多道题：按序号逐行输出答案，一行一个，不要写序号，不要解释。`,
+      },
+      { role: 'user', content: numbered },
+    ])
+    const lines = text
+      .split('\n')
+      .map((l) => l.replace(/^\d+[.、)]\s*/, '').trim())
+      .filter((l) => l.length > 0)
+    return requests.map((req, i) => parseAnswer(req, lines[i] ?? ''))
   }
 
   return {
     id: 'siliconflow-judge',
     judge(requests) {
-      return Promise.all(requests.map(ask))
+      if (requests.length === 0) return Promise.resolve([])
+      if (requests.length === 1) {
+        const only = requests[0]
+        return only === undefined ? Promise.resolve([]) : Promise.all([askOne(only)])
+      }
+      return askMany(requests)
     },
   }
 }
