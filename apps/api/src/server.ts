@@ -7,6 +7,7 @@ import { commitAll, initRepo, isRepo } from './git/runner.js'
 import { openBookIndexDb } from './index-db/open-book.js'
 import { setContext } from './services/context.js'
 import { openProject } from './storage/project.js'
+import { reindex } from './storage/reindex.js'
 
 export interface RunningServer {
   /** 实际监听的端口（传 0 时由系统分配） */
@@ -37,7 +38,20 @@ export async function startServer(opts: {
 
   const opened = await openProject(bookDir)
   const db = await openBookIndexDb(bookDir)
+  // ★ 必须在 setContext 之前数：setContext 会 upsert 一行 Project（外键需要），
+  //   数晚了就永远不为空，下面的重建永远不会触发。
+  const indexWasEmpty = (await db.project.count()) === 0
   await setContext({ root: bookDir, db, project: opened.project })
+
+  // ★ 索引为空就从文件重建。index.sqlite 在 .gitignore 里（它本就该是可
+  //   丢弃的），新 clone 第一次启动时表能建出来但一条数据也没有，
+  //   界面会像那样显示：五章全是「计划中」、场景一个都看不见。
+  //   「索引可丢弃」的前提是随时能重建——否则它就不是缓存，是命门。
+  if (indexWasEmpty) {
+    const report = await reindex(bookDir, db)
+    console.log(`  ✓ 索引为空，已从文件重建（${report.chapters} 章 / ${report.segments} 段）`)
+    for (const w of report.warnings) console.log(`    ⚠ ${w}`)
+  }
 
   // ★ 仓库里的示例书不带 .git（嵌套仓库不能入库），
   //   而 accept / finalize 都会 commit——不补这一下，
@@ -69,10 +83,15 @@ export async function startServer(opts: {
   return {
     port,
     address: addr.address,
-    close: () =>
-      new Promise<void>((ok, fail) =>
+    close: async () => {
+      await new Promise<void>((ok, fail) =>
         server.close((e) => (e === undefined || e === null ? ok() : fail(e))),
-      ),
+      )
+      // ★ 连接也是 startServer 开的，close 时必须一起还回去：
+      //   只关 HTTP 不关库的话，Windows 上那本书的 index.sqlite 被句柄
+      //   钉着删不掉（EBUSY），反复启停还会漏连接。
+      await db.$disconnect()
+    },
   }
 }
 

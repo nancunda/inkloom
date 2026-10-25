@@ -133,7 +133,7 @@ pnpm verify      # biome + tsc + check-deps + 单元测试 + 集成测试
 pnpm verify:p0   # P0 验收：建书 / 索引 / 回退 / 导出，11 条
 pnpm verify:p1a  # P1-a 验收：装配 → 生成 → 落盘，6 条
 pnpm verify:p1b  # P1-b 验收：确认 / diff / 定稿 / 提案，11 条
-pnpm verify:p1c  # P1-c 验收：HTTP 接口 + 真实端口 + 仅绑本机，17 条
+pnpm verify:p1c  # P1-c 验收：HTTP 接口 + 启动自愈，18 条
 pnpm fixture     # 重新生成 fixtures/qixia（玄幻示例书）
 pnpm test:cov    # 覆盖率（core 门槛 >80%）
 ```
@@ -156,7 +156,7 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 
 **P1-b（确认与定稿）已完成**：逐场景 accept/reject/edit + 字符级 diff + 定稿（含蓝图摘要）+ 状态提案（逐条确认）。`pnpm verify:p1b` 11-11 通过。
 
-**P1-c（HTTP + 前端）已完成**：Hono 12 个接口 + 错误映射 + 单书启动器；React 19 写作页（章节列表 / 场景卡片 / 版本切换 / diff 面板 / 状态提案）+ 叙事地图（React Flow + dagre）。219 单元 + 238 集成测试 / `pnpm verify:p1c` 17-17 通过。
+**P1-c（HTTP + 前端）已完成**：Hono 12 个接口 + 错误映射 + 单书启动器；React 19 写作页（章节列表 / 场景卡片 / 版本切换 / diff 面板 / 状态提案）+ 叙事地图（React Flow + dagre）。219 单元 + 238 集成测试 / `pnpm verify:p1c` 18-18 通过。
 
 ### 写作界面
 

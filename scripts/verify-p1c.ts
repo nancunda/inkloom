@@ -6,6 +6,7 @@
 //   1) review.json 是审阅状态的**文件真相**（Ruling 47）：accept → reindex → 状态不丢
 //   2) reindex 重建 Chapter 时 wordCount / finalizedAt 不能归零（Ruling 48）
 //   这两条都是浏览器验收用眼睛抓到的 bug，必须变成永久回归。
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,9 +18,11 @@ import type { FetchLike } from '../apps/api/src/llm/types.js'
 import { startServer } from '../apps/api/src/server.js'
 import { clearContext, setContext } from '../apps/api/src/services/context.js'
 import { writeJsonElement } from '../apps/api/src/storage/elements.js'
+import { bookPaths } from '../apps/api/src/storage/paths.js'
 import { createProject } from '../apps/api/src/storage/project.js'
 import { reindex } from '../apps/api/src/storage/reindex.js'
 import { reviewFilePath } from '../apps/api/src/storage/review-state.js'
+import { writeSceneFile } from '../apps/api/src/storage/scenes.js'
 
 const results: { name: string; ok: boolean; err?: string }[] = []
 async function check(name: string, fn: () => Promise<void>): Promise<void> {
@@ -274,6 +277,49 @@ try {
     try {
       if (running.address !== '127.0.0.1') {
         throw new Error(`实际绑定 ${running.address}，无鉴权的 API 不能对局域网开放`)
+      }
+    } finally {
+      await running.close()
+    }
+  })
+
+  await check('★ 索引为空时，startServer 自动从文件重建（新 clone 开箱可用）', async () => {
+    // 新 clone 的真实形态：书在、index.sqlite 不在（它在 .gitignore 里）。
+    // 没有这一步，界面会显示成「全章计划中、场景一个都看不见」——
+    // 索引可丢弃的前提是启动时能自己重建。
+    // 另起一本新书而不是删旧索引：Windows 上活着的 SQLite 句柄会让 unlink
+    // 一直 EBUSY，而「文件从未存在」与「刚被删除」走的是同一条启动路径。
+    const fresh = join(tmp, 'fresh-book')
+    const { project } = await createProject({ rootPath: fresh, name: 'FRESH', genre: 'xuanhuan' })
+    await initRepo(fresh)
+    await commitAll(fresh, 'chore: 初始化')
+    await writeJsonElement(fresh, 'story/blueprints/ch-002.json', {
+      id: 'b2',
+      projectId: project.id,
+      chapterNo: 2,
+      title: '第二章 雾',
+      goal: '进山',
+      conflict: '迷路',
+      hook: '雾里有脚步声',
+      castIds: [],
+      beatType: 'rising',
+      tensionLevel: 3,
+    })
+    await writeSceneFile(
+      fresh,
+      { sceneNo: 1, version: 1, segments: [{ segId: 'zzzz', text: '雾漫上来。' }] },
+      2,
+    )
+    // 前置：新书不该有索引文件，这就是新 clone 拉下来的真实状态
+    if (existsSync(bookPaths(fresh).indexDb)) {
+      throw new Error('前置不成立：新书不应该已经有索引文件')
+    }
+    const running = await startServer({ bookDir: fresh, port: 0 })
+    try {
+      const r = await fetch(`http://127.0.0.1:${running.port}/api/chapters/2`)
+      const j = (await r.json()) as { scenes: unknown[] }
+      if (j.scenes.length === 0) {
+        throw new Error('索引没重建：第二章场景为空，界面会显示成空章')
       }
     } finally {
       await running.close()
