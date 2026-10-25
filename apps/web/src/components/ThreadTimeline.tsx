@@ -103,11 +103,14 @@ function ThreadRowView({
       ? 'text-emerald-700'
       : 'text-neutral-700'
 
-  // 未回收：线画到右端 65%，留一段空白表示「断着」
+  // ★ 未回收：实线右端留 64px 断口，再用一小段虚线收尾。
+  //   线画满会让「没回收」看起来像「已完成」——这个视图唯一要一眼
+  //   说清的就是这件事。
+  const plantedPct = planted === null ? 0 : ((planted - 1) / Math.max(1, maxNo - 1)) * 100
   const lineLeft = planted === null ? '0%' : pct(planted)
   const lineWidth =
     resolved === null
-      ? `calc(${100 - (planted === null ? 0 : ((planted - 1) / Math.max(1, maxNo - 1)) * 100)}% - 24px)`
+      ? `calc(${100 - plantedPct}% - 64px)`
       : `calc(${((resolved - (planted ?? 1)) / Math.max(1, maxNo - 1)) * 100}% + 2px)`
 
   return (
@@ -135,6 +138,17 @@ function ThreadRowView({
           className="absolute top-1/2 h-0.5 -translate-y-1/2"
           style={{ left: lineLeft, width: lineWidth, backgroundColor: color }}
         />
+        {/* 未回收：断口右侧一小段虚线，表示「还没接上」 */}
+        {resolved === null && (
+          <div
+            className="absolute top-1/2 h-0.5 w-8 -translate-y-1/2"
+            style={{
+              left: `calc(100% - 44px)`,
+              backgroundImage: `repeating-linear-gradient(to right, ${color} 0 3px, transparent 3px 6px)`,
+              opacity: 0.5,
+            }}
+          />
+        )}
         {/* 埋设点 */}
         {planted !== null && (
           <span
