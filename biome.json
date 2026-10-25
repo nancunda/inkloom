@@ -17,7 +17,8 @@
     "rules": {
       "preset": "recommended",
       "style": { "noNonNullAssertion": "error", "useConst": "error" },
-      "suspicious": { "noExplicitAny": "error" }
+      "suspicious": { "noExplicitAny": "error" },
+      "complexity": { "useLiteralKeys": "off" }
     }
   },
   "javascript": {

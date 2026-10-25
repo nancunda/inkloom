@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { InkloomError } from '@inkloom/shared'
-import { checkoutPaths, commitAll, currentHead, initRepo } from '../git/runner.js'
+import { checkoutPaths, commitAll, currentHead, git, initRepo } from '../git/runner.js'
 import { readIfExists } from './atomic-write.js'
 import { bookPaths } from './paths.js'
 import {
@@ -25,8 +25,24 @@ export function checkpointRelPath(): string {
   return '.inkloom/checkpoints.jsonl'
 }
 
-/** 时间点回退需要恢复的路径（spec §2.7 五） */
+/** 时间点回退关注的顶层条目（spec §2.7 五） */
 const TRACKED_DIRS = ['chapters', 'characters', 'world', 'story', 'styles', 'novel.json']
+
+/**
+ * 某个 commit 里**实际存在**的受关注条目。
+ *
+ * ★ 不能直接用 TRACKED_DIRS：空目录不被 git 跟踪，
+ *   而 `git checkout <ref> -- <paths>` 对不匹配的 pathspec 会**整体失败**。
+ *   “建书后还没写任何一章”时 chapters/ 就是个空目录，硬传会让回退直接报错。
+ */
+async function trackedPathsAt(root: string, ref: string): Promise<string[]> {
+  const out = await git(root, ['ls-tree', '--name-only', ref])
+  const present = out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  return present.filter((p) => TRACKED_DIRS.includes(p))
+}
 
 export async function readCheckpoints(root: string): Promise<Checkpoint[]> {
   const raw = await readIfExists(join(root, checkpointRelPath()))
@@ -106,9 +122,13 @@ export async function rollbackToCheckpoint(
   if (ck.gitRef === null) {
     warnings.push('该 checkpoint 没有 gitRef（创建时尚未提交），仅回退要素历史')
   } else {
-    // 注意：checkoutPaths 会过滤掉当前不存在的路径（回退到早期时它们可能还不存在）
-    await checkoutPaths(root, ck.gitRef, TRACKED_DIRS)
-    restoredPaths.push(...TRACKED_DIRS)
+    const paths = await trackedPathsAt(root, ck.gitRef)
+    if (paths.length === 0) {
+      warnings.push('该 commit 里没有受关注的文件，跳过文件恢复')
+    } else {
+      await checkoutPaths(root, ck.gitRef, paths)
+      restoredPaths.push(...paths)
+    }
   }
 
   for (const [rel, keepLines] of Object.entries(ck.revisionsOffsets)) {
