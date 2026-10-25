@@ -119,6 +119,17 @@ export interface ProposeResult {
   unparsed: string[]
 }
 
+export interface GenerateJob {
+  id: string
+  kind: 'generate'
+  status: 'running' | 'done' | 'failed'
+  chapterNo: number
+  startedAt: string
+  finishedAt: string | null
+  result: GenerateResult | null
+  error: string | null
+}
+
 export interface HealthFinding {
   sceneNo: number
   version: number

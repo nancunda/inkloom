@@ -6,7 +6,7 @@ import type {
   ChapterDetail,
   DiffResult,
   FinalizeResult,
-  GenerateResult,
+  GenerateJob,
   HealthReport,
   ProposeResult,
   SceneDetail,
@@ -66,10 +66,20 @@ function useInvalidateChapter() {
 export function useGenerate() {
   const invalidate = useInvalidateChapter()
   return useMutation({
-    mutationFn: (v: { chapterNo: number; guidance?: string }) =>
-      post<GenerateResult>(`/chapters/${v.chapterNo}/generate`, {
+    // ★ 改成「提交任务 + 轮询」：生成要 40–90 秒，同步请求会让浏览器干等，
+    //   代理层也可能先超时。轮询间隔 2 秒，总上限 6 分钟。
+    mutationFn: async (v: { chapterNo: number; guidance?: string }) => {
+      const { jobId } = await post<{ jobId: string }>(`/chapters/${v.chapterNo}/generate-async`, {
         ...(v.guidance === undefined ? {} : { guidance: v.guidance }),
-      }),
+      })
+      for (let i = 0; i < 180; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const job = await api<GenerateJob>(`/jobs/${jobId}`)
+        if (job.status === 'done' && job.result !== null) return job.result
+        if (job.status === 'failed') throw new Error(job.error ?? '生成失败')
+      }
+      throw new Error('生成超时（6 分钟），可稍后看场景列表是否已完成')
+    },
     onSuccess: (_d, v) => invalidate(v.chapterNo),
   })
 }

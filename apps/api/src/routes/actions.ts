@@ -8,6 +8,7 @@ import { getContext } from '../services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
 import { generateChapter } from '../services/generate-service.js'
 import { importChapters } from '../services/import-service.js'
+import { getJob, submitGenerate } from '../services/job-service.js'
 import { rewriteSceneSeg } from '../services/rewrite-service.js'
 import { acceptScene, editSceneSeg, rejectScene } from '../services/scene-review-service.js'
 import {
@@ -66,6 +67,22 @@ export function createActions(deps: ActionDeps = {}): Hono {
     }
     // 单书模式：追加到当前这本书，章号接在现有最大章之后
     return c.json(await importChapters({ rootPath: root, sourcePath: body.sourcePath }))
+  })
+
+  actions.post('/chapters/:n/generate-async', (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    return c.json({ jobId: submitGenerate({ chapterNo, apiKey: requireApiKey(deps) }) }, 202)
+  })
+
+  actions.get('/jobs/:id', (c) => {
+    const job = getJob(c.req.param('id'))
+    if (job === undefined) {
+      throw new InkloomError(
+        'NOT_FOUND',
+        '任务不存在（服务重启后未完成的任务会丢失，重新提交即可）',
+      )
+    }
+    return c.json(job)
   })
 
   actions.post('/chapters/:n/generate', async (c) => {
