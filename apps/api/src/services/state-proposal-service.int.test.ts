@@ -95,6 +95,27 @@ describe('proposeStateChanges', () => {
     expect(r.proposals[0]?.evidenceQuote).toBe('他说：甲|乙|丙')
   })
 
+  it('★ 证据逐字命中时 evidenceVerified=true', async () => {
+    // 正文原文：剑气削过，林岚左臂裂开一道口子，血顺着指缝滴。
+    const out = 'c1|curPhysical|左臂受伤|血顺着指缝滴'
+    const r = await proposeStateChanges({ chapterNo: 4, apiKey: 'sk', fetchImpl: fakeLlm(out) })
+    expect(r.proposals[0]?.evidenceVerified).toBe(true)
+  })
+
+  it('★ 证据不在正文里时 evidenceVerified=false（Ruling 44：模型会编）', async () => {
+    // 实测模型把「腕骨」写成「臂骨」
+    const out = 'c1|curPhysical|臂骨受伤|臂骨响了一声'
+    const r = await proposeStateChanges({ chapterNo: 4, apiKey: 'sk', fetchImpl: fakeLlm(out) })
+    expect(r.proposals).toHaveLength(1)
+    expect(r.proposals[0]?.evidenceVerified).toBe(false)
+  })
+
+  it('★ 比对时忽略空白（模型常在引文里插空格/换行）', async () => {
+    const out = 'c1|curPhysical|左臂受伤|血 顺着 指缝 滴'
+    const r = await proposeStateChanges({ chapterNo: 4, apiKey: 'sk', fetchImpl: fakeLlm(out) })
+    expect(r.proposals[0]?.evidenceVerified).toBe(true)
+  })
+
   it('空输出时 proposals 为空且不报错', async () => {
     const r = await proposeStateChanges({ chapterNo: 4, apiKey: 'sk', fetchImpl: fakeLlm('') })
     expect(r.proposals).toEqual([])
@@ -138,6 +159,23 @@ describe('applyStateProposals', () => {
     expect(payload['curPhysical']).toBe('左臂受伤')
     expect(payload['curMental']).toBe('警觉')
     expect(payload['stateChapter']).toBe(5)
+  })
+
+  it('★ 同字段多条提案拼接而不是互相覆盖（Ruling 43）', async () => {
+    const out = [
+      'c1|curPhysical|少了一魂|血顺着指缝滴',
+      'c1|curPhysical|虎口震伤|血顺着指缝滴',
+    ].join('\n')
+    const r = await proposeStateChanges({ chapterNo: 4, apiKey: 'sk', fetchImpl: fakeLlm(out) })
+    await applyStateProposals({
+      chapterNo: 4,
+      acceptIds: r.proposals.map((p) => p.id),
+    })
+    const revs = await readRevisions(root, 'character', 'c1')
+    expect(revs).toHaveLength(1)
+    const payload = JSON.parse(revs[0]?.payload ?? '{}') as Record<string, unknown>
+    // 两条都在，用「；」拼接
+    expect(payload['curPhysical']).toBe('少了一魂；虎口震伤')
   })
 
   it('★ 全部跳过时不写任何 revision', async () => {

@@ -20,6 +20,14 @@ export interface StateProposal {
   field: ProposalField
   newValue: string
   evidenceQuote: string
+  /**
+   * 证据原文是否真的在正文里（Ruling 44）。
+   *
+   * ★ 实测模型会把「腕骨」写成「臂骨」、把「丢了一魂」写成「少了一魂」。
+   *   一次 includes 就能挡住编造的证据，成本几乎为零。
+   *   false 不代表提案一定错，但**必须人工核对**——CLI 会显 ⚠。
+   */
+  evidenceVerified: boolean
   /** 从第几章起生效 = 本章 N + 1（spec §4.8） */
   stateChapter: number
 }
@@ -33,6 +41,11 @@ export interface ProposeResult {
 
 function newRunId(): string {
   return `run_${randomUUID().replace(/-/g, '').slice(0, 16)}`
+}
+
+/** 比对证据时去掉所有空白与换行：模型常把它们插在引文里 */
+function normalizeForMatch(s: string): string {
+  return s.replace(/\s+/g, '')
 }
 
 const SYSTEM_PROMPT = `你是小说编辑助手。读一章正文，找出"角色状态发生了变化"的地方。
@@ -170,6 +183,8 @@ export async function proposeStateChanges(input: {
       field: field as ProposalField,
       newValue,
       evidenceQuote: evidence,
+      // 去空白后比对：模型常在引文里多加空格或换行
+      evidenceVerified: normalizeForMatch(body).includes(normalizeForMatch(evidence)),
       stateChapter: input.chapterNo + 1,
     })
   }
@@ -241,7 +256,13 @@ export async function applyStateProposals(input: {
       prev === null ? {} : (JSON.parse(prev.payload) as Record<string, unknown>)
 
     const changes: Record<string, unknown> = {}
-    for (const p of list) changes[p.field] = p.newValue
+    for (const p of list) {
+      // ★ 同字段多条提案用「；」拼接（Ruling 43）：身体状态允许多项并存，
+      //   直接赋值会让后一条覆盖前一条（实测 3 条 curPhysical 只剩 1 条）。
+      const prevValue = changes[p.field]
+      changes[p.field] =
+        prevValue === undefined ? p.newValue : `${String(prevValue)}；${p.newValue}`
+    }
 
     const revision = nextRevision({
       id: `rev_${charId}_${(prev?.version ?? 0) + 1}`,

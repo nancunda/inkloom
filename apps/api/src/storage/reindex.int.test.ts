@@ -119,6 +119,37 @@ describe('reindex', () => {
     expect(revs[0]?.entityId).toBe('c1')
   })
 
+  it('★ 多版本同 segId 不冲突，且均计入索引（id 带 version）', async () => {
+    await createProject({ rootPath: root, name: '七霞', genre: '玄幻' })
+    await writeSceneFile(
+      root,
+      { sceneNo: 1, version: 1, segments: [{ segId: 'aaaa', text: '旧版本。' }] },
+      4,
+    )
+    await writeSceneFile(
+      root,
+      { sceneNo: 1, version: 2, segments: [{ segId: 'aaaa', text: '新版本。' }] },
+      4,
+    )
+    const report = await reindex(root, db)
+    expect(report.warnings).toEqual([])
+    const segs = await db.draftSegment.findMany({ where: { chapterNo: 4, sceneNo: 1 } })
+    expect(segs).toHaveLength(2)
+    expect(new Set(segs.map((s) => s.filePath)).size).toBe(2)
+  })
+
+  it('★ 重建后字数不为 0（用户要靠它判断候选多长）', async () => {
+    await createProject({ rootPath: root, name: '七霞', genre: '玄幻' })
+    await writeSceneFile(
+      root,
+      { sceneNo: 1, version: 1, segments: [{ segId: 'aaaa', text: '剑气贴着面颊削过去。' }] },
+      4,
+    )
+    await reindex(root, db)
+    const seg = await db.draftSegment.findFirst({ where: { chapterNo: 4, sceneNo: 1 } })
+    expect(seg?.wordCount).toBeGreaterThan(0)
+  })
+
   it('幂等：连续 reindex 两次结果相同，不重复插入', async () => {
     const { project } = await createProject({ rootPath: root, name: '七霞', genre: '玄幻' })
     await seed(project.id)

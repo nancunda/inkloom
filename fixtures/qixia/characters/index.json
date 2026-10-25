@@ -11,8 +11,8 @@
     "background": "剑冢守碑人的养女，不知自己姓氏来历",
     "motivation": "确认碑上刻的名字是不是自己的",
     "arc": "从「想被承认」到「自己定义名字」",
-    "curPhysical": "健康",
     "curTierId": "t2",
+    "curPhysical": "健康",
     "stateChapter": 1,
     "stateStale": false,
     "visualAnchor": "青灰道袍，眉间一点朱砂，左眉一道旧疤，佩短刀在右腰，腕缠麻绳"
@@ -43,7 +43,8 @@
     "personality": "温文尔雅，说话像在算账，杀人时也笑着说抱歉",
     "background": "天枢阁阁主第四子，为姓这个姓杀了三个兄长",
     "motivation": "弄清碑上那个名字，好证明自己配姓裴",
-    "stateChapter": 1
+    "stateChapter": 1,
+    "stateStale": false
   },
   {
     "id": "c5",

@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { parseChapterFile, parseSceneFile, type SceneFile } from '@inkloom/core'
+import { countWords, parseChapterFile, parseSceneFile, type SceneFile } from '@inkloom/core'
 import { InkloomError } from '@inkloom/shared'
 import type { IndexDb } from '../index-db/client.js'
 import { hashContent } from './atomic-write.js'
@@ -337,7 +337,9 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
         try {
           await db.draftSegment.create({
             data: {
-              id: `seg_${chapterNo}_${sceneNo}_${seg.segId}`,
+              // ❗id 必须带 version：同一段会同时存在于 v1 和 v2 两个文件里，
+              //   不带 version 会让 v2 的段主键冲突、被下游 catch 静默吞掉。
+              id: `seg_${chapterNo}_${sceneNo}_${scene.version}_${seg.segId}`,
               projectId,
               chapterNo,
               sceneNo,
@@ -345,6 +347,8 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
               seq: i,
               filePath: rel,
               contentHash: hashContent(seg.text),
+              // ❗字数必须算：不然 `scenes` 显示 0 字，用户无法判断候选稿多长
+              wordCount: countWords(seg.text),
               status: 'candidate',
             },
           })

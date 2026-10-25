@@ -171,9 +171,13 @@ export async function propose({ positional, flags }: CommandCtx): Promise<void> 
   } else {
     console.log(`第 ${chapterNo} 章状态提案（${r.proposals.length} 条，全部未落库）`)
     for (const [i, p] of r.proposals.entries()) {
+      // ⚠ 证据校验未过：模型可能把「腕骨」写成「臂骨」，必须人工核对
+      const mark = p.evidenceVerified ? '✓' : '⚠'
       console.log(`  ${i + 1}. ${p.characterName}（${p.characterId}）${p.field}`)
       console.log(`     → ${p.newValue}   自第 ${p.stateChapter} 章起生效`)
-      console.log(`     证据：「${p.evidenceQuote}」`)
+      console.log(`     证据[${mark}]：「${p.evidenceQuote}」`)
+      if (!p.evidenceVerified)
+        console.log('       ⚠ 这句在正文里找不到（可能改写或编造），确认前请自己查一遍')
     }
     console.log('\n确认：inkloom apply-proposals <dir> --chapter N --accept all')
     console.log('只应用部分：inkloom apply-proposals <dir> --chapter N --accept 1,3')
