@@ -1,0 +1,252 @@
+import { lazy, Suspense, useState } from 'react'
+import { useAcceptScene, useChapter, useDiff, useRejectScene, useScene } from '../api/hooks'
+import type { SceneRow } from '../api/types'
+import { ChapterList } from '../components/ChapterList'
+import { DiffView } from '../components/DiffView'
+import { SceneCard } from '../components/SceneCard'
+import { Toolbar } from '../components/Toolbar'
+import { STATUS_LABEL } from '../lib/status'
+import { useSessionStore } from '../stores/session'
+
+/**
+ * ★ 地图按需加载：React Flow 单独就有 ~260 kB，
+ *   不切分的话每次打开写作页都要白等它下载完。
+ */
+const StoryMap = lazy(() => import('../components/StoryMap').then((m) => ({ default: m.StoryMap })))
+
+/** 把同一场景的多个版本按 sceneNo 分组，最新版在前 */
+function groupByScene(rows: SceneRow[]): Map<number, SceneRow[]> {
+  const m = new Map<number, SceneRow[]>()
+  for (const r of rows) {
+    const list = m.get(r.sceneNo) ?? []
+    list.push(r)
+    m.set(r.sceneNo, list)
+  }
+  for (const list of m.values()) list.sort((a, b) => b.version - a.version)
+  return m
+}
+
+/**
+ * 找比 version 更早、且**真实存在**的最高版本号。
+ *
+ * ★ 不能用 version - 1：版本号会跳号（v1 被清理后只剩 v2/v3），
+ *   减一算出来的版本文件根本不存在，diff 会 404。
+ */
+function prevExistingVersion(versions: SceneRow[], version: number): number | null {
+  const older = versions.filter((v) => v.version < version)
+  if (older.length === 0) return null
+  return Math.max(...older.map((v) => v.version))
+}
+
+export function WritingPage() {
+  const view = useSessionStore((s) => s.view)
+  // ★ 两分支拆成独立组件：在这里写 if/return 会让下面的 hook 变成条件调用
+  return view === 'map' ? <MapView /> : <WriteView />
+}
+
+function MapView() {
+  const setChapter = useSessionStore((s) => s.setChapter)
+  const setView = useSessionStore((s) => s.setView)
+  return (
+    <Suspense fallback={<p className="p-8 text-sm text-neutral-500">加载地图…</p>}>
+      <StoryMap
+        onPick={(n) => {
+          setChapter(n)
+          setView('write')
+        }}
+      />
+    </Suspense>
+  )
+}
+
+function WriteView() {
+  const chapterNo = useSessionStore((s) => s.chapterNo)
+  const selectedScene = useSessionStore((s) => s.selectedScene)
+  const selectScene = useSessionStore((s) => s.selectScene)
+
+  const { data: chapter, isLoading } = useChapter(chapterNo)
+  const accept = useAcceptScene()
+  const reject = useRejectScene()
+
+  const scenes = chapter?.scenes ?? []
+  const grouped = groupByScene(scenes)
+  const sceneNos = [...grouped.keys()].sort((a, b) => a - b)
+
+  // 每个场景当前「在看哪一版」；默认最新版。切章时自然重置（key 用 chapterNo 包一层）
+  const [viewVersion, setViewVersion] = useState<Record<number, number>>({})
+  const versionOf = (sceneNo: number, versions: SceneRow[]): SceneRow => {
+    const wanted = viewVersion[sceneNo]
+    return versions.find((v) => v.version === wanted) ?? versions[0] ?? ({} as SceneRow)
+  }
+
+  const [diffPair, setDiffPair] = useState<{ sceneNo: number; from: number; to: number } | null>(
+    null,
+  )
+
+  const busy = accept.isPending || reject.isPending
+
+  return (
+    <div className="flex min-h-0 flex-1">
+      <ChapterList />
+
+      <main className="min-w-0 flex-1 overflow-y-auto p-6">
+        <div className="mb-4 flex items-baseline gap-3">
+          <h1 className="text-base font-semibold text-neutral-900">
+            {chapter?.title ?? `第 ${chapterNo} 章`}
+          </h1>
+          <span className="text-xs text-neutral-400">
+            {chapter === undefined ? '' : (STATUS_LABEL[chapter.status] ?? chapter.status)}
+            {chapter !== undefined && chapter.wordCount > 0 ? ` · ${chapter.wordCount} 字` : ''}
+          </span>
+        </div>
+
+        {isLoading && <p className="text-sm text-neutral-500">加载中…</p>}
+
+        {!isLoading && sceneNos.length === 0 && (
+          <div className="rounded-lg border border-dashed border-neutral-300 p-8 text-center">
+            <p className="text-sm text-neutral-600">本章还没有候选场景</p>
+            <p className="mt-1 text-xs text-neutral-400">点右侧「生成本章」开始</p>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {sceneNos.map((sceneNo) => {
+            const versions = grouped.get(sceneNo) ?? []
+            const row = versionOf(sceneNo, versions)
+            if (row.sceneNo === undefined) return null
+            const prev = prevExistingVersion(versions, row.version)
+            return (
+              <SceneCard
+                key={sceneNo}
+                versions={versions}
+                row={row}
+                prevVersion={prev}
+                selected={selectedScene === sceneNo}
+                busy={busy}
+                onViewVersion={(v) => {
+                  setViewVersion((m) => ({ ...m, [sceneNo]: v }))
+                  setDiffPair(null)
+                }}
+                onToggleSelect={() => selectScene(selectedScene === sceneNo ? null : sceneNo)}
+                onAccept={() =>
+                  void accept.mutateAsync({ chapterNo, sceneNo, version: row.version })
+                }
+                onReject={() =>
+                  void reject.mutateAsync({ chapterNo, sceneNo, version: row.version })
+                }
+                onDiff={() => {
+                  if (prev === null) return
+                  selectScene(sceneNo)
+                  setDiffPair({ sceneNo, from: prev, to: row.version })
+                }}
+              />
+            )
+          })}
+        </div>
+
+        {diffPair !== null && (
+          <DiffPanel
+            chapterNo={chapterNo}
+            sceneNo={diffPair.sceneNo}
+            from={diffPair.from}
+            to={diffPair.to}
+            onClose={() => setDiffPair(null)}
+          />
+        )}
+
+        {selectedScene !== null && diffPair === null && (
+          <ScenePreview
+            chapterNo={chapterNo}
+            sceneNo={selectedScene}
+            versions={grouped.get(selectedScene) ?? []}
+            version={versionOf(selectedScene, grouped.get(selectedScene) ?? []).version ?? 0}
+          />
+        )}
+      </main>
+
+      <Toolbar chapter={chapter} />
+    </div>
+  )
+}
+
+/** 场景正文预览（段带 segId，方便后续做按段编辑） */
+function ScenePreview({
+  chapterNo,
+  sceneNo,
+  versions,
+  version,
+}: {
+  chapterNo: number
+  sceneNo: number
+  versions: SceneRow[]
+  version: number
+}) {
+  const { data, isLoading } = useScene(chapterNo, sceneNo, version)
+  const row = versions.find((v) => v.version === version)
+  if (row === undefined) return null
+  if (isLoading) return <p className="mt-6 text-sm text-neutral-500">读取场景…</p>
+
+  return (
+    <section className="mt-8 border-t border-neutral-200 pt-6">
+      <h2 className="mb-3 text-xs font-medium tracking-wide text-neutral-500">
+        场景 {sceneNo} · v{version} 正文（{row.wordCount} 字）
+      </h2>
+      <div className="space-y-4">
+        {(data?.segments ?? []).map((s) => (
+          <div key={s.segId} className="group relative">
+            <span className="absolute -left-14 top-1 select-none font-mono text-[10px] text-neutral-300 group-hover:text-neutral-500">
+              {s.segId}
+            </span>
+            <p className="whitespace-pre-wrap font-serif text-[15px] leading-8 text-neutral-800">
+              {s.text}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/** 字符级 diff 面板 */
+function DiffPanel({
+  chapterNo,
+  sceneNo,
+  from,
+  to,
+  onClose,
+}: {
+  chapterNo: number
+  sceneNo: number
+  from: number
+  to: number
+  onClose: () => void
+}) {
+  const { data, isLoading, error } = useDiff(chapterNo, sceneNo, from, to)
+
+  return (
+    <section className="mt-8 border-t border-neutral-200 pt-6">
+      <div className="mb-3 flex items-baseline gap-3">
+        <h2 className="text-xs font-medium tracking-wide text-neutral-500">
+          场景 {sceneNo} · v{from} → v{to}
+        </h2>
+        {data !== undefined && (
+          <span className="text-xs text-neutral-400">
+            相似度 {(data.similarity * 100).toFixed(1)}% · 新增 {data.addedChars} 字 · 删除{' '}
+            {data.removedChars} 字
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-auto text-xs text-neutral-500 hover:text-neutral-800"
+        >
+          关闭
+        </button>
+      </div>
+      {isLoading && <p className="text-sm text-neutral-500">对比中…</p>}
+      {error !== null && <p className="text-sm text-rose-700">{error.message}</p>}
+      {data !== undefined && <DiffView spans={data.spans} />}
+      <p className="mt-4 text-xs text-neutral-400">diff 只用于展示；落库以你接受哪个版本为准。</p>
+    </section>
+  )
+}

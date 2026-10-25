@@ -23,5 +23,17 @@
   },
   "javascript": {
     "formatter": { "quoteStyle": "single", "semicolons": "asNeeded" }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["apps/web/src/components/DiffView.tsx"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noArrayIndexKey": "off"
+          }
+        }
+      }
+    }
+  ]
 }

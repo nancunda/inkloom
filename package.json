@@ -16,6 +16,7 @@
     "check-deps": "node scripts/check-deps.mjs",
     "cli": "tsx --env-file-if-exists=.env apps/cli/src/index.ts",
     "api": "tsx --env-file-if-exists=.env apps/api/src/server.ts",
+    "web": "pnpm --filter @inkloom/web dev",
     "fixture": "tsx scripts/build-fixture.ts",
     "verify:p0": "tsx scripts/verify-p0.ts",
     "verify:p1a": "tsx scripts/verify-p1a.ts",
