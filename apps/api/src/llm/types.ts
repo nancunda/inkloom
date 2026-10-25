@@ -1,0 +1,61 @@
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface ChatUsage {
+  input: number
+  output: number
+  /** DeepSeek 的前缀缓存命中 token 数；缺失记 0 */
+  cacheHit: number
+}
+
+export interface ChatResult {
+  content: string
+  usage: ChatUsage
+  finishReason: string
+}
+
+export type LlmErrorCode = 'AUTH' | 'RATE_LIMIT' | 'TIMEOUT' | 'EMPTY' | 'HTTP'
+
+/**
+ * LLM 调用的统一错误类型。
+ *
+ * 为什么不用裸 Error：调用方要按 code 分支
+ * （AUTH 提示检查 key、RATE_LIMIT 读 retry-after 后重试、TIMEOUT 不重试）。
+ * 靠 message 字符串匹配是脆的。
+ */
+export class LlmError extends Error {
+  readonly code: LlmErrorCode
+  readonly status: number | null
+  /** 429 时服务端给的 retry-after 秒数 */
+  readonly retryAfterSec: number | null
+
+  constructor(
+    code: LlmErrorCode,
+    message: string,
+    status: number | null = null,
+    retryAfterSec: number | null = null,
+  ) {
+    super(message)
+    this.name = 'LlmError'
+    this.code = code
+    this.status = status
+    this.retryAfterSec = retryAfterSec
+  }
+}
+
+export type FetchLike = (url: string, init: RequestInit) => Promise<Response>
+
+export interface ChatOptions {
+  apiKey: string
+  model?: string
+  messages: ChatMessage[]
+  temperature?: number
+  maxTokens?: number
+  baseUrl?: string
+  /** 测试时注入假 fetch：CI 零网络、零花费 */
+  fetchImpl?: FetchLike
+  signal?: AbortSignal
+  timeoutMs?: number
+}

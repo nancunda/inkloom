@@ -9,6 +9,7 @@ import {
   upsertElement,
 } from '../../api/src/services/element-service.js'
 import { type ExportFormat, exportBook } from '../../api/src/services/export-service.js'
+import { generateChapter } from '../../api/src/services/generate-service.js'
 import { softDeleteElement } from '../../api/src/services/invariant-service.js'
 import {
   createCheckpoint,
@@ -191,6 +192,47 @@ export async function rollbackCmd({ positional, flags }: CommandCtx): Promise<vo
   console.log(`  恢复路径：${r.restoredPaths.join(', ') || '（无）'}`)
   console.log(`  截断历史：${r.truncatedRevisionFiles.join(', ') || '（无）'}`)
   for (const w of r.warnings) console.warn(`  ⚠ ${w}`)
+}
+
+/** inkloom write <dir> --chapter N [--guidance "…"] [--model "…"] */
+export async function write({ positional, flags }: CommandCtx): Promise<void> {
+  const dir = requirePositional(
+    positional,
+    0,
+    'inkloom write <dir> --chapter N [--guidance "…"] [--model "…"]',
+  )
+  const chapterNo = Number(requireFlag(flags, 'chapter'))
+  if (!Number.isInteger(chapterNo) || chapterNo < 1) throw new Error('--chapter 必须是正整数')
+
+  const apiKey = process.env['DEEPSEEK_API_KEY']
+  if (apiKey === undefined || apiKey.trim().length === 0) {
+    throw new Error(
+      '缺少 DEEPSEEK_API_KEY。复制 .env.example 为 .env 并填入 key，或设置同名环境变量',
+    )
+  }
+
+  const r = await withBook(dir, () =>
+    generateChapter({
+      chapterNo,
+      apiKey,
+      ...(flags['guidance'] === undefined ? {} : { userGuidance: flags['guidance'] }),
+      ...(flags['model'] === undefined ? {} : { model: flags['model'] }),
+    }),
+  )
+
+  console.log(`✓ 第 ${chapterNo} 章已生成（${r.strategy} 切分，${r.scenes.length} 个场景）`)
+  console.log(`  runId        = ${r.runId}`)
+  console.log(`  token 估算   = ${r.tokenEstimate}`)
+  console.log(
+    `  usage        = 输入 ${r.usage.input} / 输出 ${r.usage.output} / 缓存命中 ${r.usage.cacheHit}`,
+  )
+  if (r.degradedReason !== null) console.log(`  ⚠ 降级       = ${r.degradedReason}`)
+  for (const w of r.warnings) console.log(`  ⚠ ${w}`)
+  for (const s of r.scenes) {
+    console.log(
+      `  场景 ${s.sceneNo}  v${s.version}  ${s.wordCount} 字 / ${s.segCount} 段  → ${s.relPath}`,
+    )
+  }
 }
 
 /** inkloom checkpoints <dir> */

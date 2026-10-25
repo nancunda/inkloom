@@ -32,6 +32,9 @@ importers:
       '@inkloom/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@inkloom/prompt':
+        specifier: workspace:*
+        version: link:../../packages/prompt
       '@inkloom/shared':
         specifier: workspace:*
         version: link:../../packages/shared

@@ -8,6 +8,9 @@ const USAGE = `inkloom <command> [options]
   create <dir> --name <书名> --genre <题材>     建一本新书
   reindex <dir>                                从文件重建索引（索引删了也能救回来）
 
+生成
+  write <dir> --chapter N [--guidance "…"] [--model "…"]   生成第 N 章的场景候选稿
+
 要素（append-only，永不覆盖历史）
   element set <dir> --type <t> --id <id> --rel <path> --json <json> [--reason <说明>]
   element rollback <dir> --type <t> --id <id> --rel <path> --to <version>
@@ -41,6 +44,9 @@ async function main(): Promise<void> {
       break
     case 'reindex':
       await cmd.reindexCmd(ctx)
+      break
+    case 'write':
+      await cmd.write(ctx)
       break
     case 'element': {
       const sub = positional[0]

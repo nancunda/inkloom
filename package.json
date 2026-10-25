@@ -14,9 +14,10 @@
     "biome": "biome check .",
     "biome:fix": "biome check --write .",
     "check-deps": "node scripts/check-deps.mjs",
-    "cli": "tsx apps/cli/src/index.ts",
+    "cli": "tsx --env-file-if-exists=.env apps/cli/src/index.ts",
     "fixture": "node scripts/build-fixture.mjs",
-    "verify:p0": "node scripts/verify-p0.mjs",
+    "verify:p0": "tsx scripts/verify-p0.ts",
+    "verify:p1a": "tsx scripts/verify-p1a.ts",
     "verify": "pnpm biome && pnpm tsc && pnpm check-deps && pnpm test && pnpm test:int"
   },
   "devDependencies": {

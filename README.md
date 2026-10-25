@@ -131,9 +131,39 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 
 ## 状态
 
-**P0（数据底座）已完成**：105 单元测试 / 137 集成测试 / core 行覆盖 100% / `pnpm verify:p0` 11-11 通过。
+**P0（数据底座）已完成**：105 单元 + 138 集成测试 / core 行覆盖 100% / `pnpm verify:p0` 11-11 通过。
 
-P1 计划：Prompt 装配 + LLM 调用 + 逐场景确认界面（单章共创闭环）。
+**P1-a（生成链路）已完成**：Prompt 装配（S1–S5 缓存友好 + U9 锚点压尾）+ DeepSeek fetch 适配 + 场景切分降级链 + `inkloom write`。`pnpm verify:p1a` 6-6 通过。
+
+P1-b 计划：逐场景 accept/reject + 字符级 diff + 定稿与状态提案。
+P1-c 计划：写作页 + 场景卡片 + 叙事地图（React Flow）。
+
+### 生成一章
+
+```bash
+cp .env.example .env        # 填入 DEEPSEEK_API_KEY
+pnpm fixture                # 生成七霞示例书
+pnpm cli write fixtures/qixia --chapter 4 --guidance "这一章让林岚少说话"
+```
+
+生成结果在 `fixtures/qixia/chapters/ch-004/scenes/`，每次生成的**完整 prompt** 存在 `.inkloom/index.sqlite` 的 `GenerationRun` 表里（可复现、可对照）。
+
+### Prompt 的段序（为什么这么排）
+
+```
+system（跨章不变，才能命中前缀缓存）
+  S1 身份职责  S2 文风契约  S3 反AI规则  S4 hard规则  S5 输出格式
+
+user（每章变化）
+  U1 场地设定（角色/关系/地点/路程/soft规则）
+  U2 全书进度（只到本章，不泄露后续）
+  U3 未兑现清单  U4 近3章摘要  U5 上章结尾800字
+  U6 本章蓝图  U7 后续2章（禁止提前写）  U8 作者指导
+  U9 ★锚点：不可偏离的作者事实（必须最后）
+```
+
+- **S1–S5 跨章完全一致** → 命中 DeepSeek 缓存（¥0.04/M vs ¥2/M，50 倍）
+- **U9 压尾** → 与 S1 首尾夹击，对抗 lost-in-the-middle
 
 完整设计见 [`docs/superpowers/specs/2026-10-25-inkloom-design.md`](docs/superpowers/specs/2026-10-25-inkloom-design.md)，需求基线见 [`REQUIREMENTS.md`](REQUIREMENTS.md)。
 
