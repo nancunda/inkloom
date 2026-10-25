@@ -145,12 +145,13 @@ export function RelationGraph() {
           </p>
         </div>
       ) : (
-        <div className="min-h-0 flex-1">
+        <div className="h-full min-h-0 flex-1">
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={{ character: CharacterNodeView }}
             fitView
+            fitViewOptions={{ padding: 0.2 }}
             nodesDraggable={false}
             proOptions={{ hideAttribution: true }}
           >
