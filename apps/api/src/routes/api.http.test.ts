@@ -289,3 +289,59 @@ describe('未定义的接口', () => {
     expect(j.error.code).toBe('NOT_FOUND')
   })
 })
+
+/** 重写接口专用假 LLM：回一段与原文长度相当的新文本 */
+const rewriteLlm: FetchLike = async () =>
+  new Response(
+    JSON.stringify({
+      choices: [{ message: { content: '剑气贴着面颊掠过。' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 300, completion_tokens: 40 },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  )
+
+function appWithRewrite(): App {
+  return createApp({ fetchImpl: rewriteLlm, apiKey: 'sk-test' })
+}
+
+describe('局部重写接口', () => {
+  it('★ POST rewrite → 200，产出新版本', async () => {
+    const r = await appWithRewrite().request('/api/chapters/4/scenes/1/rewrite', {
+      method: 'POST',
+      body: JSON.stringify({ version: 1, segId: 'aaaa' }),
+    })
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as { newVersion: number; rewritten: string }
+    expect(j.newVersion).toBe(2)
+    expect(j.rewritten).toBe('剑气贴着面颊掠过。')
+  })
+
+  it('段不存在 → 404', async () => {
+    const r = await appWithRewrite().request('/api/chapters/4/scenes/1/rewrite', {
+      method: 'POST',
+      body: JSON.stringify({ version: 1, segId: 'zzzz' }),
+    })
+    expect(r.status).toBe(404)
+    const j = (await r.json()) as { error: { code: string } }
+    expect(j.error.code).toBe('NOT_FOUND')
+  })
+
+  it('★ 章节已定稿 → 409（不是 400，也不是 500）', async () => {
+    await db.chapter.create({
+      data: {
+        id: 'ch4-fixed',
+        projectId: pid,
+        chapterNo: 4,
+        status: 'finalized',
+        wordCount: 0,
+      },
+    })
+    const r = await appWithRewrite().request('/api/chapters/4/scenes/1/rewrite', {
+      method: 'POST',
+      body: JSON.stringify({ version: 1, segId: 'aaaa' }),
+    })
+    expect(r.status).toBe(409)
+    const j = (await r.json()) as { error: { code: string } }
+    expect(j.error.code).toBe('CONFLICT')
+  })
+})

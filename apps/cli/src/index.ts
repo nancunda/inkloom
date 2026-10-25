@@ -18,6 +18,8 @@ const USAGE = `inkloom <command> [options]
   reject   <dir> --chapter N --scene M --version V            拒绝某版本（文件保留）
   edit     <dir> --chapter N --scene M --version V --seg XXXX --text "…"
                                                               改一段 → 产新版本
+  rewrite  <dir> --chapter N --scene M --version V --seg XXXX [--guidance "…"]
+                                                              模型重写这一段 → 产新版本
   diff     <dir> --chapter N --scene M --from V1 --to V2      字符级 diff
   finalize <dir> --chapter N [--title "…"]                    定稿（要求无 candidate）
   unfinalize <dir> --chapter N                                撤销定稿
@@ -72,6 +74,9 @@ async function main(): Promise<void> {
       break
     case 'edit':
       await review.edit(ctx)
+      break
+    case 'rewrite':
+      await review.rewrite(ctx)
       break
     case 'diff':
       await review.diffScene(ctx)

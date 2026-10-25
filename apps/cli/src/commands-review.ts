@@ -1,6 +1,7 @@
 import { diffText, renderDiffHints, summarizeDiff } from '@inkloom/core'
 import { getContext } from '../../api/src/services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../../api/src/services/finalize-service.js'
+import { rewriteSceneSeg } from '../../api/src/services/rewrite-service.js'
 import {
   acceptScene,
   editSceneSeg,
@@ -86,6 +87,38 @@ export async function edit({ positional, flags }: CommandCtx): Promise<void> {
   )
   console.log(`✓ 段 ${segId} 已改 → 场景 ${sceneNo} v${r.newVersion}（${r.relPath}）`)
   console.log('  新版本状态 candidate，旧版本整版 rejected')
+}
+
+/** inkloom rewrite <dir> --chapter N --scene M --version V --seg XXXX [--guidance "…"] */
+export async function rewrite({ positional, flags }: CommandCtx): Promise<void> {
+  const dir = requirePositional(
+    positional,
+    0,
+    'inkloom rewrite <dir> --chapter N --scene M --version V --seg XXXX [--guidance "…"]',
+  )
+  const chapterNo = Number(requireFlag(flags, 'chapter'))
+  const sceneNo = Number(requireFlag(flags, 'scene'))
+  const version = Number(requireFlag(flags, 'version'))
+  const segId = requireFlag(flags, 'seg')
+  const apiKey = process.env['DEEPSEEK_API_KEY']
+  if (apiKey === undefined || apiKey.trim().length === 0) {
+    throw new Error('缺少 DEEPSEEK_API_KEY（见 .env.example）')
+  }
+  const r = await withBook(dir, () =>
+    rewriteSceneSeg({
+      chapterNo,
+      sceneNo,
+      version,
+      segId,
+      apiKey,
+      ...(flags['guidance'] === undefined ? {} : { guidance: flags['guidance'] }),
+      ...(flags['model'] === undefined ? {} : { model: flags['model'] }),
+    }),
+  )
+  console.log(`✓ 段 ${segId} 已重写 → 场景 ${sceneNo} v${r.newVersion}（${r.relPath}）`)
+  console.log(`  原文：${r.original}`)
+  console.log(`  重写：${r.rewritten}`)
+  console.log('  新版本状态 candidate，旧版本整版 rejected；接受后才会进正文')
 }
 
 /** inkloom diff <dir> --chapter N --scene M --from V1 --to V2 */

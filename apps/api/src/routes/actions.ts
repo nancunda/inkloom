@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import type { FetchLike } from '../llm/types.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
 import { generateChapter } from '../services/generate-service.js'
+import { rewriteSceneSeg } from '../services/rewrite-service.js'
 import { acceptScene, editSceneSeg, rejectScene } from '../services/scene-review-service.js'
 import {
   applyStateProposals,
@@ -90,6 +91,32 @@ export function createActions(deps: ActionDeps = {}): Hono {
         version: body.version,
         segId: body.segId,
         newText: body.newText,
+      }),
+    )
+  })
+
+  actions.post('/chapters/:n/scenes/:s/rewrite', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const sceneNo = intParam(c.req.param('s'), 'sceneNo')
+    const body = (await c.req.json().catch(() => ({}))) as {
+      version?: number
+      segId?: string
+      guidance?: string
+      model?: string
+    }
+    if (body.version === undefined || body.segId === undefined) {
+      throw new InkloomError('INVALID_INPUT', '需要 version / segId')
+    }
+    return c.json(
+      await rewriteSceneSeg({
+        chapterNo,
+        sceneNo,
+        version: body.version,
+        segId: body.segId,
+        apiKey: requireApiKey(deps),
+        ...(body.guidance === undefined ? {} : { guidance: body.guidance }),
+        ...(body.model === undefined ? {} : { model: body.model }),
+        ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
       }),
     )
   })
