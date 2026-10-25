@@ -440,5 +440,28 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
     }
   }
 
+  // 10. Asset：图片文件在、索引行不在就补一条（新 clone 后本就会这样）
+  //   ★ 与 Ruling 47 同一类问题：资产是文件，索引丢了大不了重建，
+  //     但重建不了就意味着「图在那儿却查不到」。
+  const characterDir = join(paths.assets, 'characters')
+  for (const name of await listDir(characterDir)) {
+    if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) continue
+    const rel = `assets/characters/${name}`
+    const existing = await db.asset.findFirst({ where: { projectId, filePath: rel } })
+    if (existing !== null) continue
+    await db.asset.create({
+      data: {
+        id: `asset_reindex_${name}`,
+        projectId,
+        ownerType: 'character',
+        ownerId: name.replace(/\.[a-z]+$/i, ''),
+        assetType: 'portrait',
+        filePath: rel,
+        mimeType: name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
+        anchorSource: 'reindex',
+      },
+    })
+  }
+
   return report
 }
