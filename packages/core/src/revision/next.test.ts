@@ -1,3 +1,4 @@
+import { InkloomError } from '@inkloom/shared'
 import { describe, expect, it } from 'vitest'
 import { nextRevision } from './next.js'
 import type { RevisionRecord } from './types.js'
@@ -44,5 +45,23 @@ describe('nextRevision', () => {
     const r3 = nextRevision({ ...base, id: 'c', prev: r2 })
     expect([r1.version, r2.version, r3.version]).toEqual([1, 2, 3])
     expect(r3.parentRevisionId).toBe('b')
+  })
+
+  it('★ prev 属于别的实体 → 拒绝（不静默串链）', () => {
+    const prev = nextRevision({ ...base, prev: null })
+    expect(() => nextRevision({ ...base, entityId: 'c2', prev })).toThrowError(InkloomError)
+  })
+
+  it('★ prev 的 entityType 不同 → 拒绝', () => {
+    const prev = nextRevision({ ...base, prev: null })
+    expect(() => nextRevision({ ...base, entityType: 'blueprint', prev })).toThrowError(
+      InkloomError,
+    )
+  })
+
+  it('★ payload 为 undefined → 拒绝（JSON.stringify 会返回 undefined）', () => {
+    expect(() => nextRevision({ ...base, prev: null, payload: undefined })).toThrowError(
+      InkloomError,
+    )
   })
 })

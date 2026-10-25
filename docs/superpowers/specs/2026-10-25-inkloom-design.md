@@ -1425,13 +1425,30 @@ system 中约定输出格式：
 > ⚠️ 自检补漏：原设计只说“取第 N 章的状态”，没给算法。
 
 ```
-resolveCharacterState(characterId, chapterNo, revisions[]):
+resolveCharacterState(characterId, chapterBeingWritten, revisions[]):
   0. ★ 纯函数：revisions 由 api 层从 .inkloom/revisions/character__<id>.jsonl 读入
      （core 不碰文件系统，只接收数组）
-  1. 过滤：payload.stateChapter != null 且 payload.stateChapter <= chapterNo
-  2. 按 payload.stateChapter 降序取第一条 → 即为第 N 章时的状态
-  3. 若无匹配（角色尚未“入场”）→ 返回静态设定 + stateChapter=null
+  1. 过滤：payload.stateChapter != null 且 payload.stateChapter <= chapterBeingWritten
+  2. 按 payload.stateChapter 降序取第一条 → 即为写第 N 章时的状态
+  3. 若无匹配 → 返回 null；调用方用文件里的静态设定（characters/index.json）兜底
   4. 边界：若该 revision 的 stateStale=true → 在上下文中标注「状态待确认」
+
+**★ `stateChapter` 的语义是「状态从第几章起生效」，不是「状态更新于第几章」。**
+
+推论（实现时必须遵守）：
+
+| 场景 | 写入的 stateChapter |
+|---|---|
+| 角色初始状态（第 1 章开局） | `1` |
+| 定稿第 N 章后产生的变化（如第 5 章断臂） | **`N + 1`**（即 6） |
+
+❗ 写成 `N` 会把「第 N 章结尾的断臂」喂给「第 N 章开头」，AI 会据此写出时序矛盾。
+这个 `+1` 由 `finalizeChapter` 的状态提案负责（Task 16）。
+
+**为什么第 3 步返回 null 而不是「静态设定 + stateChapter=null」**：
+本函数是纯函数，输入只有 revisions 数组。角色若从未有过动态状态版本，它无法凭空造出静态设定；
+返回一个 `state: {}` 的假快照更危险（调用方会以为拿到了数据）。
+静态设定的唯一来源是 `characters/index.json`，由装配层（Task 15）负责合并。
 ```
 
 **关键点：以 `stateChapter` 排序，不是以 `version` 排序。** 因为人可能回头补写第 3 章，此时最新的 version 对应的却是第 3 章的状态，不能用于第 10 章。

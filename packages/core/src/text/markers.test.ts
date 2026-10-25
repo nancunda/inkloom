@@ -55,9 +55,27 @@ describe('parseSceneFile', () => {
     }
   })
 
-  it('空段被丢弃（不产生空 segId 段）', () => {
+  it('★ 空文本段被保留（丢弃会让 segId 消失并被复用）', () => {
     const withEmpty = '<!-- scene:1 v:1 -->\n<!-- seg:aaaa -->\n\n<!-- seg:bbbb -->\nB\n'
-    expect(parseSceneFile(withEmpty).segments).toHaveLength(1)
+    const s = parseSceneFile(withEmpty)
+    expect(s.segments).toHaveLength(2)
+    expect(s.segments[0]).toEqual({ segId: 'aaaa', text: '' })
+  })
+
+  it('★ 场景头与首个段标记之间的游离正文 → 拒绝（不静默丢）', () => {
+    const stray = '<!-- scene:1 v:1 -->\n这是开场备注\n<!-- seg:aaaa -->\nA\n'
+    try {
+      parseSceneFile(stray)
+      throw new Error('应当抛错')
+    } catch (e) {
+      expect((e as InkloomError).code).toBe('INVALID_INPUT')
+      expect((e as Error).message).toContain('游离正文')
+    }
+  })
+
+  it('场景头后的空行不算游离正文', () => {
+    const withBlank = '<!-- scene:1 v:1 -->\n\n\n<!-- seg:aaaa -->\nA\n'
+    expect(parseSceneFile(withBlank).segments).toHaveLength(1)
   })
 })
 
@@ -84,6 +102,30 @@ describe('serializeSceneFile', () => {
     const out = serializeSceneFile({ sceneNo: 1, version: 1, segments: [] })
     expect(out).toBe('<!-- scene:1 v:1 -->\n')
     expect(parseSceneFile(out).segments).toHaveLength(0)
+  })
+
+  it('★ 拒绝非法 segId（写出去会读不回来 ⇒ 两段被合并）', () => {
+    for (const bad of ['abcde', 'ABCD', 'ab', '', 'ab-c']) {
+      expect(() =>
+        serializeSceneFile({ sceneNo: 1, version: 1, segments: [{ segId: bad, text: 'A' }] }),
+      ).toThrowError(InkloomError)
+    }
+  })
+
+  it('★ 拒绝段文本里含段标记行（读回来会裂成两段并伪造 segId）', () => {
+    expect(() =>
+      serializeSceneFile({
+        sceneNo: 1,
+        version: 1,
+        segments: [{ segId: 'aaaa', text: 'A\n<!-- seg:bbbb -->\nB' }],
+      }),
+    ).toThrowError(InkloomError)
+  })
+
+  it('空文本段可序列化且能往返', () => {
+    const scene = { sceneNo: 1, version: 1, segments: [{ segId: 'aaaa', text: '' }] }
+    const back = parseSceneFile(serializeSceneFile(scene))
+    expect(back.segments[0]).toEqual({ segId: 'aaaa', text: '' })
   })
 })
 
@@ -123,6 +165,32 @@ describe('parseChapterFile', () => {
   it('往返一致', () => {
     const a = parseChapterFile(SAMPLE_CHAPTER)
     expect(parseChapterFile(serializeChapterFile(a))).toEqual(a)
+  })
+
+  it('★ 场景号重复 → 拒绝（反解时会写同一路径，后者覆盖前者 = 正文丢失）', () => {
+    const dup = '# 第几章\n\n<!-- scene:1 -->\nA\n\n<!-- scene:1 -->\nB\n'
+    try {
+      parseChapterFile(dup)
+      throw new Error('应当抛错')
+    } catch (e) {
+      expect((e as InkloomError).code).toBe('INVALID_INPUT')
+      expect((e as Error).message).toContain('场景号重复')
+    }
+  })
+
+  it('★ 定稿文件里出现段标记 → 拒绝（格式被污染，不能原样下沉）', () => {
+    const polluted = '# 第几章\n\n<!-- scene:1 -->\n<!-- seg:aaaa -->\nA\n'
+    try {
+      parseChapterFile(polluted)
+      throw new Error('应当抛错')
+    } catch (e) {
+      expect((e as InkloomError).code).toBe('INVALID_INPUT')
+      expect((e as Error).message).toContain('段标记')
+    }
+  })
+
+  it('空文件 → 拒绝', () => {
+    expect(() => parseChapterFile('')).toThrowError(InkloomError)
   })
 })
 

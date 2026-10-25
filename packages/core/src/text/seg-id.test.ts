@@ -1,3 +1,4 @@
+import { InkloomError } from '@inkloom/shared'
 import { describe, expect, it } from 'vitest'
 import { collectSegIds, newSegId } from './seg-id.js'
 
@@ -18,7 +19,17 @@ describe('newSegId', () => {
 
   it('全部字符都在 base36 字符集内', () => {
     const id = newSegId(Math.random, new Set())
+    expect(id).toHaveLength(4)
     for (const ch of id) expect(BASE36).toContain(ch)
+  })
+
+  it('★ 坏随机源不产出非法 ID（NaN 会拼出 undefined… 串）', () => {
+    expect(() => newSegId(() => Number.NaN, new Set())).toThrowError(InkloomError)
+  })
+
+  it('随机源返回 1（越界）时不会产出空字符', () => {
+    const id = newSegId(() => 1, new Set())
+    expect(id).toBe('zzzz')
   })
 
   it('碰撞时重新生成', () => {

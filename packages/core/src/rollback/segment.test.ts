@@ -71,4 +71,26 @@ describe('rollbackSegment', () => {
     }
     expect(rollbackSegment(current, older, 'aaaa').restoredText).toBe('最原始')
   })
+
+  it('★ 回退目标不比当前旧 → 拒绝（向后叫“前进”，不产生伪历史）', () => {
+    const future: SceneFile = {
+      sceneNo: 1,
+      version: 9,
+      segments: [{ segId: 'aaaa', text: 'future' }],
+    }
+    try {
+      rollbackSegment(current, future, 'aaaa')
+      throw new Error('应当抛错')
+    } catch (e) {
+      expect((e as InkloomError).code).toBe('INVALID_INPUT')
+    }
+  })
+
+  it('★ 未改动的段不共享引用（改返回值不能污染入参）', () => {
+    const r = rollbackSegment(current, history, 'aaaa')
+    expect(r.scene.segments[1]).not.toBe(current.segments[1])
+    const untouched = r.scene.segments[1]
+    if (untouched !== undefined) untouched.text = '被污染了'
+    expect(current.segments[1]?.text).toBe('改过的第二段')
+  })
 })

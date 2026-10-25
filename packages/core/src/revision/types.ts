@@ -2,6 +2,7 @@ export type EntityType =
   | 'project'
   | 'character'
   | 'world_rule'
+  | 'power_system'
   | 'power_tier'
   | 'blueprint'
   | 'plot_thread'
