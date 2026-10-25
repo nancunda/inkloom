@@ -1,4 +1,9 @@
-import { type JudgeProvider, type JudgeRequest, shouldInject } from '@inkloom/core'
+import {
+  type JudgeProvider,
+  type JudgeRequest,
+  type JudgeResult,
+  shouldInject,
+} from '@inkloom/core'
 import { getContext } from '../services/context.js'
 import { listChapterScenes } from '../services/scene-review-service.js'
 import { readSceneFile } from '../storage/scenes.js'
@@ -96,16 +101,35 @@ export async function checkChapter(opts: {
   }
 
   try {
-    const results = await opts.provider.judge(requests)
+    // ★ 按 context 分组后逐组调用：JEV 的 state 是「一段被判断的文本」，
+    //   把不同场景混在一次请求里，模型会拿 A 场景的正文去答 B 场景的问题。
+    const groups = new Map<string, number[]>()
+    requests.forEach((req, i) => {
+      const list = groups.get(req.context) ?? []
+      list.push(i)
+      groups.set(req.context, list)
+    })
+
+    const results: (JudgeResult | undefined)[] = []
+    for (const idxList of groups.values()) {
+      const groupReqs = idxList
+        .map((i) => requests[i])
+        .filter((r): r is JudgeRequest => r !== undefined)
+      const groupResults = await opts.provider.judge(groupReqs)
+      idxList.forEach((globalIdx, j) => {
+        results[globalIdx] = groupResults[j]
+      })
+    }
+
     base.findings = results.map((r, i) => {
       const meta = index[i] ?? { sceneNo: 0, version: 0, kind: 'slop' as const }
       return {
         sceneNo: meta.sceneNo,
         version: meta.version,
         kind: meta.kind,
-        value: r.value,
-        confidence: r.confidence,
-        injectable: shouldInject(r),
+        value: r?.value ?? '',
+        confidence: r?.confidence ?? 0,
+        injectable: r === undefined ? false : shouldInject(r),
       }
     })
   } catch (e) {

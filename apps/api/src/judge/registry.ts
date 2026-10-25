@@ -1,5 +1,7 @@
 import type { JudgeProvider } from '@inkloom/core'
 import { createMockJudge } from '@inkloom/core'
+import { createOpenAiJudge } from './openai.js'
+import { createTypeSafeJudge } from './typesafe.js'
 
 /**
  * 判断层开关。
@@ -25,6 +27,18 @@ export function resolveJudgeProvider(override?: JudgeProvider | null): JudgeProv
     case 'mock':
       // 固定脚本：只验证管线，不提供任何真实判断
       return createMockJudge(() => ({ value: 3, confidence: 0.5 })).provider
+    case 'typesafe': {
+      const key = (process.env['TYPESAFE_API_KEY'] ?? '').trim()
+      if (key.length === 0) return null
+      const model = (process.env['TYPESAFE_MODEL'] ?? '').trim()
+      return createTypeSafeJudge({ apiKey: key, ...(model.length === 0 ? {} : { model }) })
+    }
+    case 'openai': {
+      const key = (process.env['SILICONFLOW_API_KEY'] ?? '').trim()
+      if (key.length === 0) return null
+      const model = (process.env['INKLOOM_JUDGE_MODEL'] ?? '').trim()
+      return createOpenAiJudge({ apiKey: key, ...(model.length === 0 ? {} : { model }) })
+    }
     case 'off':
     default:
       return null
