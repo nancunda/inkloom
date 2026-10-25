@@ -166,7 +166,19 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 
 **P2-b（txt/md 导入）已完成**：按「第X章 / Chapter N」切章（中英文数字、markdown 井号都认），章号按出现顺序重排；三种降级都进 warnings（首标题前正文保留为「前言」、无标题整本一章、空章保留）。导入写成定稿章节，`/api/book` 的章节集合改为「Chapter 行 ∪ 蓝图」——否则导入的书在界面上显示为「0 章」。集成测试 5 条 + Chrome 端到端实测（导入 → 界面可见 → 撤销定稿 → 场景反解）。
 
-**P2-c（判断层）已完成**：`JudgeProvider` 接口 + 三种原语（Choice/Score/Noul）+ 两个真实实现（TypeSafe 官方 JEV、硅基流动 OpenAI 兼容）。`POST /api/chapters/:n/check` 只做只读体检（反 AI 味 / 节奏 / 一致性），默认关闭，`INKLOOM_JUDGE=mock|openai|typesafe` 打开。置信度 < 0.75 的结论标为不可注入；判断层挂掉只降级不阻塞。`pnpm verify:p2c` 7-7 通过，实测 5 场景 15 条结论约 31 秒（优化前）。
+**P2-c（判断层）已完成**：`JudgeProvider` 接口 + 三种原语（Choice/Score/Noul）+ 两个真实实现（TypeSafe 官方 JEV、硅基流动 OpenAI 兼容）。`POST /api/chapters/:n/check` 只做只读体检（反 AI 味 / 节奏 / 一致性），默认关闭，`INKLOOM_JUDGE=mock|openai|typesafe` 打开。置信度 < 0.75 的结论标为不可注入；判断层挂掉只降级不阻塞。`pnpm verify:p2c` 7-7 通过，实测 5 场景 15 条结论 6 秒。
+
+**P2-d（体验完善）已完成**：
+- 生成改「提交任务 + 轮询」：`POST /chapters/:n/generate-async` → `GET /jobs/:id`，不再把浏览器挂在一个 40–90 秒的长连接上（实测真实生成 66 秒完成）
+- 关系网络：`GET /api/relations?chapter=N` + 圆环布局 + 时间滑块（盟友变敌人的过程一拖就看出来）
+- 联网搜索：`POST /api/search`（Tavily，**按需触发**，只返回标题/链接/摘要，不自动注入正文）
+
+**P3（视觉锚点）已完成**：角色的 `visualAnchor` 已进装配（`外貌锚点（不得偏离）`），并有断言锁定（`user.test.ts` 的「含 visualAnchor（防止写错外貌）」）。
+
+**P4（人物形象）已完成**：`inkloom portrait <dir> --character c1 [--style …]` 从 `visualAnchor` 拼 prompt → 硅基流动生图 → 下载落盘 `assets/characters/<id>.png` → 写 `Asset`（prompt / provider / model / params / visualAnchor 全记，可复现）。
+
+> 实测踩到的坑：只给 `visualAnchor` 时，模型把 17 岁少女画成了成年男性；
+> prompt 必须以「性别，年龄」开头，外貌描述再详细也拉不回来。
 
 ### 写作界面
 
