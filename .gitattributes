@@ -1,0 +1,20 @@
+# 统一行尾为 LF。
+#
+# 不加这个文件时，Windows 上 git 的 core.autocrlf 会把 checkout 出来的文件
+# 转成 CRLF，而 Biome / Prettier 期望 LF —— 结果就是每次 checkout 后
+# `pnpm biome` 都误报一批格式错误，看起来像代码问题，实际是行尾问题。
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.sqlite binary
+*.db binary
+
+# Windows 批处理必须用 CRLF，否则 cmd.exe 会解析错
+*.cmd text eol=crlf
+*.bat text eol=crlf
