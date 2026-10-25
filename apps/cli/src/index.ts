@@ -42,6 +42,9 @@ const USAGE = `inkloom <command> [options]
 导出
   export <dir> --format json|md|txt [--out <file>]
 
+形象（P4）
+  portrait <dir> --character <id> [--style "…"] [--model "…"]   生成角色形象并记 Asset
+
 type 取值：character | blueprint | world_rule | plot_thread | style_asset
           | character_signature | writing_technique | location | route | lore_reference
 `
@@ -91,6 +94,9 @@ async function main(): Promise<void> {
       break
     case 'unfinalize':
       await review.unfinalize(ctx)
+      break
+    case 'portrait':
+      await cmd.portrait(ctx)
       break
     case 'propose':
       await review.propose(ctx)

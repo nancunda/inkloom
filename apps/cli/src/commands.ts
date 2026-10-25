@@ -12,6 +12,7 @@ import { type ExportFormat, exportBook } from '../../api/src/services/export-ser
 import { generateChapter } from '../../api/src/services/generate-service.js'
 import { importChapters } from '../../api/src/services/import-service.js'
 import { softDeleteElement } from '../../api/src/services/invariant-service.js'
+import { generatePortrait } from '../../api/src/services/portrait-service.js'
 import {
   createCheckpoint,
   readCheckpoints,
@@ -85,6 +86,25 @@ export async function importCmd({ positional, flags }: CommandCtx): Promise<void
   console.log(`✓ 已导入 ${r.chapters} 章（${r.words} 字），从第 ${r.startChapterNo} 章开始`)
   for (const w of r.warnings) console.warn(`  ⚠ ${w}`)
   console.log('  下一步：inkloom scenes <dir> --chapter N 查看，或直接 write 续写')
+}
+
+/** inkloom portrait <dir> --character <id> [--style "…"] */
+export async function portrait({ positional, flags }: CommandCtx): Promise<void> {
+  const dir = requirePositional(positional, 0, 'inkloom portrait <dir> --character <id>')
+  const apiKey = (process.env['SILICONFLOW_API_KEY'] ?? '').trim()
+  if (apiKey.length === 0) throw new Error('缺少 SILICONFLOW_API_KEY（见 .env.example）')
+  const r = await withBook(dir, () =>
+    generatePortrait({
+      characterId: requireFlag(flags, 'character'),
+      apiKey,
+      ...(flags['style'] === undefined ? {} : { style: flags['style'] }),
+      ...(flags['model'] === undefined ? {} : { model: flags['model'] }),
+    }),
+  )
+  console.log(`✓ ${r.name} 的形象已生成：${r.filePath}`)
+  console.log(`  provider=${r.provider} model=${r.model}`)
+  console.log(`  锚点：${r.visualAnchor}`)
+  console.log('  Asset 已记录（prompt/provider/model/params 齐全，可复现）')
 }
 
 /** inkloom reindex <dir> */
