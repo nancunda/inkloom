@@ -1,4 +1,7 @@
+import { useEffect, useMemo } from 'react'
 import { useBook } from './api/hooks'
+import { type Command, CommandPalette } from './components/CommandPalette'
+import { STATUS_LABEL } from './lib/status'
 import { WritingPage } from './pages/WritingPage'
 import { useSessionStore } from './stores/session'
 
@@ -26,6 +29,48 @@ function ViewTabs() {
 
 export function App() {
   const { data, error, isLoading } = useBook()
+  const palette = useSessionStore((s) => s.palette)
+  const setPalette = useSessionStore((s) => s.setPalette)
+  const setChapter = useSessionStore((s) => s.setChapter)
+  const setView = useSessionStore((s) => s.setView)
+  const setFocus = useSessionStore((s) => s.setFocus)
+
+  // Ctrl+K 开关命令面板（spec §4.18）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        const s = useSessionStore.getState()
+        s.setPalette(!s.palette)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const commands: Command[] = useMemo(() => {
+    const chapters = (data?.chapters ?? []).map((c) => ({
+      id: `ch-${c.chapterNo}`,
+      // 标题本身已含「第一章」，前面不要再拼一次「第 1 章」
+      label: c.title !== null ? c.title : `第 ${c.chapterNo} 章`,
+      hint: `${STATUS_LABEL[c.status] ?? c.status}${c.wordCount > 0 ? ` · ${c.wordCount} 字` : ''}`,
+      run: () => {
+        setChapter(c.chapterNo)
+        setView('write')
+      },
+    }))
+    return [
+      ...chapters,
+      { id: 'view-write', label: '切到写作视图', run: () => setView('write') },
+      { id: 'view-map', label: '切到地图视图', run: () => setView('map') },
+      {
+        id: 'focus',
+        label: '进入纯编辑模式',
+        hint: 'Ctrl+Shift+E',
+        run: () => setFocus(true),
+      },
+    ]
+  }, [data, setChapter, setView, setFocus])
 
   if (isLoading) {
     return <div className="p-8 text-sm text-neutral-500">加载中…</div>
@@ -50,9 +95,18 @@ export function App() {
         <span className="text-lg font-semibold">{data?.name}</span>
         <span className="text-sm text-neutral-500">{data?.genre}</span>
         <span className="ml-auto text-xs text-neutral-400">{data?.chapters.length ?? 0} 章</span>
+        <button
+          type="button"
+          onClick={() => setPalette(true)}
+          className="rounded border border-neutral-300 px-2 py-0.5 text-[11px] text-neutral-500 hover:bg-neutral-100"
+          title="命令面板"
+        >
+          Ctrl+K
+        </button>
         <ViewTabs />
       </header>
       <WritingPage />
+      <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />
     </div>
   )
 }

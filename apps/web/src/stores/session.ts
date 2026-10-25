@@ -7,10 +7,13 @@ interface SessionState {
   view: 'write' | 'map'
   /** 纯编辑模式（全屏无干扰） */
   focus: boolean
+  /** 命令面板是否打开 */
+  palette: boolean
   setChapter: (n: number) => void
   selectScene: (s: number | null) => void
   setView: (v: 'write' | 'map') => void
   setFocus: (on: boolean) => void
+  setPalette: (on: boolean) => void
 }
 
 /**
@@ -25,8 +28,10 @@ export const useSessionStore = create<SessionState>((set) => ({
   selectedScene: null,
   view: 'write',
   focus: false,
+  palette: false,
   setChapter: (n) => set({ chapterNo: n, selectedScene: null }),
   selectScene: (s) => set({ selectedScene: s }),
   setView: (v) => set({ view: v }),
   setFocus: (on) => set({ focus: on }),
+  setPalette: (on) => set({ palette: on }),
 }))
