@@ -1,0 +1,15 @@
+{
+  "id": "b1",
+  "projectId": "p",
+  "chapterNo": 1,
+  "title": "第一章 入山",
+  "goal": "林岚决定上山",
+  "conflict": "老仆阻拦",
+  "hook": "剑冢方向传来一声剑鸣",
+  "castIds": [
+    "c1",
+    "c5"
+  ],
+  "tensionLevel": 2,
+  "beatType": "setup"
+}

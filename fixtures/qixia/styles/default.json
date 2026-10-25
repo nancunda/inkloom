@@ -1,11 +1,23 @@
 {
   "id": "style_default",
-  "projectId": "proj_5d69a751c0fe4355",
-  "name": "默认文风",
-  "description": "（待填写：用词/句式/节奏的整体语感）",
-  "samples": [],
-  "bannedWords": [],
-  "bannedPatterns": [],
-  "quantLimits": {},
+  "projectId": "p",
+  "name": "冷硬短句",
+  "description": "短句为主，少形容词，多用动作与物象承载情绪",
+  "samples": [
+    "风从袖口灌进来。她按住玉牌，指节泛白。"
+  ],
+  "bannedWords": [
+    "仿佛",
+    "不禁",
+    "顿时",
+    "宛如"
+  ],
+  "bannedPatterns": [
+    "不是……而是……"
+  ],
+  "quantLimits": {
+    "仿佛": 0,
+    "空气中弥漫": 0
+  },
   "isDefault": true
 }

@@ -1,1 +1,23 @@
-[]
+[
+  {
+    "id": "l1",
+    "projectId": "p",
+    "name": "青芜山",
+    "type": "mountain",
+    "region": "东境"
+  },
+  {
+    "id": "l2",
+    "projectId": "p",
+    "name": "剑冢",
+    "type": "ruin",
+    "region": "东境"
+  },
+  {
+    "id": "l3",
+    "projectId": "p",
+    "name": "药庐",
+    "type": "sect",
+    "region": "东境"
+  }
+]

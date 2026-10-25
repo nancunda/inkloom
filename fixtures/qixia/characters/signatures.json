@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "id": "sig1",
+    "projectId": "p",
+    "characterId": "c3",
+    "kind": "entrance_verse",
+    "content": "一壶一剑一山秋，懒向人间问去留。",
+    "trigger": "entrance",
+    "frequency": "once",
+    "isActive": true
+  },
+  {
+    "id": "sig2",
+    "projectId": "p",
+    "characterId": "c3",
+    "kind": "catchphrase",
+    "content": "酒没了，人就该走了。",
+    "trigger": "exit",
+    "frequency": "key_moment",
+    "isActive": true
+  },
+  {
+    "id": "sig3",
+    "projectId": "p",
+    "characterId": "c1",
+    "kind": "signature_action",
+    "content": "按住腰间玉牌，指节泛白",
+    "trigger": "anger",
+    "frequency": "key_moment",
+    "isActive": true
+  }
+]

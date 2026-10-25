@@ -1,1 +1,29 @@
-[]
+[
+  {
+    "id": "rel1",
+    "projectId": "p",
+    "fromId": "c3",
+    "toId": "c1",
+    "kind": "master",
+    "strength": 5,
+    "sinceChapter": 1
+  },
+  {
+    "id": "rel2",
+    "projectId": "p",
+    "fromId": "c2",
+    "toId": "c1",
+    "kind": "ally",
+    "strength": 4,
+    "sinceChapter": 2
+  },
+  {
+    "id": "rel3",
+    "projectId": "p",
+    "fromId": "c4",
+    "toId": "c1",
+    "kind": "enemy",
+    "strength": 3,
+    "sinceChapter": 4
+  }
+]

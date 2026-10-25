@@ -1,1 +1,34 @@
-[]
+[
+  {
+    "id": "w1",
+    "projectId": "p",
+    "category": "power",
+    "name": "灵潮",
+    "content": "灵气每甲子涨落一次，涨时突破成功率翻倍，落时强行突破必死",
+    "priority": "hard"
+  },
+  {
+    "id": "w2",
+    "projectId": "p",
+    "category": "geography",
+    "name": "剑冢不可越",
+    "content": "剑冢边界有剑气，未经允许者越过即被削去三魂之一",
+    "priority": "hard"
+  },
+  {
+    "id": "w3",
+    "projectId": "p",
+    "category": "taboo",
+    "name": "不可直呼碑上之名",
+    "content": "直呼剑冢碑上的名字会引来碑主残念",
+    "priority": "hard"
+  },
+  {
+    "id": "w4",
+    "projectId": "p",
+    "category": "faction",
+    "name": "天枢阁",
+    "content": "掌门以下分四院，最强的那个才配姓裴",
+    "priority": "soft"
+  }
+]

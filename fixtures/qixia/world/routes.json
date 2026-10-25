@@ -1,1 +1,30 @@
-[]
+[
+  {
+    "id": "r1",
+    "projectId": "p",
+    "fromId": "l1",
+    "toId": "l2",
+    "mode": "walk",
+    "days": 3,
+    "bidirectional": true
+  },
+  {
+    "id": "r2",
+    "projectId": "p",
+    "fromId": "l1",
+    "toId": "l3",
+    "mode": "walk",
+    "days": 1,
+    "bidirectional": true
+  },
+  {
+    "id": "r3",
+    "projectId": "p",
+    "fromId": "l3",
+    "toId": "l2",
+    "mode": "fly",
+    "days": 1,
+    "condition": "仅灵潮涨时可飞渡",
+    "bidirectional": false
+  }
+]
