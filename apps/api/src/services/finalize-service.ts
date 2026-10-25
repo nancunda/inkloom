@@ -96,7 +96,7 @@ export async function finalizeChapter(input: {
   const bpName = `ch-${String(input.chapterNo).padStart(3, '0')}.json`
   const bpRaw = await readJsonElement(root, `story/blueprints/${bpName}`)
   const bpParsed = bpRaw === null ? null : blueprintSchema.safeParse(bpRaw)
-  const blueprint = bpParsed !== null && bpParsed.success ? bpParsed.data : null
+  const blueprint = bpParsed?.success ? bpParsed.data : null
 
   const title = input.title ?? blueprint?.title ?? `第 ${input.chapterNo} 章`
   const merged = await mergeChapter(root, { chapterNo: input.chapterNo, title, scenes })

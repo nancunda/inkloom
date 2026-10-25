@@ -18,7 +18,6 @@ import {
   plotThreadSchema,
   type Route,
   routeSchema,
-  type StyleAsset,
   styleAssetSchema,
   type WorldRule,
   worldRuleSchema,

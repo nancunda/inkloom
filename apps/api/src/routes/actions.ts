@@ -32,6 +32,8 @@ export interface ActionDeps {
   apiKey?: string
   /** 判断层 provider；传 null = 关闭，不传 = 按 INKLOOM_JUDGE 解析 */
   judgeProvider?: JudgeProvider | null
+  /** 前端静态目录（发行包里与 API 同进程提供）；测试可覆盖 */
+  webDist?: string
 }
 
 function intParam(raw: string | undefined, name: string): number {
