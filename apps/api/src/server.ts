@@ -11,6 +11,8 @@ import { openProject } from './storage/project.js'
 export interface RunningServer {
   /** 实际监听的端口（传 0 时由系统分配） */
   port: number
+  /** 内核实际绑定到的地址，验收脚本用它确认没有绑 0.0.0.0 */
+  address: string
   close: () => Promise<void>
 }
 
@@ -25,6 +27,8 @@ export interface RunningServer {
 export async function startServer(opts: {
   bookDir: string
   port?: number
+  /** 只在真需要局域网访问时显式传；默认仅本机（spec §9.9） */
+  hostname?: string
 }): Promise<RunningServer> {
   const bookDir = resolve(opts.bookDir)
   if (!existsSync(bookDir)) {
@@ -45,20 +49,26 @@ export async function startServer(opts: {
   }
 
   const wanted = opts.port ?? 8787
-  const server = serve({ fetch: createApp().fetch, port: wanted })
+  // ★ 默认 127.0.0.1，不是 0.0.0.0（spec §9.9）：API 没有鉴权，
+  //   绑全网卡意味着同一个咖啡馆 WiFi 里的人都能读写你的书。
+  //   @hono/node-server 不加 hostname 时恰好会绑 0.0.0.0——必须显式传。
+  const hostname = opts.hostname ?? '127.0.0.1'
+  const server = serve({ fetch: createApp().fetch, port: wanted, hostname })
   if (!server.listening) {
     await new Promise<void>((ok) => server.once('listening', () => ok()))
   }
-  const port = (server.address() as AddressInfo).port
+  const addr = server.address() as AddressInfo
+  const port = addr.port
 
-  console.log(`✓ inkloom API  http://localhost:${port}`)
+  console.log(`✓ inkloom API  http://${hostname}:${port}`)
   console.log(`  书          ${opened.project.name}（${bookDir}）`)
-  // ★ 只绑本机的话应该用 127.0.0.1；@hono/node-server 默认 0.0.0.0。
-  //   这里提示一句，避免在公共网络上裸奔却不自知。
-  console.log('  ⚠ 监听 0.0.0.0，同一局域网内可访问（无鉴权，仅供本机使用）')
+  if (hostname !== '127.0.0.1' && hostname !== 'localhost') {
+    console.log(`  ⚠ 监听 ${hostname}，局域网内可访问（无鉴权，谨慎使用）`)
+  }
 
   return {
     port,
+    address: addr.address,
     close: () =>
       new Promise<void>((ok, fail) =>
         server.close((e) => (e === undefined || e === null ? ok() : fail(e))),
@@ -73,5 +83,9 @@ if (process.argv[1]?.replace(/\\/g, '/').endsWith('server.ts') === true) {
     console.error('缺少 INKLOOM_BOOK=<书籍目录>，例如：INKLOOM_BOOK=fixtures/qixia pnpm api')
     process.exit(1)
   }
-  await startServer({ bookDir: book, port: Number(process.env['PORT'] ?? 8787) })
+  await startServer({
+    bookDir: book,
+    port: Number(process.env['PORT'] ?? 8787),
+    ...(process.env['HOST'] === undefined ? {} : { hostname: process.env['HOST'] }),
+  })
 }

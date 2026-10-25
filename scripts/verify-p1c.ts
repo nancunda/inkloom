@@ -268,6 +268,18 @@ try {
     }
   })
 
+  await check('★ 默认只绑 127.0.0.1，不监听 0.0.0.0（spec §9.9）', async () => {
+    // 读内核真实绑定地址，不是读我们传进去的参数
+    const running = await startServer({ bookDir: book, port: 0 })
+    try {
+      if (running.address !== '127.0.0.1') {
+        throw new Error(`实际绑定 ${running.address}，无鉴权的 API 不能对局域网开放`)
+      }
+    } finally {
+      await running.close()
+    }
+  })
+
   await check('★ 书没有 .git 时，startServer 自动补建（新 clone 开箱可用）', async () => {
     await rm(join(book, '.git'), { recursive: true, force: true })
     const running = await startServer({ bookDir: book, port: 0 })
