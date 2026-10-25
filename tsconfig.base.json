@@ -19,6 +19,7 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/core" },
+    { "path": "./packages/prompt" },
     { "path": "./apps/api" },
     { "path": "./apps/cli" }
   ],

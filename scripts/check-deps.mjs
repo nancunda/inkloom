@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-const CORE_DIR = 'packages/core/src'
+const SCANNED_DIRS = ['packages/core/src', 'packages/prompt/src']
 const BANNED = [
   'fs',
   'node:fs',
@@ -45,22 +45,24 @@ function walk(dir) {
 }
 
 const violations = []
-for (const file of walk(CORE_DIR)) {
-  const src = stripComments(readFileSync(file, 'utf8'))
-  const re = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g
-  let m
-  while ((m = re.exec(src)) !== null) {
-    const spec = m[1]
-    if (BANNED.some((b) => spec === b || spec.startsWith(`${b}/`))) {
-      const line = src.slice(0, m.index).split('\n').length
-      violations.push(`${relative(process.cwd(), file)}:${line}  禁止导入 '${spec}'`)
+for (const dir of SCANNED_DIRS) {
+  for (const file of walk(dir)) {
+    const src = stripComments(readFileSync(file, 'utf8'))
+    const re = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g
+    let m
+    while ((m = re.exec(src)) !== null) {
+      const spec = m[1]
+      if (BANNED.some((b) => spec === b || spec.startsWith(`${b}/`))) {
+        const line = src.slice(0, m.index).split('\n').length
+        violations.push(`${relative(process.cwd(), file)}:${line}  禁止导入 '${spec}'`)
+      }
     }
   }
 }
 
 if (violations.length > 0) {
-  console.error('✗ core 层出现 IO 依赖（spec §2.1 铁律）：')
+  console.error('✗ core/prompt 层出现 IO 依赖（spec §2.1 铁律）：')
   for (const v of violations) console.error(`  ${v}`)
   process.exit(1)
 }
-console.log('✓ core 层无 IO 依赖')
+console.log('✓ core/prompt 层无 IO 依赖')
