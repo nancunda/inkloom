@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { bookPaths } from '../storage/paths.js'
 import { type IndexDb, openIndexDb } from './client.js'
 
@@ -28,9 +28,11 @@ async function hasSchema(db: IndexDb): Promise<boolean> {
  *   P1 做发布版时应改为内嵌 migration.sql 直接执行，摆脱对 prisma CLI 的运行时依赖。
  */
 function runMigrate(dbPath: string): void {
+  // ★ 同样必须 resolve：Prisma CLI 的 file: 相对路径也按 schema 目录解析
+  const url = `file:${resolve(dbPath).split('\\').join('/')}`
   execSync('pnpm exec prisma migrate deploy', {
     cwd: API_DIR,
-    env: { ...process.env, INKLOOM_DATABASE_URL: `file:${dbPath.split('\\').join('/')}` },
+    env: { ...process.env, INKLOOM_DATABASE_URL: url },
     stdio: 'pipe',
   })
 }
