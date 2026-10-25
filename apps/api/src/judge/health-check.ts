@@ -82,6 +82,8 @@ export async function checkChapter(opts: {
     degraded: null,
   }
   if (opts.provider === null) return base
+  // 提到闭包外：Promise.all 的回调里 TS 拿不到上面的 narrowing
+  const provider = opts.provider
 
   const { root } = getContext()
   const scenes = (await listChapterScenes(opts.chapterNo)).slice(0, MAX_SCENES)
@@ -111,11 +113,17 @@ export async function checkChapter(opts: {
     })
 
     const results: (JudgeResult | undefined)[] = []
-    for (const idxList of groups.values()) {
-      const groupReqs = idxList
-        .map((i) => requests[i])
-        .filter((r): r is JudgeRequest => r !== undefined)
-      const groupResults = await opts.provider.judge(groupReqs)
+    // ★ 组间并行：每组只关心自己的正文，彼此无依赖。
+    //   串行的话 5 个场景要 30 秒以上，界面看起来像卡住了。
+    const settled = await Promise.all(
+      [...groups.values()].map(async (idxList) => {
+        const groupReqs = idxList
+          .map((i) => requests[i])
+          .filter((r): r is JudgeRequest => r !== undefined)
+        return { idxList, groupResults: await provider.judge(groupReqs) }
+      }),
+    )
+    for (const { idxList, groupResults } of settled) {
       idxList.forEach((globalIdx, j) => {
         results[globalIdx] = groupResults[j]
       })

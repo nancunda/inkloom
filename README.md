@@ -137,6 +137,7 @@ pnpm verify:p1a  # P1-a 验收：装配 → 生成 → 落盘，6 条
 pnpm verify:p1b  # P1-b 验收：确认 / diff / 定稿 / 提案，11 条
 pnpm verify:p1c  # P1-c 验收：HTTP 接口 + 启动自愈，18 条
 pnpm verify:p2a  # P2-a 验收：局部重写，7 条
+pnpm verify:p2c  # P2-c 验收：判断层开关 / 降级 / 只读 / 并行，7 条
 pnpm fixture     # 重新生成 fixtures/qixia（玄幻示例书）
 pnpm test:cov    # 覆盖率（core 门槛 >80%）
 ```
@@ -164,6 +165,8 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 **P2-a（局部重写）已完成**：指定一段让模型改写，其余段逐字节不变、段 ID 不变；产物作为新版本候选，旧版自动 rejected。四条拒绝落盘的情形（空/过短/过长/带段标记）在写盘前拦下，失败不留半成品。CLI / HTTP / 写作页三个入口，`pnpm verify:p2a` 7-7 通过。
 
 **P2-b（txt/md 导入）已完成**：按「第X章 / Chapter N」切章（中英文数字、markdown 井号都认），章号按出现顺序重排；三种降级都进 warnings（首标题前正文保留为「前言」、无标题整本一章、空章保留）。导入写成定稿章节，`/api/book` 的章节集合改为「Chapter 行 ∪ 蓝图」——否则导入的书在界面上显示为「0 章」。集成测试 5 条 + Chrome 端到端实测（导入 → 界面可见 → 撤销定稿 → 场景反解）。
+
+**P2-c（判断层）已完成**：`JudgeProvider` 接口 + 三种原语（Choice/Score/Noul）+ 两个真实实现（TypeSafe 官方 JEV、硅基流动 OpenAI 兼容）。`POST /api/chapters/:n/check` 只做只读体检（反 AI 味 / 节奏 / 一致性），默认关闭，`INKLOOM_JUDGE=mock|openai|typesafe` 打开。置信度 < 0.75 的结论标为不可注入；判断层挂掉只降级不阻塞。`pnpm verify:p2c` 7-7 通过，实测 5 场景 15 条结论约 31 秒（优化前）。
 
 ### 写作界面
 
