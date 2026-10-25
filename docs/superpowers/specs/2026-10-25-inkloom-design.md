@@ -124,7 +124,7 @@ inkloom/
 | 模块 | 只做一件事 | 明确不做 |
 |---|---|---|
 | `core/entities` | 定义实体形状与不变量（如 tensionLevel ∈ 1..5） | 不查库、不调 AI |
-| `core/context` | 给定 `chapterNo`，推导"该章需要哪些要素" | 不渲染成文本 |
+| `core/context` | 接收**已装载**的要素数组，计算派生结果（状态/清单/曲线） | 不查库、不读文件（IO 在 api 层） |
 | `core/quality` | 张力曲线校验、一致性检查、反 AI 规则检测 | 不修改数据 |
 | `core/text` | 分段、diff、字数、token 估算 | 不决定用什么模型 |
 | `core/capabilities` | 把上述能力包装成统一签名的可调用单元 | 不含业务编排 |
@@ -168,13 +168,14 @@ inkloom
 #### 四层递进（渐进式披露）
 
 > 用户问“是不是先完成第一个再第二个”——是，但不是模块顺序，而是**使用深度**的顺序。
+> ❗命名修正：此处用 **Stage 1–4**，避开与“信息供给分级 L0–L4”“压缩层 C0–C4”的冲突。
 
 | 层 | 用户阶段 | 实际只用到的 | 界面上可见的按钮数 |
 |---|---|---|---|
-| **L1 起步** | 第一次写 | 书架 → 建书 → 写作页 | ~3 个 |
-| **L2 成形** | 写到第 3 章 | + 角色卡 + 章节蓝图 | ~8 个 |
-| **L3 规模化** | 写到第 10 章 | + 世界规则 + 概览（张力/伏笔） | ~15 个 |
-| **L4 精修** | 追求质量 | + 素材 + 设置（规则/Skill/MCP） | 全部 |
+| **Stage 1 起步** | 第一次写 | 书架 → 建书 → 写作页 | ~3 个 |
+| **Stage 2 成形** | 写到第 3 章 | + 角色卡 + 章节蓝图 | ~8 个 |
+| **Stage 3 规模化** | 写到第 10 章 | + 世界规则 + 概览（张力/伏笔） | ~15 个 |
+| **Stage 4 精修** | 追求质量 | + 素材 + 设置（规则/Skill/MCP） | 全部 |
 
 **实现机制**：后层模块默认折叠在侧边栏“更多”里，当数据出现时才提醒。例：
 - 建了第 2 个角色 → 提示“要不要看看关系图？”
@@ -276,6 +277,95 @@ my-novel/                          ← 一本书的根目录，用户可自由�
 | 导出 | 复制文件夹即可；或导出为单文件 .md |
 | 迁移 | 换电脑 = 拷贝文件夹 |
 
+### 2.6 数据一致性与并发契约
+
+> ⚠️ 审查后新增。原设计留下三个阻塞级问题：正文三份共存、revision 与 Git 双版本系统、并发无控制。
+
+#### 单一事实源（铁律）
+
+| 层 | 角色 | 可丢弃？ |
+|---|---|---|
+| **文件**（`.md` / `.json`） | **唯一事实源** | ❌ |
+| SQLite `index.sqlite` | 派生查询缓存 | ✅ 可删除后 `reindex` |
+| `revisions/*.jsonl` | 结构化要素的历史 | ❌ |
+| Git 仓库 | 正文文件的历史 | ❌（若启用） |
+
+**修正**：`REQUIREMENTS.md` 原写“全部数据存本地 SQLite”已作废；正确表述是“**全部数据存本地文件，SQLite 仅为索引**”。
+
+#### 职责切分（解决 revision 与 Git 双轨）
+
+| 管什么 | 谁管 | 粒度 |
+|---|---|---|
+| **正文 `.md`** 的历史/回退/diff | **Git** | 文件级 |
+| **结构化要素**（角色/蓝图/规则/线索/签名/手法）历史 | **`revisions/*.jsonl`** | 字段级 JSON 快照 |
+| 正文的逐场景版本 | **Git**（每次用户动作一次 commit） | 不写 revision |
+
+**铁律：正文不进 revision。** 一句话消除两套版本系统。
+
+#### `.inkloom/` 目录结构（修正）
+
+```
+.inkloom/
+├── index.sqlite              ← ✅ 可删，可 reindex 重建
+├── revisions/                ← ❌ 不可删，要素的真实历史
+│   ├── character__lin-lan.jsonl
+│   ├── blueprint__ch-004.jsonl
+│   └── plot_thread__t-001.jsonl
+├── runs/                     ← 生成记录（assembledPrompt）
+└── backups/                  ← 自动快照（snapshot 模式保底）
+```
+
+JSONL 的好处：append-only、人类可读、损坏可逐行恢复、Git 友好。
+
+#### 写入顺序（原子性）
+
+```
+1. 写临时文件 xxx.tmp
+2. fsync + rename          ← 原子替换，此刻文件已落盘
+3. 更新 index.sqlite（事务）
+4. 追加 revisions/*.jsonl  ← 仅结构化要素需要
+5. 若 versionMode=git 且属于“用户动作”节点 → git commit
+```
+
+| 失败点 | 后果 | 处理 |
+|---|---|---|
+| 1–2 | 无副作用 | 直接报错 |
+| 3 | 文件已写，索引旧 | 标记 dirty，下次读取时 reindex |
+| 4 | 索引已更新，历史缺失 | 回滚索引，重新执行 |
+| 5 | 文件正常，未提交 | 记 warning，下次动作时重试 |
+
+#### 并发控制
+
+| 对象 | 机制 |
+|---|---|
+| 所有写操作 | **单一写队列（in-process mutex）**，强制串行 |
+| `version` 取号 | 事务内 `SELECT MAX(version)+1`，唯一约束冲突则重试 |
+| Git 子进程 | 独立串行队列，同一时刻只允许一个 |
+| SQLite | `PRAGMA journal_mode=WAL` + `busy_timeout=5000` |
+
+**硬约束：即使将来恢复并行生成，写入必须串行。** 生成可并行，落库不可。
+
+#### 外部编辑检测
+
+用户用 VSCode 改了 `.md`，系统必须不能静默覆盖：
+
+```
+每 2s 轮询 mtime（或用 chokidar watch）：
+  if 文件 mtime > 上次读取时间:
+    if contentHash 变化:
+      1. 重新读取，更新索引
+      2. 若该文件存在未确认的候选 → 提示“外部修改覆盖了候选稿”
+      3. 强制刷新 UI
+```
+
+#### 索引重建
+
+```bash
+inkloom reindex <book-dir>
+# 扫描所有 .md/.json -> 重建 index.sqlite
+# 不碰 revisions/*.jsonl（它是事实源，不是索引）
+```
+
 ---
 
 ## 3. 数据模型
@@ -311,6 +401,10 @@ model EntityRevision {
 ```prisma
 model Project {
   id              String   @id @default(cuid())
+  /// ★ 书文件夹的绝对路径。移动文件夹后需重新绑定
+  rootPath        String
+  /// ★ 书文件夹内的身份锚（.inkloom/project-id），防止路径变更后认错书
+  folderId        String   @unique
   name            String
   genre           String   // 玄幻
   subGenre        String?
@@ -458,10 +552,14 @@ model Blueprint {
   turn         String?  // 转折
   hook         String   // 章末钩子
   castIds      String   // JSON: 出场角色 id
+  /// ★ 本章发生地点（一致性校验的 location_jump 依赖它）
+  locationId   String?
+  /// ★ 故事内时间（如“第 12 日 · 辰时”），供时间线校验
+  storyTime    String?
   beatType     String   // setup|rising|climax|twist|falling|resolution
   tensionLevel Int      // ★ 1-5，节奏曲线的数据基础
   userGuidance String?
-  status       String   @default("planned") // planned | drafting | finalized
+  // ❗已删除 status 字段：章节状态以 Chapter.status 为唯一真相
   @@unique([projectId, chapterNo])
 }
 ```
@@ -469,7 +567,7 @@ model Blueprint {
 **张力曲线校验**（`core/quality`，纯函数）：
 - 连续 ≥5 章 `tensionLevel` 相同 → `flat_run` 告警
 - 高潮章（`beatType='climax'`）`tensionLevel` < 4 → `weak_climax` 告警
-- 相邻两章张力跳变 > 3 → 提示确认是否为有意反转
+- 相邻两章张力跳变 **|Δ| >= 3** → 提示确认是否为有意反转（原写 `> 3` 在 1–5 区间内几乎永不触发）
 
 ### 3.7 剧情线索与未兑现清单
 
@@ -492,20 +590,9 @@ model PlotThread {
 }
 ```
 
-**未兑现清单生成算法**（`core/context/getUnresolvedSetups`，纯函数）：
+**未兑现清单**：算法统一见 §4.9，本节不再重复定义（原两套规则已合并）。
 
-```
-输入：plotThreads[], currentChapter, threshold
-输出：UnresolvedItem[]（按紧迫度排序）
-
-规则：
-1. status = 'active' 且 resolvedChapter 为空
-2. 距最近一次提及（advancedChapters 末项 或 plantedChapter）超过 threshold 章
-3. 紧迫度 = 未提及章数 / threshold
-4. running_gag 与 foreshadow 单独分组展示
-```
-
-默认 `threshold = 5`，可在项目设置调整。
+默认 `unresolvedThreshold = 5`，可在 `ProjectSetting` 调整。
 
 ### 3.8 文风资产
 
@@ -533,13 +620,15 @@ model DraftSegment {
   chapterNo   Int
   sceneNo     Int     // 场景号 = 确认单位
   seq         Int     // 场景内段序
-  content     String
+  /// ❗已删除 content 字段：正文在 .md 文件里，此处只存指纹
+  /// 候选稿在 chapters/ch-NNN/scenes/sX.vY.md，定稿后合并到 ch-NNN.md
+  filePath    String  // 相对书根目录的路径
+  contentHash String  // 用于外部编辑检测
   wordCount   Int?
   status      String  // candidate | accepted | rejected | superseded
   sourceRunId String?
   acceptedAt  DateTime?
   deletedAt   DateTime?
-  currentRevisionId String?
   @@index([projectId, chapterNo, sceneNo, seq])
   @@index([projectId, chapterNo, status])
 }
@@ -554,9 +643,16 @@ model GenerationRun {
   id              String   @id @default(cuid())
   projectId       String
   chapterNo       Int?
+  /// ★ 场景号（当 purpose 为场景级时必填）
+  sceneNo         Int?
+  /// ★ 父 run（并行/多阶段生成时形成树，便于失效传播）
+  parentRunId     String?
+  /// ★ commitState：写操作幂等的三态（not_committed | committed | unknown）
+  commitState     String   @default("not_committed")
   purpose         String   // draft | blueprint | review | repair | segment_split | vision
+                          // | scene_skeleton | scene_fill | state_proposal | judge
 
-  provider        String   // deepseek | siliconflow
+  provider        String   // deepseek | siliconflow | typesafe-jev
   model           String   // deepseek-flash | deepseek-v4-pro | ...
   params          String?  // JSON: temperature / max_tokens / effort / seed
   /// ★ 使用的 PromptTemplate（可追溯到具体版本）
@@ -651,20 +747,92 @@ model Chapter {
 }
 ```
 
-**章节状态机（唯一合法转换）：**
+**章节状态机（唯一合法转换，已修正）：**
 
 ```
-planned ──(生成或手写首个场景)──> drafting
-   ↑                                  │
-   │                                  │(全部场景确认完毕)
-   └────(撤销定稿)──── review <───────┘
-                         │
-                         └──(用户点定稿)──> finalized
+planned ──(首个场景产出)──> drafting ──(全部场景 accepted)──> review
+                                ▲                              │
+                                │                        ┌─────┴─────┐
+                           (继续编辑)                 (用户定稿)  (退回编辑)
+                                │                        ▼           │
+                                └────────────────── finalized         │
+                                                          │          │
+                                                    (撤销定稿)       │
+                                                          ▼          │
+                                                        review ◀─────┘
 ```
+
+**合法边（穷举）：**
+
+| from | to | 触发 |
+|---|---|---|
+| `planned` | `drafting` | 产出首个场景 |
+| `drafting` | `review` | 该章无 `candidate` 段落 |
+| `review` | `drafting` | 用户点“继续编辑” |
+| `review` | `finalized` | 用户点“定稿” |
+| `finalized` | `review` | 用户点“撤销定稿” |
+
+❗ 移除了原设计里 `review → planned` 的错误边（丢失“已有正文”语义）。
 
 **不变量**：
 - 只有 `finalized` 章节才计入「已有正文」；`drafting` 章节可被任意重写
-- `summaryStale=true` 时不得用于装配（L3 层跳过并降级）
+- `summaryStale=true` 时不得用于装配（C3 层跳过并降级）
+- **`chapterNo` 不可变**：只允许末尾追加，不支持中间插入（写进 P0 验收）；若必须插入，需执行重编号迁移，列入 YAGNI
+
+### 3.12.1 场景骨架 ScenePlan
+
+> ⚠️ 审查后新增。原设计只说了“并行填充”，但没有可审阅的场景单元，也无法做失效传播。
+
+```prisma
+model ScenePlan {
+  id          String  @id @default(cuid())
+  projectId   String
+  chapterNo   Int
+  sceneNo     Int
+  summary     String   // 一句话场景目标
+  locationId  String?
+  castIds     String?  // JSON
+  transition  String?  // 与上一场景的转换（时间/地点/因果）
+  wordBudget  Int?
+  status      String   @default("planned") // planned | filling | filled | accepted | rejected
+  latestRunId String?
+  @@unique([projectId, chapterNo, sceneNo])
+}
+```
+
+**失效传播规则**：场景 N 被重写时，N+1..M 的 `ScenePlan.status` 回退为 `planned`，并提示“后续场景可能需重生成”。
+
+### 3.12.2 模型注册表 ModelProfile
+
+> ⚠️ 审查后新增。原设计说了“70%/85%/95% 分档”但**从未定义分母**，`costCents` 也无价格来源。
+
+```prisma
+model ModelProfile {
+  id                String  @id          // deepseek-flash
+  provider          String  // deepseek | siliconflow | typesafe-jev
+  displayName       String
+  contextWindow     Int     // 1048576
+  maxOutput         Int     // 393216
+  inputPricePerM    Float?  // 元/百万 token
+  outputPricePerM   Float?
+  cacheHitPricePerM Float?
+  supportsVision    Boolean @default(false)
+  supportsCache     Boolean @default(false)
+  isActive          Boolean @default(true)
+}
+```
+
+**预算分母定义（修正）**：
+
+```
+budgetDenominator = min(ModelProfile.contextWindow - ModelProfile.maxOutput,
+                        ProjectSetting.budgetTokens)
+使用率 = tokenEstimate / budgetDenominator
+```
+
+> ❗**重要修正**：`deepseek-flash` 上下文为 1,048,576，30 万字全塞也只占约 30%。
+> **因此 70% 告警阈值默认永远不触发**。它真正的价值是：防止未来接入小窗口模型时失控，
+> 以及在 `budgetTokens` 被手动调小时生效。_不应再把它宣传为“常规降级机制”。_
 
 ### 3.13 项目配置
 
@@ -683,10 +851,24 @@ model ProjectSetting {
   budgetWarnRatio      Float   @default(0.70)
   budgetPromptRatio    Float   @default(0.85)
   budgetForceRatio     Float   @default(0.95)
+  /// ★ 手动预算上限（token），null = 用模型上下文窗口
+  budgetTokens         Int?
+
+  // 生成模式（已决：默认整章）
+  /// whole = 整章一次生成（默认，连贯性最优）
+  /// serial_chain = 逐场景串行（上一定稿才生成下一个）
+  /// parallel = 两阶段并行（实验，默认关闭）
+  generationMode       String  @default("whole")
+
+  // 版本模式
+  /// git = 每次用户动作 commit；snapshot = 仅本地快照
+  versionMode          String  @default("git")
 
   // 模型默认
   defaultTextModel     String  @default("deepseek-flash")
   defaultImageModel    String  @default("Tongyi-MAI/Z-Image-Turbo")
+  /// ★ 视觉模型（识图用），与文本模型分开
+  defaultVisionModel   String? // deepseek-flash（支持 image 输入）
 
   // 成本上限（分）；null = 不限
   dailyCostLimitCents  Int?
@@ -895,9 +1077,13 @@ model Reference {
         │
 [9] 定稿
     ├─ 校验：该章无 candidate
-    ├─ Blueprint.status = finalized
-    ├─ 可选：标记角色 stateStale
-    └─ 可选：写 QualityReview
+    ├─ ★ Chapter.status = 'finalized'，写 finalizedAt / wordCount
+    ├─ 合并场景到 chapters/ch-NNN.md（原子写）→ git commit
+    ├─ ★ 状态提案（P1）：LLM 读该章正文 →
+    │     输出 [{ field, oldValue, newValue, evidenceQuote }]
+    │     用户逐条确认后才写 revisions/ -> 完成后清 stateStale
+    ├─ 可选：写 QualityReview
+    └─ 可选：标记角色 stateStale（未做状态提案时）
 ```
 
 ### 4.2 Prompt 的固定顺序（稳定性 = 缓存命中率）
@@ -905,31 +1091,36 @@ model Reference {
 顺序一旦变化，DeepSeek 的缓存前缀就失效。**顺序是设计的一部分，不是实现细节。**
 
 ```
-system:
+system（只放跨章不变的内容，否则前缀缓存失效）:
   [S1] 角色身份与职责
   [S2] 文风契约（styleAsset.description + samples）
   [S3] 反 AI 规则（bannedWords / bannedPatterns / quantLimits）
-  [S4] 世界 hard 规则          ← 稳定
-  [S5] 力量体系（用到的 tier）  ← 较稳定
-  [S6] 角色静态设定（出场角色）  ← 较稳定
-  [S7] 角色关系
-  [S8] 输出格式约定（===场景N=== / 空行分段 / 字数 / 纯文本）
+  [S4] 世界 hard 规则
+  [S5] 输出格式约定（===场景N=== / 空行分段 / 字数 / 纯文本）
 
 user:
-  [U1] 全书进度（蓝图时间线）   ← 每章+1，前段稳定
-  [U2] 未兑现清单
-  [U3] 近期 3 章摘要
-  [U4] 上章结尾 800 字
-  [U5] 本章蓝图（JSON）
-  [U6] 后续 2 章蓝图（禁止提前写）
-  [U7] 作者本章额外指导
-
-system（末尾追加，首尾夹击）:
-  [S9] 【不可偏离的作者事实】锚点四字段
+  [U1] 本章场地设定（→ 每章都变，必须放 user）
+       ├ 力量体系（用到的 tier）
+       ├ 角色静态设定（出场角色）
+       └ 角色关系
+  [U2] 全书进度（蓝图时间线）
+  [U3] 未兑现清单
+  [U4] 近期 3 章摘要
+  [U5] 上章结尾 800 字
+  [U6] 本章蓝图（JSON）
+  [U7] 后续 2 章蓝图（禁止提前写）
+  [U8] 作者本章额外指导
+  [U9] ★【不可偏离的作者事实】锚点四字段
 ```
 
+> ❗**审查后的重要修正**：原设计把 S5 力量体系 / S6 角色静态 / S7 关系放在 system，
+> 但它们**每章都随 castIds 变化**——DeepSeek 是前缀缓存，S5 一变 S6–S9 全部失效。
+> 修正后：**S1–S5 真正跨章不变，才能命中缓存；U1 才是每章变化的起点**。
+>
+> 同时，锚点块必须放在**最后一条 user 消息末尾**（原放在 system 末尾，后面还有 U1–U7，“首尾夹击”实际没成立）。
+
 > **为什么把锚点放在最后**：应对 lost-in-the-middle。开头说一次、结尾再说一次，中间放易变内容。
-> **为什么 S4–S7 在前、U 段在后**：稳定内容前置才能命中缓存（DeepSeek 缓存命中 ¥0.04/M vs 未命中 ¥2/M）。
+> **为什么 S1–S5 在前、U 段在后**：S1–S5 跨章不变，才能命中缓存（DeepSeek 缓存命中 ¥0.04/M vs 未命中 ¥2/M）。
 
 ### 4.3 预算分配与分档降级
 
@@ -961,11 +1152,13 @@ OpenFic 的参数（`AUTO_TRIGGER_RATIO=0.8`、`TAIL_TOKEN_BUDGET=20_000`）适�
 
 | 层 | 内容 | 策略 | 原文保留 |
 |---|---|---|---|
-| L0 | 锚点 / 角色静态 / hard 规则 | **永不压缩** | ✅ 结构化 |
-| L1 | 蓝图时间线 | **永不压缩**（每章一条，50 字） | ✅ |
-| L2 | 上章结尾 | 800 字固定 | ✅ |
-| L3 | 近 3 章摘要 | 每章 200 字，LLM 生成，带 `sourceHash` 可重建 | ⚠️ 可重建 |
-| L4 | 更早章节 | 由 L1 时间线覆盖，**不做 LLM 全书摘要** | ✅ 原文在库 |
+| **C0** | 锚点 / 角色静态 / hard 规则 | **永不压缩** | ✅ 结构化 |
+| **C1** | 蓝图时间线 | **永不压缩**（每章一条，50 字） | ✅ |
+| **C2** | 上章结尾 | 800 字固定 | ✅ |
+| **C3** | 近 3 章摘要 | 每章 200 字，LLM 生成，带 `summaryHash` 可重建 | ⚠️ 可重建 |
+| **C4** | 更早章节 | 由 C1 时间线覆盖，**不做 LLM 全书摘要** | ✅ 原文在库 |
+
+> ❗命名修正：压缩层用 **C0–C4**，不再与“信息供给分级 L0–L4”混用。
 
 **核心决策：用结构化数据替代文本摘要。**
 依据：Pagekin 的 `global_summary` 定义为"章节要点时间线（**从蓝图按序拼装**）"，而非 LLM 总结。20 章后你不需要 20 段摘要，你需要 20 条蓝图要点。
@@ -1014,12 +1207,13 @@ system 中约定输出格式：
 > ⚠️ 自检补漏：原设计只说“取第 N 章的状态”，没给算法。
 
 ```
-resolveCharacterState(characterId, chapterNo):
-  1. 从 entity_revision 取该角色的所有 revision
-  2. 过滤：payload.stateChapter != null 且 payload.stateChapter <= chapterNo
-  3. 按 payload.stateChapter 降序取第一条 → 即为第 N 章时的状态
-  4. 若无匹配（角色尚未“入场”）→ 返回静态设定 + stateChapter=null
-  5. 边界：若该 revision 的 stateStale=true → 在上下文中标注「状态待确认」
+resolveCharacterState(characterId, chapterNo, revisions[]):
+  0. ★ 纯函数：revisions 由 api 层从 .inkloom/revisions/character__<id>.jsonl 读入
+     （core 不碰文件系统，只接收数组）
+  1. 过滤：payload.stateChapter != null 且 payload.stateChapter <= chapterNo
+  2. 按 payload.stateChapter 降序取第一条 → 即为第 N 章时的状态
+  3. 若无匹配（角色尚未“入场”）→ 返回静态设定 + stateChapter=null
+  4. 边界：若该 revision 的 stateStale=true → 在上下文中标注「状态待确认」
 ```
 
 **关键点：以 `stateChapter` 排序，不是以 `version` 排序。** 因为人可能回头补写第 3 章，此时最新的 version 对应的却是第 3 章的状态，不能用于第 10 章。
@@ -1042,6 +1236,11 @@ resolveCharacterState(characterId, chapterNo):
       due      : gap >= threshold
       normal   : 其余
       gag_due  : kind=running_gag 且 gap >= gagThreshold
+
+ 边界（审查后补全）：
+   - resolvedChapter != null → 直接排除（已回收）
+   - plantedChapter == null（仅 planned 未埋）→ 归入 planned 分组，不参与 gap 计算
+   - advancedChapters 解析失败 → 视为空数组，记 warning
  5. 排序: overdue > due > gag_due > normal；同级按 gap 降序
  6. 截断: 最多 maxItems 条；overdue 不参与截断（必须全部列出）
  7. 输出分组: { overdue[], due[], runningGags[] }
@@ -1080,9 +1279,21 @@ resolveCharacterState(characterId, chapterNo):
 | `location_jump` | 角色 `curLocation` 与蓝图指定地点不同，且场景未出现移动描写 | warn |
 | `banned_word` | 命中 `styleAsset.bannedWords` | warn |
 | `quant_limit` | 某词全章出现次数 > `quantLimits[词]` | warn |
-| `unknown_cast` | 场景中出现了 castIds 且不在全角色表的姓名 | warn |
+| `unknown_cast` | 场景中出现**既不在 `castIds`、也不在全角色表**的姓名（需先解析 `castIds` JSON） | warn |
 
 **v1 定位：只告警不阻断。** 因为“越级挑战”在玄幻里是常态（金手指/阵法/偷袭），硬阻断会误杀。
+
+**❗ MVP 范围限定（审查后修正）**：
+
+上表中 **4 条规则需要语义理解**，不可能靠字符串函数完成，依赖 JEV：
+
+| 规则 | MVP 能否实现 |
+|---|---|
+| `banned_word` / `quant_limit` | ✅ 正则 + 计数，**MVP 可做** |
+| `unknown_cast` | ✅ 姓名集合比對，**MVP 可做** |
+| `power_gap` / `dead_appears` / `location_jump` | ❌ 需语义判断，**标为 P2（JEV）** |
+
+`dead_appears` 靠 `curPhysical` 含“死”会误中“不死之身”，MVP 不做。
 
 ### 4.12 蓝图生成流程
 
@@ -1404,6 +1615,13 @@ React Flow 的 `custom node` 机制使得“章节块”可以直接把拖拽事
 
 **一句话分工：JEV 是“直觉”，LLM 是“文笔”，人是“编辑”。**
 
+> ❗**审查后的重要修正**：
+> 1. JEV 的输出默认是**建议**，不是强约束。置信度 < 0.75 时不注入。
+> 2. 注入形式必须是“倾向：观察（可被动机/情节推翻）”，而不是“必须观察”。
+> 3. JEV 与角色 `motivation` 冲突时，**以设定为准**。
+> 4. “不生成字” ≠ “不会写坏”——错误的 Choice 会直接导致情节错误。
+> 5. 因此 §4.17 的完整链路**属于 P3/P5**，不在 MVP。
+
 | 职责 | 谁做 | 为什么 |
 |---|---|---|
 | 算距离/时间/年龄/战力 | **纯函数（L1）** | 100% 确定，零成本 |
@@ -1430,22 +1648,24 @@ React Flow 的 `custom node` 机制使得“章节块”可以直接把拖拽事
 | 随时切回完整 IDE | **纯编辑模式**（一键全屏、无 AI 干扰） | 写作专注 |
 | 命令面板 | `Ctrl+K` 命令面板 | 键盘流 |
 
-#### 关键借鉴一：并行场景生成（重要架构修正）
+#### 关键借鉴一：生成模式的三种选择（已决策：默认整章）
 
-原设计是“一次生成整章 → 再切分”，串行且慢。修正为**两阶段**：
+> ❗审查后的重要修正：原设计把“并行场景生成”定为默认，但它在**章内因果上不成立**——
+> 8 个场景同时发出时，邻场景正文还不存在，“注入邻场景结尾”**物理上做不到**；
+> “场景 3 断臂 → 场景 5 带伤作战”这类因果必然丢失。
 
-```
-阶段 A：生成场景骨架（1 次 LLM，快）
-        输出 8 个场景的一句话摘要 + 转换关系
-             ↓
-阶段 B：并行填充（8 次 LLM 并发）
-        每个场景带着骨架 + 前后场景摘要独立生成
-             ↓
-优势：快 5–8 倍；单场景失败不影响其他；可单独重写
-代价：跨场景语感连贯性下降，需在阶段 B 的 prompt 中注入邻场景结尾
-```
+| 模式 | 连贯性 | 速度 | 状态 |
+|---|---|---|---|
+| **`whole`** 整章一次生成 | ✅ 最好 | 慢 | **默认** |
+| `serial_chain` 逐场景串行 | ✅ 好 | 中 | 可选 |
+| `parallel` 两阶段并行 | ⚠️ 中 | 快 | **实验开关，默认关闭** |
 
-**取舍**：默认用两阶段；若用户选“质量优先”，切回整章一次生成。在 `ProjectSetting` 增加 `generationMode: parallel | whole`。
+**若启用并行模式，必须同时满足三个前提：**
+1. 先落 `ScenePlan[]` 供用户审阅（否则无法判断填充是否合理）
+2. 阶段 B 不是纯并行，而是“**并行草稿 + 一次缝合调用**”
+3. 场景 N 重写 → N+1..M 的 `ScenePlan.status` 回退为 `planned`（失效传播）
+
+**默认 `whole`——这是用速度换连贯性的取舍，连贯性是本产品的第一价值主张，不能妥协。**
 
 #### 关键借鉴二：任务中心 UI
 
@@ -1519,15 +1739,17 @@ export interface Capability<I, O> {
 
 ### 6.2 能力清单（v1）
 
-| name | 作用 |
-|---|---|
-| `get_chapter_context` | 装载第 N 章所需全部要素 |
-| `get_character_state` | 取角色在第 N 章的状态 |
-| `get_unresolved_setups` | 未兑现清单 |
-| `get_tension_curve` | 全书张力曲线 + 告警 |
-| `get_world_rules` | hard 全量 + soft 相关 |
-| `check_consistency` | 一致性检查（战力/生死/地点） |
-| `assemble_chapter_prompt` | 装配 messages + 预算 + 降级日志 |
+| 能力 | 归属 | 说明 |
+|---|---|---|
+| `get_chapter_context` | **api**（不是 core） | 需查库/读文件，是 IO |
+| `assemble_chapter_prompt` | **prompt**（不是 core） | core 禁止依赖 prompt |
+| `get_character_state` | core（纯） | 入参为 `revisions[]`，内部计算 |
+| `get_unresolved_setups` | core（纯） | 入参为 `threads[]` |
+| `get_tension_curve` | core（纯） | 入参为 `blueprints[]` |
+| `check_consistency` | core（纯） | 入参为文本 + 上下文对象 |
+
+> ❗审查后的修正：原表把 `loadChapterContext`、`assemble_chapter_prompt` 列为 core 能力，
+> 两者分别违反了“core 零 IO”和“core 不依赖 prompt”两条铁律。已按上表重新归属。
 
 ### 6.3 三种消费方式
 
@@ -1573,6 +1795,9 @@ export function apply(ctx: any) {
 | 场景切分失败 | 启发式降级 + `warnings` | — |
 | Zod 校验失败 | 重试 1 次，仍失败则 `failed` | ✅ 1 次 |
 | DB 写失败 | 事务回滚，`failed` | — |
+| **JEV 超时/不可用** | **跳过判断，记 `degradedReason='judge_unavailable'`** | ❌ 不阻塞 |
+| **索引与文件不一致** | 标记 dirty，下次读取时 reindex | — |
+| **外部修改冲突** | 保留外部版本，候选标 `superseded` | — |
 
 ### 7.2 写操作幂等（抄 Pagekin 的 `commitState`）
 
@@ -1790,13 +2015,19 @@ draft（创作中） ──→ completed（完结） ──→ archived（归档
 
 ## 10. 交付计划
 
-| 阶段 | 内容 | 预估 |
-|---|---|---|
-| P0 | 地基：schema + 版本机制 + `core` 纯函数 + 基础 CRUD | 2–3 周 |
-| P1 | 单章共创：装配 + 生成 + 切分 | 2 周 |
-| P2 | 确认流程：diff + 接受/拒绝 + 定稿 + 回退 UI | 1–2 周 |
-| P3 | 视觉锚点：`Asset` + `visualAnchor` 注入 | 2–3 天 |
-| P4 | 人物卡生成 + 识图填锚点 | 2–3 天 |
+| 阶段 | 内容 | 预估 | 备注 |
+|---|---|---|---|
+| **P0** | 文件系统 + 索引可重建 + Git 版本 + 16 条 P0 需求 | **4–5 周** | 原估 2–3 周偏乐观（未计 reindex/Git/四种回退/地理）|
+| **P1** | 单章共创 + 叙事地图 + 关系网络 + 状态提案 | **4–5 周** | 含逐场景确认与 diff |
+| **P2** | 体验完善 + JEV 判断层 + 联网搜索 | **3 周** | |
+| **P3** | 视觉锚点 | **3 天** | |
+| **P4** | 人物形象 + 世界地图 | **1 周** | |
+| **P5** | 角色级推演 + 多智能体 | 待定 | 依赖 JEV 稳定性 |
+
+> ❗**审查后的修正**：原 §10 把“确认流程（diff/接受/定稿）”放在 P2，与 REQUIREMENTS 的 P1 定义冲突；
+> 且 P0 只有 2–3 周估算，明显低估。上表已与 REQUIREMENTS 对齐。
+>
+> **工期是估算而非承诺**。实际以每个阶段的 DoD 是否达成为准。
 
 ---
 
@@ -1844,9 +2075,14 @@ draft（创作中） ──→ completed（完结） ──→ archived（归档
 | ADR-20 | 角色签名必须带 `frequency` 控制 | 每次出场都吟诗会变成尴尬套路 | 只要有签名就每次都注入 |
 | ADR-21 | 正文用 Markdown 文件，不用数据库 | 用户可直接看、不被软件绑架、崩溃不丢、Git 友好 | DB 当主存储 |
 | ADR-22 | 版本用 Git，不自研 revision | 天然获得 diff/revert/分支/备份；自研成本高且易错 | 自研 revision 表为主 |
-| ADR-23 | 默认并行场景生成（骨架→并行填充） | 快 5–8 倍、单场景可重试；连贯性靠邻场景上下文补偿 | 整章一次生成 |
+| ~~ADR-23~~ | ~~默认并行场景生成~~ **已废弃 → 见 ADR-28** | 审查发现并行下“邻场景正文尚不存在”，章内因果不成立 | 整章一次生成 |
 | ADR-24 | 四层渐进式披露 | 新手不被 20 个按钮吓退；高级功能随数据自然出现 | 一次性展示全部功能 |
 | ADR-25 | SQLite 降为可重建索引 | 数据主权交还用户；索引丢了不影响创作 | SQLite 作为唯一存储 |
+| ADR-26 | 文件是**唯一事实源**，写入必须原子 | 外部编辑不丢、崩溃不丢、可迁移 | DB 为主 + 同步导出 |
+| ADR-27 | 正文**不进** revision，只进 Git | 消除两套版本系统；revision 只管结构化要素 | 正文也写 revision |
+| ADR-28 | 默认**整章**生成，并行降为实验 | 并行无法保证章内因果（邻场景正文尚不存在）| 并行作为默认 |
+| ADR-29 | JEV 输出为**建议**，置信度<0.75 不注入 | 小模型不应替大模型做人物决策 | 硬性强约束 |
+| ADR-30 | 三重 L 命名分离：Stage/C/L | 同一标识符三套含义会导致实现级 bug | 统一叫 L |
 
 ---
 
