@@ -404,7 +404,10 @@ model DraftSegment {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@unique([projectId, segId])
+  // ★ 不能是 (projectId, segId)：segId 的「全书唯一」指的是 ID 永不复用，
+  //   而编辑产生 v2 时，同一段会同时出现在 v1 和 v2 两个文件里。
+  //   同一文件内 segId 唯一就够了（结构上也不可能重）。
+  @@unique([projectId, filePath, segId])
   @@index([projectId, chapterNo, sceneNo, seq])
   @@index([projectId, chapterNo, status])
 }
