@@ -25,7 +25,8 @@ const SYSTEM = `你是一个只做判断、不写正文的评审。严格按要�
  */
 export function createOpenAiJudge(opts: OpenAiJudgeOptions): JudgeProvider {
   const base = (opts.baseUrl ?? 'https://api.siliconflow.cn/v1').replace(/\/+$/, '')
-  const model = opts.model ?? 'Qwen/Qwen2.5-7B-Instruct'
+  // 实测硅基流动可用且便宜快：Qwen2.5-7B 已下线，改用 DeepSeek-V4.1-Flash
+  const model = opts.model ?? 'deepseek-ai/DeepSeek-V4.1-Flash'
   const fetchImpl: FetchLike = opts.fetchImpl ?? ((url, init) => fetch(url, init))
 
   async function ask(req: JudgeRequest): Promise<JudgeResult> {

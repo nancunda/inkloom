@@ -7,6 +7,7 @@ import type {
   DiffResult,
   FinalizeResult,
   GenerateResult,
+  HealthReport,
   ProposeResult,
   SceneDetail,
 } from './types'
@@ -128,6 +129,13 @@ export function useRewriteScene() {
         },
       ),
     onSuccess: (_d, v) => invalidate(v.chapterNo),
+  })
+}
+
+export function useCheck() {
+  return useMutation({
+    mutationFn: (v: { chapterNo: number }) =>
+      post<HealthReport>(`/chapters/${v.chapterNo}/check`, {}),
   })
 }
 

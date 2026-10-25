@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import {
   useApplyProposals,
+  useCheck,
   useFinalize,
   useGenerate,
   usePropose,
   useUnfinalize,
 } from '../api/hooks'
-import type { ChapterDetail, ProposeResult } from '../api/types'
+import type { ChapterDetail, HealthReport, ProposeResult } from '../api/types'
 
 interface Props {
   chapter: ChapterDetail | undefined
@@ -25,9 +26,11 @@ export function Toolbar({ chapter }: Props) {
   const unfinalize = useUnfinalize()
   const propose = usePropose()
   const apply = useApplyProposals()
+  const check = useCheck()
 
   const [guidance, setGuidance] = useState('')
   const [proposals, setProposals] = useState<ProposeResult | null>(null)
+  const [report, setReport] = useState<HealthReport | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
 
@@ -209,6 +212,19 @@ export function Toolbar({ chapter }: Props) {
           )}
         </section>
 
+        <section>
+          <p className="mb-1 text-xs font-medium tracking-wide text-neutral-500">判断层（可关）</p>
+          <button
+            type="button"
+            disabled={busy || chapterNo === 0}
+            onClick={() => void run(async () => setReport(await check.mutateAsync({ chapterNo })))}
+            className="w-full rounded border border-neutral-300 px-3 py-2 text-sm text-neutral-700 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:text-neutral-300"
+          >
+            {check.isPending ? '体检中…' : 'AI 味体检'}
+          </button>
+          {report !== null && <HealthReportView report={report} />}
+        </section>
+
         {error !== null && (
           <p className="rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800">
             {error}
@@ -216,5 +232,42 @@ export function Toolbar({ chapter }: Props) {
         )}
       </div>
     </aside>
+  )
+}
+
+const KIND_LABEL: Record<HealthReport['findings'][number]['kind'], string> = {
+  slop: 'AI 味',
+  pace: '节奏',
+  consistency: '一致性',
+}
+
+/** 体检报告：判断层关着时如实说「没开」，而不是显示一堆 0 */
+function HealthReportView({ report }: { report: HealthReport }) {
+  if (!report.enabled) {
+    return (
+      <p className="mt-2 text-xs text-neutral-500">
+        判断层未开启（设 INKLOOM_JUDGE=openai 或 typesafe 后重启）
+      </p>
+    )
+  }
+  return (
+    <div className="mt-2 space-y-1 rounded border border-neutral-200 bg-white p-2 text-xs">
+      <p className="text-neutral-400">provider: {report.provider}</p>
+      {report.degraded !== null && (
+        <p className="text-amber-700">判断层不可用，已跳过：{report.degraded}</p>
+      )}
+      {report.findings.map((f) => (
+        <p key={`${f.sceneNo}-${f.kind}`} className="text-neutral-700">
+          场景 {f.sceneNo} · {KIND_LABEL[f.kind]}：{String(f.value)}
+          <span className="ml-1 text-neutral-400">
+            （置信 {f.confidence.toFixed(2)}
+            {f.injectable ? '' : '，低于 0.75 不注入'}）
+          </span>
+        </p>
+      ))}
+      {report.findings.length === 0 && report.degraded === null && (
+        <p className="text-neutral-400">本章还没有可体检的场景</p>
+      )}
+    </div>
   )
 }

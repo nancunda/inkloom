@@ -118,3 +118,22 @@ export interface ProposeResult {
   proposals: StateProposal[]
   unparsed: string[]
 }
+
+export interface HealthFinding {
+  sceneNo: number
+  version: number
+  kind: 'slop' | 'pace' | 'consistency'
+  value: string | number | boolean
+  confidence: number
+  /** 置信度够不够写进 prompt（< 0.75 不注入） */
+  injectable: boolean
+}
+
+export interface HealthReport {
+  chapterNo: number
+  enabled: boolean
+  provider: string | null
+  findings: HealthFinding[]
+  /** 判断层不可用时的说明；非空说明这次体检被降级了 */
+  degraded: string | null
+}
