@@ -1,1 +1,2 @@
-export const PACKAGE_NAME = '@inkloom/shared'
+export * from './entities.js'
+export * from './errors.js'
