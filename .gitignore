@@ -34,6 +34,8 @@ coverage/
 *.db-shm
 *.sqlite
 *.sqlite3
+# SQLite WAL/SHM 旁文件（index.sqlite-shm 这种，后缀不是 .sqlite）
+*.sqlite-*
 data/
 
 # ============================================================

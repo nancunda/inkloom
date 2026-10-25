@@ -1,0 +1,30 @@
+{
+  "chapterNo": 4,
+  "scenes": {
+    "1": {
+      "acceptedVersion": 2,
+      "rejectedVersions": [],
+      "acceptedAt": "2026-10-25T14:19:21.069Z"
+    },
+    "2": {
+      "acceptedVersion": 2,
+      "rejectedVersions": [],
+      "acceptedAt": "2026-10-25T14:22:41.914Z"
+    },
+    "3": {
+      "acceptedVersion": 2,
+      "rejectedVersions": [],
+      "acceptedAt": "2026-10-25T14:23:47.777Z"
+    },
+    "4": {
+      "acceptedVersion": 2,
+      "rejectedVersions": [],
+      "acceptedAt": "2026-10-25T14:23:48.708Z"
+    },
+    "5": {
+      "acceptedVersion": 2,
+      "rejectedVersions": [],
+      "acceptedAt": "2026-10-25T14:23:49.716Z"
+    }
+  }
+}

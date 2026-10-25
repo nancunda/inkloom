@@ -96,6 +96,21 @@ my-novel/
 | `inkloom rollback <dir> --to <ck-id>` | 时间点回退（**两个事实源同点**） |
 | `inkloom export <dir> --format json\|md\|txt` | 导出整书 / 正文 / 纯文本 |
 
+### 生成与审阅
+
+| 命令 | 作用 |
+|---|---|
+| `inkloom write <dir> --chapter N [--guidance "…"]` | 生成候选场景（DeepSeek，需 `DEEPSEEK_API_KEY`） |
+| `inkloom scenes <dir> --chapter N` | 列出本章场景与审阅状态 |
+| `inkloom accept <dir> --chapter N --scene M --version V` | 接受某版本（同场景其他版本自动 rejected） |
+| `inkloom reject <dir> --chapter N --scene M --version V` | 拒绝（文件保留，可再接受） |
+| `inkloom edit <dir> --chapter N --scene M --version V --seg XXXX --text "…"` | 改一段 → 产新版本 |
+| `inkloom diff <dir> --chapter N --scene M --from V1 --to V2` | 字符级 diff |
+| `inkloom finalize <dir> --chapter N` | 定稿（还有 candidate 时拒绝，409） |
+| `inkloom unfinalize <dir> --chapter N` | 撤销定稿（正文保留） |
+| `inkloom propose <dir> --chapter N` | 提取状态变更提案（不落库） |
+| `inkloom apply-proposals <dir> --chapter N --accept all\|1,3` | 应用确认的提案 |
+
 ---
 
 ## 四种回退（P0-10）
@@ -115,7 +130,10 @@ my-novel/
 
 ```bash
 pnpm verify      # biome + tsc + check-deps + 单元测试 + 集成测试
-pnpm verify:p0   # P0 验收：11 条 DoD 逐条跑
+pnpm verify:p0   # P0 验收：建书 / 索引 / 回退 / 导出，11 条
+pnpm verify:p1a  # P1-a 验收：装配 → 生成 → 落盘，6 条
+pnpm verify:p1b  # P1-b 验收：确认 / diff / 定稿 / 提案，11 条
+pnpm verify:p1c  # P1-c 验收：HTTP 接口 + 真实端口 + 自动建仓，16 条
 pnpm fixture     # 重新生成 fixtures/qixia（玄幻示例书）
 pnpm test:cov    # 覆盖率（core 门槛 >80%）
 ```
@@ -124,8 +142,9 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 |---|---|---|
 | `packages/shared` | 15 个实体 Zod schema + 统一错误类型 | 零内部依赖 |
 | `packages/core` | 段标记解析、版本计算、状态推导、回退 | **零 IO**（`check-deps` 强制） |
-| `apps/api` | 存储（文件 / 索引 / Git）+ 服务层 | 唯一有副作用的地方 |
+| `apps/api` | 存储（文件 / 索引 / Git）+ 服务层 + HTTP 路由 | 唯一有副作用的地方 |
 | `apps/cli` | 命令行入口 | 复用 api 的服务层 |
+| `apps/web` | React 19 写作页 + 叙事地图 | 只读 HTTP，不碰文件 |
 
 ---
 
@@ -137,7 +156,30 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 
 **P1-b（确认与定稿）已完成**：逐场景 accept/reject/edit + 字符级 diff + 定稿（含蓝图摘要）+ 状态提案（逐条确认）。`pnpm verify:p1b` 11-11 通过。
 
-P1-c 计划：写作页 + 场景卡片 + 叙事地图（React Flow）。
+**P1-c（HTTP + 前端）已完成**：Hono 12 个接口 + 错误映射 + 单书启动器；React 19 写作页（章节列表 / 场景卡片 / 版本切换 / diff 面板 / 状态提案）+ 叙事地图（React Flow + dagre）。219 单元 + 238 集成测试 / `pnpm verify:p1c` 16-16 通过。
+
+### 写作界面
+
+```bash
+# 终端 1
+INKLOOM_BOOK=fixtures/qixia pnpm api     # → http://localhost:8787
+# 终端 2
+pnpm web                                 # → http://localhost:5173（/api 代理到 8787）
+```
+
+界面验收清单（手工，4 条）：
+
+| # | 动作 | 期望 |
+|---|---|---|
+| 1 | 打开首页 | 左侧 `✓✓✓✓◑`，第四章「已定稿 · 1532 字」 |
+| 2 | 点「地图」 | 5 章横向排开、有指向箭头、张力条 2/3/4/5/5，点节点回到该章 |
+| 3 | 点「看 diff」 | 只有一个版本时是灰的（title 说明原因）；多版本时出现版本 chips 与增删底色 |
+| 4 | 接受场景 | 徽章变绿、定稿按钮从灰变可点；刷新后状态不变 |
+
+> **审阅状态存在 `chapters/ch-NNN/review.json`，不在索引里（Ruling 47）**：
+> spec 原先把 accepted/rejected 放在可丢弃的 `DraftSegment`，与「索引可丢弃」直接冲突——
+> 实测 `reindex` 后出现「章节已定稿、但 4 个场景显示待确认」的自相矛盾界面。
+> 现在 accept/reject/edit 三个动作都会同步落盘，`reindex` 重建索引时从该文件推状态。
 
 ### 从候选到定稿（单章闭环）
 
