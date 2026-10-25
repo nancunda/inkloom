@@ -9,7 +9,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],
-      exclude: ['**/*.test.ts', '**/index.ts'],
+      // 纯类型声明文件编译后为空，v8 会算成 0% 并拉低总覆盖率。
+      // 只排除“只有 export type / export interface”的文件，带逻辑的 types.ts 不在此列。
+      exclude: ['**/*.test.ts', '**/index.ts', '**/revision/types.ts'],
       thresholds: {
         lines: 80,
         functions: 80,

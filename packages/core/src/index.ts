@@ -1,5 +1,9 @@
 export const PACKAGE_NAME = '@inkloom/core'
 
+export * from './revision/next.js'
+export * from './revision/resolve.js'
+export * from './revision/types.js'
+export * from './rollback/segment.js'
 export * from './text/markers.js'
 export * from './text/seg-id.js'
 export * from './text/words.js'
