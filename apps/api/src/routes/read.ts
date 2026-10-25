@@ -182,6 +182,60 @@ read.get('/relations', async (c) => {
   return c.json({ chapterNo, nodes, edges })
 })
 
+interface ThreadRow {
+  id?: unknown
+  kind?: unknown
+  title?: unknown
+  description?: unknown
+  plantedChapter?: unknown
+  advancedChapters?: unknown
+  resolvedChapter?: unknown
+  status?: unknown
+  payoffHint?: unknown
+  payoffWindow?: unknown
+}
+
+/**
+ * 线索轨迹（spec 视图 3 的「横向线 = 伏笔生命周期」）。
+ *
+ * ★ overdue 在服务端算：前端不该自己拿「当前最大章号」和 payoffWindow
+ *   比大小——两边各算一次，迟早不一致。
+ */
+read.get('/threads', async (c) => {
+  const { root, db, project } = getContext()
+  const [raw, last] = await Promise.all([
+    readJsonElement(root, 'story/threads.json'),
+    db.chapter.findFirst({ where: { projectId: project.id }, orderBy: { chapterNo: 'desc' } }),
+  ])
+  const currentChapter = last?.chapterNo ?? 0
+
+  const list = Array.isArray(raw) ? (raw as ThreadRow[]) : []
+  const threads = list
+    .filter((t) => typeof t.id === 'string' && typeof t.title === 'string')
+    .map((t) => {
+      const status = typeof t.status === 'string' ? t.status : 'active'
+      const window = typeof t.payoffWindow === 'number' ? t.payoffWindow : null
+      return {
+        id: String(t.id),
+        kind: typeof t.kind === 'string' ? t.kind : 'foreshadow',
+        title: String(t.title),
+        description: typeof t.description === 'string' ? t.description : '',
+        plantedChapter: typeof t.plantedChapter === 'number' ? t.plantedChapter : null,
+        advancedChapters: Array.isArray(t.advancedChapters)
+          ? (t.advancedChapters as unknown[]).filter((x): x is number => typeof x === 'number')
+          : [],
+        resolvedChapter: typeof t.resolvedChapter === 'number' ? t.resolvedChapter : null,
+        status,
+        payoffHint: typeof t.payoffHint === 'string' ? t.payoffHint : '',
+        payoffWindow: window,
+        // 还悬着、且已经过了期望回收章 → overdue
+        overdue: status === 'active' && window !== null && currentChapter >= window,
+      }
+    })
+
+  return c.json({ currentChapter, threads })
+})
+
 read.get('/chapters/:n', async (c) => {
   const chapterNo = intParam(c.req.param('n'), 'chapterNo')
   const { db, project } = getContext()

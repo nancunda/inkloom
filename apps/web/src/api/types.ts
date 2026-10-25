@@ -119,6 +119,26 @@ export interface ProposeResult {
   unparsed: string[]
 }
 
+export interface ThreadRow {
+  id: string
+  kind: string
+  title: string
+  description: string
+  plantedChapter: number | null
+  advancedChapters: number[]
+  resolvedChapter: number | null
+  status: string
+  payoffHint: string
+  payoffWindow: number | null
+  /** 还悬着、且已过期望回收章 */
+  overdue: boolean
+}
+
+export interface ThreadsData {
+  currentChapter: number
+  threads: ThreadRow[]
+}
+
 export interface SearchHit {
   title: string
   url: string

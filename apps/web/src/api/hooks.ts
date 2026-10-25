@@ -12,6 +12,7 @@ import type {
   RelationGraphData,
   SceneDetail,
   SearchResult,
+  ThreadsData,
 } from './types'
 
 export function useBook() {
@@ -23,6 +24,13 @@ export function useChapter(n: number) {
     queryKey: ['chapter', n],
     queryFn: () => api<ChapterDetail>(`/chapters/${n}`),
     enabled: n > 0,
+  })
+}
+
+export function useThreads() {
+  return useQuery({
+    queryKey: ['threads'],
+    queryFn: () => api<ThreadsData>('/threads'),
   })
 }
 
