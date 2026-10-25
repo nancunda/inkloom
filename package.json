@@ -18,6 +18,7 @@
     "fixture": "tsx scripts/build-fixture.ts",
     "verify:p0": "tsx scripts/verify-p0.ts",
     "verify:p1a": "tsx scripts/verify-p1a.ts",
+    "verify:p1b": "tsx scripts/verify-p1b.ts",
     "verify": "pnpm biome && pnpm tsc && pnpm check-deps && pnpm test && pnpm test:int"
   },
   "devDependencies": {

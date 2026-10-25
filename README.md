@@ -135,8 +135,31 @@ pnpm test:cov    # 覆盖率（core 门槛 >80%）
 
 **P1-a（生成链路）已完成**：Prompt 装配（S1–S5 缓存友好 + U9 锚点压尾）+ DeepSeek fetch 适配 + 场景切分降级链 + `inkloom write`。`pnpm verify:p1a` 6-6 通过。
 
-P1-b 计划：逐场景 accept/reject + 字符级 diff + 定稿与状态提案。
+**P1-b（确认与定稿）已完成**：逐场景 accept/reject/edit + 字符级 diff + 定稿（含蓝图摘要）+ 状态提案（逐条确认）。`pnpm verify:p1b` 11-11 通过。
+
 P1-c 计划：写作页 + 场景卡片 + 叙事地图（React Flow）。
+
+### 从候选到定稿（单章闭环）
+
+```bash
+pnpm cli write    fixtures/qixia --chapter 4          # 生成候选（3–5 个场景）
+pnpm cli scenes   fixtures/qixia --chapter 4          # 看有哪些版本与状态
+pnpm cli diff     fixtures/qixia --chapter 4 --scene 1 --from 1 --to 2
+pnpm cli accept   fixtures/qixia --chapter 4 --scene 1 --version 2
+pnpm cli edit     fixtures/qixia --chapter 4 --scene 1 --version 2 --seg lk7v --text "…"
+pnpm cli finalize fixtures/qixia --chapter 4          # 定稿（要求无 candidate）
+pnpm cli propose  fixtures/qixia --chapter 4          # 状态提案（不落库）
+pnpm cli apply-proposals fixtures/qixia --chapter 4 --accept all
+pnpm cli unfinalize fixtures/qixia --chapter 4        # 撤销定稿
+```
+
+三条不变量（P1-b 的骨架）：
+
+| 不变量 | 含义 |
+|---|---|
+| **accepted 互斥** | 同场景同一时刻只能有一个 accepted 版本；接受新版本时旧版自动降为 rejected（Ruling 36） |
+| **diff 不参与落库** | `diffChars` 只用于展示；写什么以你接受哪个版本为准（spec §4.7） |
+| **状态提案只提案** | LLM 输出 `角色ID\|字段\|新值\|证据`，逐条确认后才写 revision；`stateChapter = N+1`（spec §4.8） |
 
 ### 生成一章
 

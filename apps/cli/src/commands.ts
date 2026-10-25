@@ -24,7 +24,7 @@ import { requireFlag, requirePositional } from './flags.js'
  * 打开一本书并执行 fn，结束时断开索引连接。
  * ★ 必须走 setContext：它会保证索引里有 Project 行（外键约束的前提）。
  */
-async function withBook<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+export async function withBook<T>(dir: string, fn: () => Promise<T>): Promise<T> {
   const opened = await openProject(dir)
   await initRepo(dir)
   const db = await openBookIndexDb(dir)

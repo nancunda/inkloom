@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as cmd from './commands.js'
+import * as review from './commands-review.js'
 import { parseFlags } from './flags.js'
 
 const USAGE = `inkloom <command> [options]
@@ -10,6 +11,18 @@ const USAGE = `inkloom <command> [options]
 
 生成
   write <dir> --chapter N [--guidance "…"] [--model "…"]   生成第 N 章的场景候选稿
+
+审阅与定稿
+  scenes   <dir> --chapter N                                  列出本章场景与状态
+  accept   <dir> --chapter N --scene M --version V            接受某版本
+  reject   <dir> --chapter N --scene M --version V            拒绝某版本（文件保留）
+  edit     <dir> --chapter N --scene M --version V --seg XXXX --text "…"
+                                                              改一段 → 产新版本
+  diff     <dir> --chapter N --scene M --from V1 --to V2      字符级 diff
+  finalize <dir> --chapter N [--title "…"]                    定稿（要求无 candidate）
+  unfinalize <dir> --chapter N                                撤销定稿
+  propose  <dir> --chapter N                                  提取状态变更提案
+  apply-proposals <dir> --chapter N --accept all|1,3          应用确认的提案
 
 要素（append-only，永不覆盖历史）
   element set <dir> --type <t> --id <id> --rel <path> --json <json> [--reason <说明>]
@@ -47,6 +60,33 @@ async function main(): Promise<void> {
       break
     case 'write':
       await cmd.write(ctx)
+      break
+    case 'scenes':
+      await review.scenes(ctx)
+      break
+    case 'accept':
+      await review.accept(ctx)
+      break
+    case 'reject':
+      await review.reject(ctx)
+      break
+    case 'edit':
+      await review.edit(ctx)
+      break
+    case 'diff':
+      await review.diffScene(ctx)
+      break
+    case 'finalize':
+      await review.finalize(ctx)
+      break
+    case 'unfinalize':
+      await review.unfinalize(ctx)
+      break
+    case 'propose':
+      await review.propose(ctx)
+      break
+    case 'apply-proposals':
+      await review.applyProposals(ctx)
       break
     case 'element': {
       const sub = positional[0]
