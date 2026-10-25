@@ -50,6 +50,9 @@ fixtures/**/recordings/*.tmp
 # 日志
 # ============================================================
 *.log
+# 提交时临时写的 message 文件（git commit -F 用，不应入库）
+.msg.tmp
+.commit-msg.tmp
 pnpm-debug.log*
 npm-debug.log*
 
