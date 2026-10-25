@@ -25,5 +25,13 @@
     "kind": "enemy",
     "strength": 3,
     "sinceChapter": 4
+  },
+  {
+    "id": "rel_mvo1rhz8",
+    "projectId": "proj_f81c8babe4d642c2",
+    "fromId": "c5",
+    "toId": "c2",
+    "kind": "kin",
+    "strength": 2
   }
 ]

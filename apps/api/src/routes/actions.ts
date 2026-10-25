@@ -10,6 +10,7 @@ import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service
 import { generateChapter } from '../services/generate-service.js'
 import { importChapters } from '../services/import-service.js'
 import { getJob, submitGenerate } from '../services/job-service.js'
+import { createRelation } from '../services/relation-service.js'
 import { rewriteSceneSeg } from '../services/rewrite-service.js'
 import { acceptScene, editSceneSeg, rejectScene } from '../services/scene-review-service.js'
 import {
@@ -68,6 +69,28 @@ export function createActions(deps: ActionDeps = {}): Hono {
     }
     // 单书模式：追加到当前这本书，章号接在现有最大章之后
     return c.json(await importChapters({ rootPath: root, sourcePath: body.sourcePath }))
+  })
+
+  actions.post('/relations', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      fromId?: string
+      toId?: string
+      kind?: string
+      strength?: number
+      sinceChapter?: number
+    }
+    if (body.fromId === undefined || body.toId === undefined || body.kind === undefined) {
+      throw new InkloomError('INVALID_INPUT', '需要 fromId / toId / kind')
+    }
+    return c.json(
+      await createRelation({
+        fromId: body.fromId,
+        toId: body.toId,
+        kind: body.kind,
+        ...(body.strength === undefined ? {} : { strength: body.strength }),
+        ...(body.sinceChapter === undefined ? {} : { sinceChapter: body.sinceChapter }),
+      }),
+    )
   })
 
   actions.post('/search', async (c) => {

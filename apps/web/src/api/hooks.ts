@@ -26,6 +26,17 @@ export function useChapter(n: number) {
   })
 }
 
+export function useCreateRelation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { fromId: string; toId: string; kind: string; strength: number }) =>
+      post('/relations', v),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['relations'] })
+    },
+  })
+}
+
 export function useSearch() {
   return useMutation({
     mutationFn: (v: { query: string }) => post<SearchResult>('/search', { query: v.query }),

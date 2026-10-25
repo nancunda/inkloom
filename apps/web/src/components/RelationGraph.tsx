@@ -10,7 +10,7 @@ import {
 } from '@xyflow/react'
 import { useMemo, useState } from 'react'
 import '@xyflow/react/dist/style.css'
-import { useBook, useRelations } from '../api/hooks'
+import { useBook, useCreateRelation, useRelations } from '../api/hooks'
 
 const KIND_COLOR: Record<string, string> = {
   master: '#b45309',
@@ -43,6 +43,9 @@ interface CharacterData extends Record<string, unknown> {
   name: string
   role: string
 }
+
+/** nodeTypes 必须稳定：每次渲染传新对象会让 React Flow 反复重建节点 */
+const NODE_TYPES = { character: CharacterNodeView }
 
 function CharacterNodeView({ data }: NodeProps<Node<CharacterData>>) {
   return (
@@ -78,6 +81,12 @@ export function RelationGraph() {
   const maxChapter = book?.chapters.length ?? 0
   const [atChapter, setAtChapter] = useState<number | null>(null)
   const { data, isLoading } = useRelations(atChapter)
+  const createRelation = useCreateRelation()
+
+  const [pending, setPending] = useState<{ fromId: string; toId: string } | null>(null)
+  const [kind, setKind] = useState('ally')
+  const [strength, setStrength] = useState(3)
+  const [err, setErr] = useState<string | null>(null)
 
   const { nodes, edges } = useMemo(() => {
     const list = data?.nodes ?? []
@@ -115,7 +124,7 @@ export function RelationGraph() {
   if (isLoading) return <p className="p-6 text-sm text-neutral-500">读取关系…</p>
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-neutral-200 px-4 py-2 text-xs text-neutral-600">
         <span>时间点</span>
         <input
@@ -145,19 +154,92 @@ export function RelationGraph() {
           </p>
         </div>
       ) : (
-        <div className="h-full min-h-0 flex-1">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={{ character: CharacterNodeView }}
-            fitView
-            fitViewOptions={{ padding: 0.2 }}
-            nodesDraggable={false}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background />
-            <Controls showInteractive={false} />
-          </ReactFlow>
+        <div className="relative min-h-0 flex-1">
+          {/* ★ 用 absolute 填满：React Flow 需要父容器有确定的宽高（#004），
+              flex-1 的百分比高度在某些嵌套下量不到。 */}
+          <div className="absolute inset-0">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={NODE_TYPES}
+              fitView
+              fitViewOptions={{ padding: 0.2 }}
+              nodesDraggable={false}
+              onConnect={(c) => {
+                if (c.source !== null && c.target !== null) {
+                  setPending({ fromId: c.source, toId: c.target })
+                  setErr(null)
+                }
+              }}
+            >
+              <Background />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </div>
+        </div>
+      )}
+
+      {/* 拖两个节点连线的结果表单：spec 视图 2 的「图即操作」 */}
+      {pending !== null && (
+        <div className="absolute inset-x-0 bottom-4 mx-auto w-80 rounded border border-neutral-300 bg-white p-3 shadow-lg">
+          <p className="text-xs font-medium text-neutral-700">建立关系</p>
+          <p className="mt-0.5 text-[11px] text-neutral-400">
+            {pending.fromId} → {pending.toId}
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              className="rounded border border-neutral-300 px-2 py-1 text-xs"
+            >
+              {Object.entries(KIND_LABEL).map(([k, label]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="range"
+              min={1}
+              max={5}
+              value={strength}
+              onChange={(e) => setStrength(Number(e.target.value))}
+              className="w-24"
+            />
+            <span className="text-xs text-neutral-500">强度 {strength}/5</span>
+          </div>
+          {err !== null && <p className="mt-1 text-[11px] text-rose-600">{err}</p>}
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={createRelation.isPending}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await createRelation.mutateAsync({
+                      fromId: pending.fromId,
+                      toId: pending.toId,
+                      kind,
+                      strength,
+                    })
+                    setPending(null)
+                  } catch (e) {
+                    setErr(e instanceof Error ? e.message : String(e))
+                  }
+                })()
+              }}
+              className="rounded bg-neutral-900 px-2.5 py-1 text-xs text-white disabled:bg-neutral-300"
+            >
+              {createRelation.isPending ? '保存中…' : '确认建立'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPending(null)}
+              className="text-xs text-neutral-500"
+            >
+              取消
+            </button>
+          </div>
         </div>
       )}
     </div>

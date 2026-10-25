@@ -83,7 +83,9 @@ function MapView() {
           关系网络
         </button>
       </div>
-      <div className="min-h-0 flex-1">
+      {/* ★ 给图一个确定高度：React Flow 要在父容器量到宽高（#004），
+          flex-1 的百分比高度在 Suspense 层里量不到。 */}
+      <div className="min-h-0" style={{ height: 'calc(100vh - 140px)' }}>
         <Suspense fallback={<p className="p-8 text-sm text-neutral-500">加载地图…</p>}>
           {sub === 'chapters' ? (
             <StoryMap
