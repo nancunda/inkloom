@@ -71,10 +71,7 @@ export async function rewriteSceneSeg(
     select: { status: true },
   })
   if (chapter?.status === 'finalized') {
-    throw new InkloomError(
-      'CONFLICT',
-      `第 ${opts.chapterNo} 章已定稿，需先 unfinalize 才能重写`,
-    )
+    throw new InkloomError('CONFLICT', `第 ${opts.chapterNo} 章已定稿，需先 unfinalize 才能重写`)
   }
 
   const blueprint = await readBlueprint(root, opts.chapterNo)
