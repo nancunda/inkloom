@@ -131,6 +131,57 @@ read.get('/book', async (c) => {
   return c.json({ ...project, chapters: merged })
 })
 
+interface RelationRow {
+  id: string
+  fromId: string
+  toId: string
+  kind: string
+  strength: number
+  sinceChapter?: number
+  untilChapter?: number
+  note?: string
+}
+
+/**
+ * 关系网络（spec 视图 2）。
+ *
+ * ★ `?chapter=N` 是时间滑块的后端：只返回第 N 章时仍然成立的关系。
+ *   盟友变敌人的过程一拖就看出来——这是 spec 里点名的杀手功能。
+ */
+read.get('/relations', async (c) => {
+  const raw = c.req.query('chapter')
+  const chapterNo = raw === undefined || raw.length === 0 ? null : intParam(raw, 'chapter')
+  const { root } = getContext()
+
+  const [charRaw, relRaw] = await Promise.all([
+    readJsonElement(root, 'characters/index.json'),
+    readJsonElement(root, 'characters/relations.json'),
+  ])
+
+  const chars = Array.isArray(charRaw)
+    ? (charRaw as { id?: unknown; name?: unknown; role?: unknown }[])
+    : []
+  const nodes = chars
+    .filter((x) => typeof x.id === 'string')
+    .map((x) => ({
+      id: String(x.id),
+      name: typeof x.name === 'string' ? x.name : String(x.id),
+      role: typeof x.role === 'string' ? x.role : 'supporting',
+    }))
+
+  const rels = Array.isArray(relRaw) ? (relRaw as RelationRow[]) : []
+  const edges = rels
+    .filter((r) => typeof r.fromId === 'string' && typeof r.toId === 'string')
+    .filter((r) => {
+      if (chapterNo === null) return true
+      const since = r.sinceChapter ?? 0
+      const until = r.untilChapter ?? Number.POSITIVE_INFINITY
+      return since <= chapterNo && chapterNo <= until
+    })
+
+  return c.json({ chapterNo, nodes, edges })
+})
+
 read.get('/chapters/:n', async (c) => {
   const chapterNo = intParam(c.req.param('n'), 'chapterNo')
   const { db, project } = getContext()

@@ -21,6 +21,9 @@ import { useSessionStore } from '../stores/session'
  *   不切分的话每次打开写作页都要白等它下载完。
  */
 const StoryMap = lazy(() => import('../components/StoryMap').then((m) => ({ default: m.StoryMap })))
+const RelationGraph = lazy(() =>
+  import('../components/RelationGraph').then((m) => ({ default: m.RelationGraph })),
+)
 
 /** 把同一场景的多个版本按 sceneNo 分组，最新版在前 */
 function groupByScene(rows: SceneRow[]): Map<number, SceneRow[]> {
@@ -55,15 +58,46 @@ export function WritingPage() {
 function MapView() {
   const setChapter = useSessionStore((s) => s.setChapter)
   const setView = useSessionStore((s) => s.setView)
+  const [sub, setSub] = useState<'chapters' | 'relations'>('chapters')
+
+  const tabCls = (active: boolean): string =>
+    `rounded px-2.5 py-1 text-xs ${
+      active ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+    }`
+
   return (
-    <Suspense fallback={<p className="p-8 text-sm text-neutral-500">加载地图…</p>}>
-      <StoryMap
-        onPick={(n) => {
-          setChapter(n)
-          setView('write')
-        }}
-      />
-    </Suspense>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-2 border-b border-neutral-200 px-4 py-2">
+        <button
+          type="button"
+          onClick={() => setSub('chapters')}
+          className={tabCls(sub === 'chapters')}
+        >
+          章节结构
+        </button>
+        <button
+          type="button"
+          onClick={() => setSub('relations')}
+          className={tabCls(sub === 'relations')}
+        >
+          关系网络
+        </button>
+      </div>
+      <div className="min-h-0 flex-1">
+        <Suspense fallback={<p className="p-8 text-sm text-neutral-500">加载地图…</p>}>
+          {sub === 'chapters' ? (
+            <StoryMap
+              onPick={(n) => {
+                setChapter(n)
+                setView('write')
+              }}
+            />
+          ) : (
+            <RelationGraph />
+          )}
+        </Suspense>
+      </div>
+    </div>
   )
 }
 

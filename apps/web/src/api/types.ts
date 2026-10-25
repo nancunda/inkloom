@@ -119,6 +119,30 @@ export interface ProposeResult {
   unparsed: string[]
 }
 
+export interface RelationNode {
+  id: string
+  name: string
+  role: string
+}
+
+export interface RelationEdge {
+  id: string
+  fromId: string
+  toId: string
+  /** master | disciple | kin | ally | enemy | rival | lover */
+  kind: string
+  strength: number
+  sinceChapter?: number
+  untilChapter?: number
+}
+
+export interface RelationGraphData {
+  /** null = 不按章节过滤（看全部关系） */
+  chapterNo: number | null
+  nodes: RelationNode[]
+  edges: RelationEdge[]
+}
+
 export interface GenerateJob {
   id: string
   kind: 'generate'

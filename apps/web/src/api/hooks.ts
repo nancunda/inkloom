@@ -9,6 +9,7 @@ import type {
   GenerateJob,
   HealthReport,
   ProposeResult,
+  RelationGraphData,
   SceneDetail,
 } from './types'
 
@@ -21,6 +22,14 @@ export function useChapter(n: number) {
     queryKey: ['chapter', n],
     queryFn: () => api<ChapterDetail>(`/chapters/${n}`),
     enabled: n > 0,
+  })
+}
+
+export function useRelations(chapter: number | null) {
+  return useQuery({
+    queryKey: ['relations', chapter],
+    queryFn: () =>
+      api<RelationGraphData>(`/relations${chapter === null ? '' : `?chapter=${chapter}`}`),
   })
 }
 
