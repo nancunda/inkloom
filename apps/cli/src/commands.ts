@@ -15,7 +15,6 @@ import {
   readCheckpoints,
   rollbackToCheckpoint,
 } from '../../api/src/storage/checkpoints.js'
-import { bookPaths } from '../../api/src/storage/paths.js'
 import { createProject, openProject } from '../../api/src/storage/project.js'
 import { reindex } from '../../api/src/storage/reindex.js'
 import { requireFlag, requirePositional } from './flags.js'
