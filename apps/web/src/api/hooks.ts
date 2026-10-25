@@ -11,6 +11,7 @@ import type {
   ProposeResult,
   RelationGraphData,
   SceneDetail,
+  SearchResult,
 } from './types'
 
 export function useBook() {
@@ -22,6 +23,12 @@ export function useChapter(n: number) {
     queryKey: ['chapter', n],
     queryFn: () => api<ChapterDetail>(`/chapters/${n}`),
     enabled: n > 0,
+  })
+}
+
+export function useSearch() {
+  return useMutation({
+    mutationFn: (v: { query: string }) => post<SearchResult>('/search', { query: v.query }),
   })
 }
 

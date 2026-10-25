@@ -5,9 +5,10 @@ import {
   useFinalize,
   useGenerate,
   usePropose,
+  useSearch,
   useUnfinalize,
 } from '../api/hooks'
-import type { ChapterDetail, HealthReport, ProposeResult } from '../api/types'
+import type { ChapterDetail, HealthReport, ProposeResult, SearchResult } from '../api/types'
 
 interface Props {
   chapter: ChapterDetail | undefined
@@ -27,10 +28,13 @@ export function Toolbar({ chapter }: Props) {
   const propose = usePropose()
   const apply = useApplyProposals()
   const check = useCheck()
+  const search = useSearch()
 
   const [guidance, setGuidance] = useState('')
   const [proposals, setProposals] = useState<ProposeResult | null>(null)
   const [report, setReport] = useState<HealthReport | null>(null)
+  const [query, setQuery] = useState('')
+  const [found, setFound] = useState<SearchResult | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
 
@@ -208,6 +212,43 @@ export function Toolbar({ chapter }: Props) {
                   应用 {picked.size} 条
                 </button>
               )}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <p className="mb-1 text-xs font-medium tracking-wide text-neutral-500">查资料（联网）</p>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="例如：剑冢 玄幻 设定"
+            className="w-full rounded border border-neutral-300 px-2 py-1.5 text-sm focus:border-neutral-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            disabled={search.isPending || query.trim().length === 0}
+            onClick={() =>
+              void run(async () => setFound(await search.mutateAsync({ query: query.trim() })))
+            }
+            className="mt-1 w-full rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:text-neutral-300"
+          >
+            {search.isPending ? '搜索中…' : '搜索'}
+          </button>
+          {found !== null && (
+            <div className="mt-2 space-y-1 text-xs">
+              {found.hits.map((h) => (
+                <a
+                  key={h.url}
+                  href={h.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={h.content}
+                  className="block truncate text-blue-700 hover:underline"
+                >
+                  {h.title}
+                </a>
+              ))}
+              {found.hits.length === 0 && <p className="text-neutral-400">没有结果</p>}
             </div>
           )}
         </section>

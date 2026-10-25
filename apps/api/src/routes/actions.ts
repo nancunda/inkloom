@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { checkChapter } from '../judge/health-check.js'
 import { resolveJudgeProvider } from '../judge/registry.js'
 import type { FetchLike } from '../llm/types.js'
+import { createTavilySearch } from '../search/tavily.js'
 import { getContext } from '../services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
 import { generateChapter } from '../services/generate-service.js'
@@ -67,6 +68,22 @@ export function createActions(deps: ActionDeps = {}): Hono {
     }
     // 单书模式：追加到当前这本书，章号接在现有最大章之后
     return c.json(await importChapters({ rootPath: root, sourcePath: body.sourcePath }))
+  })
+
+  actions.post('/search', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { query?: string; maxResults?: number }
+    const query = body.query?.trim() ?? ''
+    if (query.length === 0) throw new InkloomError('INVALID_INPUT', '缺少 query')
+
+    const key = (process.env['TAVILY_API_KEY'] ?? '').trim()
+    if (key.length === 0) throw new InkloomError('AUTH', '缺少 TAVILY_API_KEY（见 .env.example）')
+
+    const provider = createTavilySearch({ apiKey: key })
+    return c.json({
+      provider: provider.id,
+      query,
+      hits: await provider.search(query, body.maxResults ?? 5),
+    })
   })
 
   actions.post('/chapters/:n/generate-async', (c) => {

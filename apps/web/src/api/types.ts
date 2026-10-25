@@ -119,6 +119,18 @@ export interface ProposeResult {
   unparsed: string[]
 }
 
+export interface SearchHit {
+  title: string
+  url: string
+  content: string
+}
+
+export interface SearchResult {
+  provider: string
+  query: string
+  hits: SearchHit[]
+}
+
 export interface RelationNode {
   id: string
   name: string
