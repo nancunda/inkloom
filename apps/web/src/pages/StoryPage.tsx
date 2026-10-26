@@ -14,7 +14,7 @@ export function StoryPage() {
   const setChapter = useSessionStore((s) => s.setChapter)
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full w-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-6 py-2">
         <h1 className="text-sm font-semibold text-neutral-900">故事</h1>
         <div className="flex gap-1">

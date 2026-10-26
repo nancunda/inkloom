@@ -14,7 +14,7 @@ export function AssetsPage() {
   const items = data?.characters ?? []
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full w-full min-h-0 flex-col">
       <header className="shrink-0 border-b border-neutral-200 bg-white px-6 py-2">
         <h1 className="text-sm font-semibold text-neutral-900">素材</h1>
         <p className="mt-0.5 text-[11px] text-neutral-500">

@@ -3,6 +3,7 @@ import {
   useAcceptScene,
   useBook,
   useChapter,
+  useChapterText,
   useDiff,
   useRejectScene,
   useRewriteScene,
@@ -117,6 +118,8 @@ function WriteView() {
           </span>
         </div>
 
+        <ChapterTextBlock chapterNo={chapterNo} />
+
         {isLoading && <p className="text-sm text-neutral-500">加载中…</p>}
 
         {!isLoading && sceneNos.length === 0 && (
@@ -186,6 +189,37 @@ function WriteView() {
       <Toolbar chapter={chapter} />
       {focus && <FocusMode />}
     </div>
+  )
+}
+
+/** 本章正文：已接受场景拼成连续文本（定稿章就是最终稿） */
+function ChapterTextBlock({ chapterNo }: { chapterNo: number }) {
+  const { data } = useChapterText(chapterNo)
+  const [open, setOpen] = useState(true)
+  if (data === undefined || data.text.length === 0) return null
+  return (
+    <section className="mb-4 rounded-lg border border-neutral-200 bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-4 py-2 text-left"
+      >
+        <span className="text-[12px] font-medium text-neutral-700">本章正文</span>
+        <span className="text-[11px] text-neutral-400">
+          {data.wordCount} 字 · {data.finalized ? '已定稿（只读）' : '拼自已接受场景'}
+        </span>
+        <span className="ml-auto text-[11px] text-neutral-400">{open ? '收起' : '展开'}</span>
+      </button>
+      {open && (
+        <div className="max-h-[420px] overflow-y-auto border-t border-neutral-100 px-5 py-4 text-[14px] leading-7 text-neutral-800">
+          {data.text.split(/\n{2,}/).map((p) => (
+            <p key={p.slice(0, 40)} className="mb-3 last:mb-0">
+              {p}
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 

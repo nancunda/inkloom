@@ -180,6 +180,29 @@ export interface SearchResult {
   hits: SearchHit[]
 }
 
+export interface SettingsField {
+  key: string
+  secret: boolean
+  value: string
+  set: boolean
+  pendingRestart: boolean
+  default: string
+}
+
+export interface SettingsData {
+  envPath: string
+  exists: boolean
+  fields: SettingsField[]
+  judgeMode: string
+}
+
+export interface ChapterText {
+  chapterNo: number
+  text: string
+  wordCount: number
+  finalized: boolean
+}
+
 export interface OverviewChapter {
   chapterNo: number
   title: string | null

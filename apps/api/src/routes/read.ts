@@ -383,6 +383,27 @@ read.get('/world', async (c) => {
   return c.json({ locations, routes })
 })
 
+read.get('/chapters/:n/text', async (c) => {
+  const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+  const { root } = getContext()
+  const rows = await listChapterScenes(chapterNo)
+  const accepted = rows.filter((r) => r.status === 'accepted')
+  // 有已接受场景就只拼已接受的（已定稿章就是这种）；否则退化成最新版预览
+  const use = (accepted.length > 0 ? accepted : rows).slice().sort((a, b) => a.sceneNo - b.sceneNo)
+  const parts: string[] = []
+  for (const r of use) {
+    const f = await readSceneFile(root, chapterNo, r.sceneNo, r.version)
+    if (f !== null) parts.push(f.segments.map((s) => s.text).join('\n\n'))
+  }
+  const text = parts.join('\n\n')
+  return c.json({
+    chapterNo,
+    text,
+    wordCount: text.replace(/\s/g, '').length,
+    finalized: accepted.length > 0 && accepted.length === rows.length,
+  })
+})
+
 read.get('/chapters/:n', async (c) => {
   const chapterNo = intParam(c.req.param('n'), 'chapterNo')
   const { db, project } = getContext()

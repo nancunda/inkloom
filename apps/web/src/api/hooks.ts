@@ -5,6 +5,7 @@ import type {
   BlueprintLite,
   Book,
   ChapterDetail,
+  ChapterText,
   DiffResult,
   FinalizeResult,
   GenerateJob,
@@ -14,6 +15,7 @@ import type {
   RelationGraphData,
   SceneDetail,
   SearchResult,
+  SettingsData,
   ThreadsData,
   WorldData,
 } from './types'
@@ -49,6 +51,38 @@ export function useOverview() {
 
 export function useAssets() {
   return useQuery({ queryKey: ['assets'], queryFn: () => api<AssetsData>('/assets') })
+}
+
+export function useChapterText(chapterNo: number) {
+  return useQuery({
+    queryKey: ['chapter-text', chapterNo],
+    queryFn: () => api<ChapterText>(`/chapters/${chapterNo}/text`),
+  })
+}
+
+export function useSettings() {
+  return useQuery({ queryKey: ['settings'], queryFn: () => api<SettingsData>('/settings') })
+}
+
+export function useSaveSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, string>) =>
+      fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const e = (await r.json().catch(() => null)) as { error?: { message?: string } } | null
+          throw new Error(e?.error?.message ?? `保存失败 HTTP ${r.status}`)
+        }
+        return (await r.json()) as { note: string }
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+  })
 }
 
 export function useWorld() {

@@ -1,88 +1,207 @@
-import { useBook } from '../api/hooks'
+import { useEffect, useState } from 'react'
+import { useSaveSettings, useSettings } from '../api/hooks'
+import type { SettingsField } from '../api/types'
+
+const GROUPS: { title: string; hint: string; keys: string[] }[] = [
+  {
+    title: '生成（DeepSeek）',
+    hint: '没有 key 时「生成本章」会返回 401，并提示缺哪个变量。',
+    keys: ['DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'DEEPSEEK_BASE_URL'],
+  },
+  {
+    title: '判断层 / 生图 / 搜索',
+    hint: '判断层默认关闭：打开才会计费。硅基流动同时供判断与生图。',
+    keys: [
+      'INKLOOM_JUDGE',
+      'SILICONFLOW_API_KEY',
+      'INKLOOM_JUDGE_MODEL',
+      'SILICONFLOW_IMAGE_MODEL',
+      'TYPESAFE_API_KEY',
+      'TAVILY_API_KEY',
+    ],
+  },
+  {
+    title: '写作参数',
+    hint: '目标字数只影响提示与进度，不截断模型输出。',
+    keys: ['INKLOOM_WORDS_PER_CHAPTER'],
+  },
+]
+
+const LABEL: Record<string, string> = {
+  DEEPSEEK_API_KEY: 'DeepSeek API Key',
+  DEEPSEEK_MODEL: '生成模型',
+  DEEPSEEK_BASE_URL: '接口地址',
+  INKLOOM_JUDGE: '判断层',
+  SILICONFLOW_API_KEY: '硅基流动 API Key',
+  INKLOOM_JUDGE_MODEL: '判断模型',
+  SILICONFLOW_IMAGE_MODEL: '生图模型',
+  TYPESAFE_API_KEY: 'TypeSafe JEV Key',
+  TAVILY_API_KEY: 'Tavily Key（联网搜索）',
+  INKLOOM_WORDS_PER_CHAPTER: '每章目标字数',
+}
 
 /**
- * 设置（spec §2.1 ⑦）：模型、判断层、项目配置。
+ * 设置（spec §2.1 ⑦）：在这里填 key 与参数，保存即生效。
  *
- * ★ 本轮只展示「当前生效的配置」与「怎么改」，不假装有表单：
- *   这些值都在环境变量与 novel.json 里，前端编辑要另加写接口。
- *   把「真实来源」写清楚，比给一个假的开关更诚实。
+ * ★ 写入的是项目根的 .env，同时改 process.env——server 每次调用都读 env，
+ *   所以不用重启；.env 只负责「下次启动还记得」。
+ * ★ 密钥输入框留空 = 不修改；要清除就点「清除」。避免把打码串当新 key 存进去。
  */
 export function SettingsPage() {
-  const { data: book } = useBook()
+  const { data, isLoading } = useSettings()
+  const save = useSaveSettings()
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [msg, setMsg] = useState<string | null>(null)
+
+  // 切到别的页面再回来，草稿不该残留
+  useEffect(() => {
+    setDraft({})
+    setMsg(null)
+  }, [])
+
+  if (isLoading) return <p className="p-8 text-sm text-neutral-500">读取设置…</p>
+  if (data === undefined) return null
+
+  const fieldOf = (key: string): SettingsField | undefined => data.fields.find((f) => f.key === key)
+  const changed = Object.entries(draft).filter(([, v]) => v !== '')
+
+  const submit = (): void => {
+    if (changed.length === 0) {
+      setMsg('没有改动')
+      return
+    }
+    save.mutate(Object.fromEntries(changed), {
+      onSuccess: (r) => {
+        setDraft({})
+        setMsg(`已保存 ${changed.length} 项 · ${r.note}`)
+      },
+      onError: (e) => setMsg(e.message),
+    })
+  }
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full w-full overflow-y-auto">
       <div className="mx-auto max-w-3xl space-y-5 p-8">
-        <header>
-          <h1 className="text-lg font-semibold text-neutral-900">设置</h1>
-          <p className="mt-1 text-xs text-neutral-500">
-            配置的来源只有两处：项目目录里的文件，和启动时的环境变量。
-          </p>
+        <header className="flex items-baseline gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-neutral-900">设置</h1>
+            <p className="mt-1 text-xs text-neutral-500">
+              保存后立刻生效（生成 / 判断 / 生图都在调用时读环境变量）。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={save.isPending}
+            className="ml-auto rounded bg-neutral-900 px-3 py-1.5 text-xs text-white disabled:opacity-40"
+          >
+            {save.isPending
+              ? '保存中…'
+              : `保存${changed.length > 0 ? `（${changed.length}）` : ''}`}
+          </button>
         </header>
 
-        <Card title="项目">
-          <Row k="书名" v={book?.name ?? '—'} />
-          <Row k="体裁" v={book?.genre ?? '—'} />
-          <Row k="项目 ID" v={book?.id ?? '—'} mono />
-          <Row k="文件夹锚点" v={book?.folderId ?? '—'} mono />
-          <Row k="元数据" v="novel.json（直接改文件即可，索引可重建）" />
-        </Card>
+        {msg !== null && (
+          <p className="rounded border border-neutral-200 bg-white px-3 py-2 text-[11px] text-neutral-600">
+            {msg}
+          </p>
+        )}
 
-        <Card title="模型">
-          <Row k="生成" v="deepseek-flash（DEEPSEEK_API_KEY，.env 或环境变量）" />
-          <Row k="判断层" v="硅基流动 / TypeSafe JEV（INKLOOM_JUDGE=off|mock|openai|typesafe）" />
-          <Row k="生图" v="硅基流动 Kolors（SILICONFLOW_API_KEY）" />
-          <Row k="搜索" v="Tavily（TAVILY_API_KEY，按需触发）" />
-        </Card>
-
-        <Card title="数据与版本">
-          <Row k="真相" v="正文与要素都是文件；SQLite 索引可删，reindex 能全量重建" />
-          <Row k="版本" v="每本书自带 Git 仓库；接受 / 定稿 / 撤销都会自动提交" />
-          <Row k="回退" v="CLI：checkpoint 建点、rollback 回点、element rollback 回要素" />
-        </Card>
-
-        <Card title="启动参数">
-          <Row k="书目录" v="INKLOOM_BOOK=./my-novel（必填）" mono />
-          <Row k="端口" v="PORT=8787（默认；只绑 127.0.0.1）" mono />
-          <Row k="判断层" v="INKLOOM_JUDGE=off（默认关闭，开启才计费）" mono />
-        </Card>
+        {GROUPS.map((g) => (
+          <section key={g.title} className="rounded-lg border border-neutral-200 bg-white">
+            <div className="border-b border-neutral-100 px-4 py-2">
+              <h2 className="text-sm font-medium text-neutral-800">{g.title}</h2>
+              <p className="mt-0.5 text-[11px] text-neutral-400">{g.hint}</p>
+            </div>
+            <div className="divide-y divide-neutral-50">
+              {g.keys.map((key) => {
+                const f = fieldOf(key)
+                if (f === undefined) return null
+                return (
+                  <Field
+                    key={key}
+                    field={f}
+                    draft={draft[key]}
+                    onChange={(v) => setDraft((d) => ({ ...d, [key]: v }))}
+                  />
+                )
+              })}
+            </div>
+          </section>
+        ))}
 
         <p className="text-[11px] text-neutral-400">
-          两个键位：<Kbd>Ctrl+K</Kbd> 命令面板 · <Kbd>Ctrl+Shift+E</Kbd> 专注模式。
+          配置文件：<span className="font-mono">{data.envPath}</span>
+          {data.exists ? '' : '（尚未创建，首次保存会生成）'}
+          <br />
+          这个文件不进 Git，也不会被写进书稿目录。
         </p>
       </div>
     </div>
   )
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-lg border border-neutral-200 bg-white">
-      <h2 className="border-b border-neutral-100 px-4 py-2 text-sm font-medium text-neutral-800">
-        {title}
-      </h2>
-      <dl className="divide-y divide-neutral-50">{children}</dl>
-    </section>
-  )
-}
+function Field({
+  field,
+  draft,
+  onChange,
+}: {
+  field: SettingsField
+  draft: string | undefined
+  onChange: (v: string) => void
+}) {
+  const [reveal, setReveal] = useState(false)
+  const isJudge = field.key === 'INKLOOM_JUDGE'
+  const value = draft ?? ''
 
-function Row({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div className="flex gap-4 px-4 py-2 text-[13px]">
-      <dt className="w-24 shrink-0 text-neutral-400">{k}</dt>
-      <dd
-        className={`min-w-0 flex-1 break-words text-neutral-700 ${mono ? 'font-mono text-[11px]' : ''}`}
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <label htmlFor={field.key} className="w-40 shrink-0 text-[12px] text-neutral-500">
+        {LABEL[field.key] ?? field.key}
+      </label>
+
+      {isJudge ? (
+        <select
+          id={field.key}
+          value={value !== '' ? value : field.value || 'off'}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-56 rounded border border-neutral-300 px-2 py-1 text-[12px]"
+        >
+          <option value="off">off（关闭，不计费）</option>
+          <option value="mock">mock（只验管线）</option>
+          <option value="openai">siliconflow（硅基流动）</option>
+          <option value="typesafe">typesafe（JEV 官方）</option>
+        </select>
+      ) : (
+        <input
+          id={field.key}
+          type={field.secret && !reveal ? 'password' : 'text'}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={
+            field.set ? `已设置（${field.value}），留空 = 不修改` : field.default || '未设置'
+          }
+          autoComplete="off"
+          spellCheck={false}
+          className="min-w-0 flex-1 rounded border border-neutral-300 px-2 py-1 font-mono text-[12px]"
+        />
+      )}
+
+      {field.secret && (
+        <button
+          type="button"
+          onClick={() => setReveal(!reveal)}
+          className="text-[11px] text-neutral-400 hover:text-neutral-600"
+        >
+          {reveal ? '隐藏' : '显示'}
+        </button>
+      )}
+
+      <span
+        className={`w-14 text-right text-[10px] ${field.set ? 'text-emerald-600' : 'text-neutral-300'}`}
       >
-        {v}
-      </dd>
+        {field.pendingRestart ? '待重启' : field.set ? '已设置' : '未设置'}
+      </span>
     </div>
-  )
-}
-
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded border border-neutral-300 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] text-neutral-600">
-      {children}
-    </kbd>
   )
 }

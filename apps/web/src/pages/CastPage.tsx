@@ -10,17 +10,14 @@ import { RelationGraph } from '../components/RelationGraph'
  */
 export function CastPage() {
   const [tab, setTab] = useState<'cards' | 'graph'>('cards')
+  const [selected, setSelected] = useState<string | null>(null)
   const { data } = useRelations(null)
   const nodes = data?.nodes ?? []
   const edges = data?.edges ?? []
-  const degree = new Map<string, number>()
-  for (const e of edges) {
-    degree.set(e.fromId, (degree.get(e.fromId) ?? 0) + 1)
-    degree.set(e.toId, (degree.get(e.toId) ?? 0) + 1)
-  }
+  const nameOf = new Map(nodes.map((n) => [n.id, n.name]))
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full w-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-6 py-2">
         <h1 className="text-sm font-semibold text-neutral-900">角色</h1>
         <div className="flex gap-1">
@@ -56,19 +53,47 @@ export function CastPage() {
               </p>
             ) : (
               <div className="grid grid-cols-3 gap-3">
-                {nodes.map((n) => (
-                  <div key={n.id} className="rounded-lg border border-neutral-200 bg-white p-4">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-sm font-medium text-neutral-900">{n.name}</span>
-                      <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
-                        {n.role}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-[11px] text-neutral-400">
-                      {degree.get(n.id) ?? 0} 条关系 · {n.id}
-                    </p>
-                  </div>
-                ))}
+                {nodes.map((n) => {
+                  const mine = edges.filter((e) => e.fromId === n.id || e.toId === n.id)
+                  return (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => setSelected(selected === n.id ? null : n.id)}
+                      className={`rounded-lg border bg-white p-4 text-left ${
+                        selected === n.id ? 'border-neutral-900' : 'border-neutral-200'
+                      }`}
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-sm font-medium text-neutral-900">{n.name}</span>
+                        <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                          {n.role}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] text-neutral-400">
+                        {mine.length} 条关系 · {n.id}
+                      </p>
+                      {selected === n.id && (
+                        <ul className="mt-2 space-y-1 border-t border-neutral-100 pt-2">
+                          {mine.length === 0 && (
+                            <li className="text-[11px] text-neutral-400">
+                              还没有关系，去「关系网络」拖线建一条
+                            </li>
+                          )}
+                          {mine.map((e) => (
+                            <li key={e.id} className="text-[11px] text-neutral-600">
+                              {e.fromId === n.id ? '→' : '←'}{' '}
+                              {nameOf.get(e.fromId === n.id ? e.toId : e.fromId) ?? '?'}
+                              <span className="ml-1 text-neutral-400">
+                                {e.kind} · 强度 {e.strength}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             )}
             <p className="mt-4 text-[11px] text-neutral-400">
