@@ -25,7 +25,7 @@ type Block =
       status: 'running' | 'ok' | 'error'
       summary: string
     }
-  | { kind: 'gate'; id: string; gate: AgentGate; resolved: 'approve' | 'revise' | null }
+  | { kind: 'gate'; id: string; gate: AgentGate; resolved: 'approve' | 'revise' | 'skip' | null }
   | { kind: 'plan'; id: string; plan: AgentPlan }
   | { kind: 'status'; id: string; text: string; tone: 'info' | 'error' }
 
@@ -63,6 +63,7 @@ const TASK_STATUS_LABEL: Record<AgentPlanTask['status'], string> = {
   todo: '待做',
   doing: '进行中',
   done: '完成',
+  skipped: '已跳过',
   blocked: '卡住',
 }
 
@@ -70,6 +71,7 @@ const TASK_TONE: Record<AgentPlanTask['status'], string> = {
   todo: 'text-neutral-400',
   doing: 'text-amber-700',
   done: 'text-emerald-700',
+  skipped: 'text-neutral-400',
   blocked: 'text-rose-700',
 }
 
@@ -196,9 +198,11 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
       const text =
         ev.decision === 'revise'
           ? `已打回：${ev.feedback ?? ''}`
-          : pending?.gate.kind === 'plan'
-            ? '计划已批准，开始执行任务'
-            : '任务已通过，继续下一个'
+          : ev.decision === 'skip'
+            ? '已跳过这个任务，继续下一个'
+            : pending?.gate.kind === 'plan'
+              ? '计划已批准，开始执行任务'
+              : '任务已通过，继续下一个'
       next.push({ kind: 'status', id: `s${ev.seq}`, text, tone: 'info' })
       return next
     }
@@ -241,6 +245,9 @@ function currentHint(run: AgentRun | null, plan: AgentPlan | null): string {
     return doing === undefined ? '正在处理你的消息' : `正在做「${doing.title}」`
   }
   if (plan !== null && plan.status === 'done') return '计划完成，可以继续聊下一件事'
+  if (plan !== null && plan.status === 'aborted') {
+    return '计划已中止；可以「继续执行」接着做，或「重新规划」重来'
+  }
   if (run.status === 'done') return '本轮完成；如果计划还有任务，可以点「继续执行」'
   if (run.status === 'failed') return '本轮失败；可以「继续执行」或开新会话'
   return '已停止；可以继续聊，或点「继续执行」'
@@ -249,11 +256,15 @@ function currentHint(run: AgentRun | null, plan: AgentPlan | null): string {
 function Plancard({
   plan,
   canResume,
+  canReplan,
   onResume,
+  onReplan,
 }: {
   plan: AgentPlan | null
   canResume: boolean
+  canReplan: boolean
   onResume: () => void
+  onReplan: () => void
 }) {
   if (plan === null) {
     return (
@@ -262,7 +273,7 @@ function Plancard({
       </p>
     )
   }
-  const done = plan.tasks.filter((t) => t.status === 'done').length
+  const done = plan.tasks.filter((t) => t.status === 'done' || t.status === 'skipped').length
   return (
     <div>
       <div className="rounded border border-neutral-200 bg-white px-2.5 py-2">
@@ -292,7 +303,9 @@ function Plancard({
                   <span className="w-3 shrink-0 text-[10px] text-neutral-400">{i + 1}</span>
                   <span
                     className={`truncate ${
-                      t.status === 'done' ? 'text-neutral-400 line-through' : 'text-neutral-800'
+                      t.status === 'done' || t.status === 'skipped'
+                        ? 'text-neutral-400 line-through'
+                        : 'text-neutral-800'
                     }`}
                   >
                     {t.title}
@@ -323,14 +336,27 @@ function Plancard({
         ))}
       </ol>
 
-      {canResume && (
-        <button
-          type="button"
-          onClick={onResume}
-          className="mt-2 w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-[11px] text-neutral-700 hover:bg-neutral-50"
-        >
-          继续执行没做完的任务
-        </button>
+      {(canResume || canReplan) && (
+        <div className="mt-2 space-y-1">
+          {canResume && (
+            <button
+              type="button"
+              onClick={onResume}
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-[11px] text-neutral-700 hover:bg-neutral-50"
+            >
+              继续执行没做完的任务
+            </button>
+          )}
+          {canReplan && (
+            <button
+              type="button"
+              onClick={onReplan}
+              className="w-full rounded border border-neutral-200 bg-white px-2 py-1.5 text-[11px] text-neutral-500 hover:bg-neutral-50"
+            >
+              重新规划（放弃这份计划）
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
@@ -478,8 +504,27 @@ export function AgentPage() {
     }
   }
 
-  const review = async (decision: 'approve' | 'revise'): Promise<void> => {
+  const replan = async (): Promise<void> => {
+    setError(null)
+    setBusy(true)
+    try {
+      const { run: started } = await post<{ run: AgentRun }>('/agent/runs', {
+        goal: goal.trim(),
+        mode: 'replan',
+      })
+      localStorage.setItem(RUN_KEY, started.id)
+      adoptRun(started, true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const review = async (decision: 'approve' | 'revise' | 'skip'): Promise<void> => {
     if (run === null) return
+    if (decision === 'skip' && !window.confirm('跳过这个任务？它会记为已跳过，计划继续往下走。'))
+      return
     if (decision === 'revise' && feedback.trim().length === 0) {
       setError('打回请写清楚要改什么')
       return
@@ -524,11 +569,12 @@ export function AgentPage() {
   const plan = latestPlan(blocks)
   const hint = currentHint(run, plan)
   const canSend = run !== null && run.status !== 'failed'
-  const canResume =
-    run !== null &&
-    (run.status === 'done' || run.status === 'stopped' || run.status === 'failed') &&
-    plan !== null &&
-    plan.tasks.some((t) => t.status !== 'done')
+  const ended =
+    run !== null && (run.status === 'done' || run.status === 'stopped' || run.status === 'failed')
+  const openTaskCount =
+    plan?.tasks.filter((t) => t.status !== 'done' && t.status !== 'skipped').length ?? 0
+  const canResume = ended && openTaskCount > 0
+  const canReplan = ended && plan?.status === 'aborted'
   const placeholder =
     run === null
       ? ''
@@ -552,7 +598,13 @@ export function AgentPage() {
 
         <div className="flex-1 overflow-y-auto px-3 py-3">
           <p className="mb-2 px-1 text-[10px] font-medium tracking-wide text-neutral-400">计划</p>
-          <Plancard plan={plan} canResume={canResume && !busy} onResume={() => void resume()} />
+          <Plancard
+            plan={plan}
+            canResume={canResume && !busy}
+            canReplan={canReplan && !busy}
+            onResume={() => void resume()}
+            onReplan={() => void replan()}
+          />
 
           <div className="mt-4 rounded border border-neutral-200 bg-white px-2.5 py-2">
             <p className="text-[10px] font-medium text-neutral-400">现在</p>
@@ -740,7 +792,11 @@ export function AgentPage() {
                       </span>
                       {b.resolved !== null && (
                         <span className="text-[10px] text-neutral-500">
-                          {b.resolved === 'approve' ? '已通过' : '已打回'}
+                          {b.resolved === 'approve'
+                            ? '已通过'
+                            : b.resolved === 'skip'
+                              ? '已跳过'
+                              : '已打回'}
                         </span>
                       )}
                     </div>
@@ -802,6 +858,16 @@ export function AgentPage() {
                               className="rounded border border-neutral-300 px-3 py-1.5 text-[11px] text-neutral-600 hover:bg-neutral-100"
                             >
                               打回修改
+                            </button>
+                          )}
+                          {g.kind === 'task' && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void review('skip')}
+                              className="rounded border border-neutral-300 px-3 py-1.5 text-[11px] text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+                            >
+                              跳过
                             </button>
                           )}
                         </div>

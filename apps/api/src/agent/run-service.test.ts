@@ -18,6 +18,7 @@ interface FakeAgent {
   opts: { initialState: { tools: FakeTool[] } }
   state: { errorMessage?: string }
   promptCalls: number
+  prompts: string[]
   steers: string[]
   fail: () => void
   done: () => void
@@ -36,6 +37,7 @@ vi.mock('@earendil-works/pi-agent-core', () => {
     opts: { initialState: { tools: FakeTool[] } }
     state: { errorMessage?: string } = {}
     promptCalls = 0
+    prompts: string[] = []
     steers: string[] = []
     listeners: ((e: FakeEvent) => void)[] = []
     resolvers: (() => void)[] = []
@@ -54,8 +56,9 @@ vi.mock('@earendil-works/pi-agent-core', () => {
     }
 
     /** 永不主动 resolve：测试自己控制「模型还在跑」与「运行结束」的时序 */
-    prompt(): Promise<void> {
+    prompt(prompt?: string): Promise<void> {
       this.promptCalls += 1
+      this.prompts.push(String(prompt))
       return new Promise<void>((resolve, reject) => {
         this.resolvers.push(resolve)
         this.rejecters.push(reject)
@@ -108,6 +111,7 @@ const {
   getAgentRun,
   hasLiveAgentRun,
   resetRunsForTest,
+  resumeAgentRun,
   reviewAgentRun,
   sendAgentMessage,
   startAgentRun,
@@ -307,6 +311,20 @@ describe('任务门禁', () => {
     stopAgentRun(id)
   })
 
+  it('★ 跳过任务 → 记为 skipped 并自动开始下一个任务', async () => {
+    const { id, agent, planId } = await reachTaskGate()
+
+    await reviewAgentRun(id, 'skip', null)
+
+    const plan = await loadPlan(h.root, planId)
+    const task = plan?.tasks.find((t) => t.id === 't1')
+    expect(task?.status).toBe('skipped')
+    expect(task?.reviewed).toBe(true)
+    expect(plan?.tasks.find((t) => t.id === 't2')?.status).toBe('todo')
+    expect(agent.promptCalls).toBe(2)
+    stopAgentRun(id)
+  })
+
   it('review=none 的任务不产生门禁', async () => {
     const planId = await seedPlan('approved', [{ id: 't1', status: 'doing', review: 'none' }])
     const started = await startAgentRun('继续')
@@ -412,6 +430,15 @@ describe('review 基本校验', () => {
     await expect(reviewAgentRun(id, 'revise', '  ')).rejects.toThrow('打回必须写清楚要改什么')
     stopAgentRun(id)
   })
+
+  it('★ 计划门禁不能跳过', async () => {
+    const { id } = await reachPlanGate()
+    await expect(reviewAgentRun(id, 'skip', null)).rejects.toThrow('计划门禁不能跳过')
+    // 报错不能把门禁吞掉：作者还得能批准或打回
+    expect(getAgentRun(id)?.status).toBe('waiting_review')
+    expect(getAgentRun(id)?.gate?.kind).toBe('plan')
+    stopAgentRun(id)
+  })
 })
 
 describe('归属与清理（切书安全）', () => {
@@ -438,6 +465,45 @@ describe('归属与清理（切书安全）', () => {
     expect(hasLiveAgentRun()).toBe(false)
     expect(clearRuns()).toBe(1)
     expect(getAgentRun(started.id)).toBeNull()
+  })
+})
+
+describe('继续执行与重新规划', () => {
+  it('★ 继续执行：aborted 计划改回 approved，从 blocked 任务接着做', async () => {
+    const planId = await seedPlan('approved', [
+      { id: 't1', status: 'doing' },
+      { id: 't2', status: 'todo' },
+    ])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    stopAgentRun(started.id)
+    await settle()
+    expect((await loadPlan(h.root, planId))?.status).toBe('aborted')
+
+    const before = agent.promptCalls
+    resumeAgentRun(started.id)
+    await settle()
+
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.status).toBe('approved')
+    expect(plan?.tasks.find((t) => t.id === 't1')?.status).toBe('blocked')
+    expect(agent.promptCalls).toBe(before + 1)
+    stopAgentRun(started.id)
+  })
+
+  it('★ 重新规划：旧计划作废，新 run 不接旧计划', async () => {
+    const planId = await seedPlan('approved', [{ id: 't1', status: 'doing' }])
+    const first = await startAgentRun('继续')
+    stopAgentRun(first.id)
+    await settle()
+    expect((await loadPlan(h.root, planId))?.status).toBe('aborted')
+
+    const replanned = await startAgentRun('重新来一份计划', { replan: true })
+    expect(replanned.planId).toBeNull()
+    expect(replanned.status).toBe('running')
+    expect((await loadPlan(h.root, planId))?.status).toBe('aborted')
+    expect(lastAgent().prompts.at(-1)).toContain('重新规划')
+    stopAgentRun(replanned.id)
   })
 })
 

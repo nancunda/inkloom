@@ -317,4 +317,6 @@ function deriveGate(plan: Plan | null): AgentGate | null {
 3. **plan 存储**：定义进 git（`story/plans/<id>.json`）；运行状态不进（`.inkloom/agent/plans/<id>.state.json`，已被书 `.gitignore` 忽略）。
 4. 默认模板保留（是建议，不是硬编码）；门禁带「跳过任务」（未单独询问，按推荐执行）。
 
-> 状态：已实施（2026-10-26）。验收证据见 `docs/screenshots/accept-library.png`、`accept-plan-gate.png`、`accept-task-gate.png`、`accept-plan-aborted.png`；测试基线 294 单测 + 304 集成。
+> 状态：已实施（2026-10-26）。验收证据见 `docs/screenshots/accept-library.png`、`accept-plan-gate.png`、`accept-task-gate.png`、`accept-plan-aborted.png`；测试基线 300 单测 + 304 集成。
+>
+> 补遗（2026-10-26）：决策 4 的「跳过任务」与 §2.7 的「重新规划」已补齐——跳过只对任务门禁开放（`decision=skip`），跳过计入完成但不回到待做；「重新规划」以 `POST /agent/runs {mode:"replan"}` 作废旧计划（doing→blocked、plan→aborted）并开新 run 重新 `write_plan`。

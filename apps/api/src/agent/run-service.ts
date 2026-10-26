@@ -31,7 +31,7 @@ export type AgentStreamPayload =
       summary: string
     }
   | { type: 'gate.waiting'; gate: AgentGate }
-  | { type: 'gate.resolved'; decision: 'approve' | 'revise'; feedback: string | null }
+  | { type: 'gate.resolved'; decision: 'approve' | 'revise' | 'skip'; feedback: string | null }
   | { type: 'plan.updated'; plan: Plan }
   | { type: 'run.finished' }
   | { type: 'run.failed'; error: string }
@@ -415,7 +415,34 @@ function finishRun(run: AgentRun): void {
   if (run.gate === null) run.finishedAt ??= new Date().toISOString()
 }
 
-export async function startAgentRun(goal: string): Promise<AgentRunSnapshot> {
+/**
+ * 重新规划前把旧计划收尾：作者已放弃它，不能继续挂在 approved 上。
+ * ★ 不走 persistPlan：它需要一个 run，而新 run 这时还没建出来。
+ */
+async function abandonPriorPlan(root: string, plan: Plan): Promise<void> {
+  if (plan.status === 'done' || plan.status === 'aborted') return
+  await writeQueue.run(async () => {
+    await writePlanState(root, plan.id, {
+      status: 'aborted',
+      summary: plan.summary,
+      feedback: plan.feedback,
+      tasks: plan.tasks.map((t) => ({
+        id: t.id,
+        status: t.status === 'doing' ? ('blocked' as const) : t.status,
+        artifacts: t.artifacts,
+        feedback: t.feedback,
+        summary: t.summary,
+        reviewed: t.reviewed,
+      })),
+      updatedAt: new Date().toISOString(),
+    })
+  })
+}
+
+export async function startAgentRun(
+  goal: string,
+  options: { replan?: boolean } = {},
+): Promise<AgentRunSnapshot> {
   const { root, project } = getContext()
   if (activeRunId !== null) {
     const active = runs.get(activeRunId)
@@ -448,7 +475,11 @@ export async function startAgentRun(goal: string): Promise<AgentRunSnapshot> {
   // 恢复上一次没做完的计划：等批准 → 直接恢复门禁；已批准 → 接着做下一个任务
   const currentPlanId = await readCurrentPlan(root)
   const prior = currentPlanId === null ? null : await loadPlan(root, currentPlanId)
+  // 作者明确要求重新规划：旧计划作废，本次不恢复它
+  const replanPrior = options.replan === true ? prior : null
+  if (replanPrior !== null) await abandonPriorPlan(root, replanPrior)
   const resumable =
+    replanPrior === null &&
     prior !== null &&
     (prior.status === 'drafting' ||
       prior.status === 'awaiting_approval' ||
@@ -543,7 +574,12 @@ export async function startAgentRun(goal: string): Promise<AgentRunSnapshot> {
   }
 
   let initialPrompt = buildAgentPrompt(project)
-  if (resumable !== null && resumable.status === 'approved') {
+  if (replanPrior !== null) {
+    initialPrompt = `${buildAgentPrompt(project)}
+
+# 重新规划
+作者放弃了上一份计划《${replanPrior.title}》（id=${replanPrior.id}，已标为中止）。请 read_book 之后用 write_plan 提交一份新计划；不要用 update_plan 修补旧计划。`
+  } else if (resumable !== null && resumable.status === 'approved') {
     const next = nextOpenTask(resumable)
     initialPrompt =
       next !== null
@@ -636,12 +672,15 @@ export function stopAgentRun(id: string): AgentRunSnapshot {
 
 export async function reviewAgentRun(
   id: string,
-  decision: 'approve' | 'revise',
+  decision: 'approve' | 'revise' | 'skip',
   feedback: string | null,
 ): Promise<AgentRunSnapshot> {
   const run = requireOwnedRun(id)
   if (run.status !== 'waiting_review' || run.gate === null) {
     throw new InkloomError('INVALID_INPUT', '这个 run 现在不在等待审阅')
+  }
+  if (decision === 'skip' && run.gate.kind === 'plan') {
+    throw new InkloomError('INVALID_INPUT', '计划门禁不能跳过：请批准，或打回让它重写')
   }
   if (decision === 'revise' && (feedback === null || feedback.trim().length === 0)) {
     throw new InkloomError('INVALID_INPUT', '打回必须写清楚要改什么')
@@ -698,6 +737,8 @@ export async function reviewAgentRun(
   if (task === undefined) {
     throw new InkloomError('INVALID_INPUT', `计划里没有任务 ${gate.taskId}`)
   }
+  // 跳过 = 作者明确表示这件事不做了：任务收尾，计划继续往下走
+  if (decision === 'skip') task.status = 'skipped'
   task.reviewed = true
   task.summary = null
   task.feedback = null

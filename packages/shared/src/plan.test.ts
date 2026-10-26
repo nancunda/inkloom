@@ -124,6 +124,35 @@ describe('nextOpenTask / isPlanComplete', () => {
     expect(isPlanComplete(plan)).toBe(true)
     expect(nextOpenTask(plan)).toBeNull()
   })
+
+  it('★ 跳过算有交代：全 done/skipped 即完成，且 skipped 不会被再捡起来', () => {
+    const plan = mergePlan(def, {
+      status: 'approved',
+      summary: null,
+      feedback: null,
+      updatedAt: '2026-10-26T01:00:00.000Z',
+      tasks: [
+        {
+          id: 'world',
+          status: 'done',
+          artifacts: [],
+          feedback: null,
+          summary: null,
+          reviewed: true,
+        },
+        {
+          id: 'chapter-1',
+          status: 'skipped',
+          artifacts: [],
+          feedback: null,
+          summary: null,
+          reviewed: true,
+        },
+      ],
+    })
+    expect(isPlanComplete(plan)).toBe(true)
+    expect(nextOpenTask(plan)).toBeNull()
+  })
 })
 
 describe('planDefSchema', () => {

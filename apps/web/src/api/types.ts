@@ -379,7 +379,7 @@ export type AgentGate =
     }
 
 export type AgentPlanStatus = 'drafting' | 'awaiting_approval' | 'approved' | 'done' | 'aborted'
-export type AgentTaskStatus = 'todo' | 'doing' | 'done' | 'blocked'
+export type AgentTaskStatus = 'todo' | 'doing' | 'done' | 'skipped' | 'blocked'
 export type AgentSkill = 'world' | 'characters' | 'story' | 'chapter' | 'review' | 'free'
 
 export interface AgentPlanTask {
@@ -445,7 +445,7 @@ export type AgentEvent =
       seq: number
       at: string
       type: 'gate.resolved'
-      decision: 'approve' | 'revise'
+      decision: 'approve' | 'revise' | 'skip'
       feedback: string | null
     }
   | { seq: number; at: string; type: 'plan.updated'; plan: AgentPlan }

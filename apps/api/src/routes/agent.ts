@@ -18,10 +18,13 @@ const DEFAULT_GOAL =
 export const agentRoutes = new Hono()
 
 agentRoutes.post('/agent/runs', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { goal?: unknown } | null
+  const body = (await c.req.json().catch(() => null)) as {
+    goal?: unknown
+    mode?: unknown
+  } | null
   const raw = body?.goal
   const goal = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : DEFAULT_GOAL
-  const run = await startAgentRun(goal)
+  const run = await startAgentRun(goal, { replan: body?.mode === 'replan' })
   return c.json({ run })
 })
 
@@ -42,8 +45,8 @@ agentRoutes.post('/agent/runs/:id/review', async (c) => {
     feedback?: unknown
   } | null
   const decision = body?.decision
-  if (decision !== 'approve' && decision !== 'revise') {
-    throw new InkloomError('INVALID_INPUT', 'decision 只能是 approve 或 revise')
+  if (decision !== 'approve' && decision !== 'revise' && decision !== 'skip') {
+    throw new InkloomError('INVALID_INPUT', 'decision 只能是 approve、revise 或 skip')
   }
   const feedback = typeof body?.feedback === 'string' ? body.feedback : null
   const run = await reviewAgentRun(c.req.param('id'), decision, feedback)

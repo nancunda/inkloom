@@ -13,7 +13,7 @@ export const PLAN_SKILLS = ['world', 'characters', 'story', 'chapter', 'review',
 export type PlanSkill = (typeof PLAN_SKILLS)[number]
 export const planSkillSchema = z.enum(PLAN_SKILLS)
 
-export const TASK_STATUSES = ['todo', 'doing', 'done', 'blocked'] as const
+export const TASK_STATUSES = ['todo', 'doing', 'done', 'skipped', 'blocked'] as const
 export const taskStatusSchema = z.enum(TASK_STATUSES)
 export type TaskStatus = z.infer<typeof taskStatusSchema>
 
@@ -132,7 +132,10 @@ export function mergePlan(def: PlanDef, state: PlanState | null): Plan {
   }
 }
 
-/** 下一个该做的任务：doing 优先（中断恢复），然后 todo，最后 blocked */
+/**
+ * 下一个该做的任务：doing 优先（中断恢复），然后 todo，最后 blocked。
+ * ★ skipped 不参与：作者跳过的事不能又被 Agent 捡回来做。
+ */
 export function nextOpenTask(plan: Plan): PlanTask | null {
   return (
     plan.tasks.find((t) => t.status === 'doing') ??
@@ -142,6 +145,10 @@ export function nextOpenTask(plan: Plan): PlanTask | null {
   )
 }
 
+/**
+ * 完成 = 全部任务已做或已由作者跳过。
+ * ★ skipped 也算有交代：否则点过「跳过」的计划永远停在 4/5，验收不了。
+ */
 export function isPlanComplete(plan: Plan): boolean {
-  return plan.tasks.every((t) => t.status === 'done')
+  return plan.tasks.every((t) => t.status === 'done' || t.status === 'skipped')
 }
