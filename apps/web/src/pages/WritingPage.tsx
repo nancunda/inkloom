@@ -8,6 +8,7 @@ import {
   useDiff,
   useRejectScene,
   useRewriteScene,
+  useRewriteSceneFull,
   useScene,
 } from '../api/hooks'
 import type { SceneRow } from '../api/types'
@@ -59,6 +60,7 @@ function WriteView() {
   const { data: chapter, isLoading } = useChapter(chapterNo)
   const accept = useAcceptScene()
   const reject = useRejectScene()
+  const rewriteFull = useRewriteSceneFull(chapterNo)
 
   // ★ 当前章不存在时跳到第一章：默认章号是 1，而这本导入的书可能
   //   从别的章号开始（或用户在看一本空书），不校正会停在空页面上。
@@ -136,6 +138,14 @@ function WriteView() {
         return
       }
 
+      if (e.key === 'r' && cur !== null && grouped.get(cur)?.[0]?.status !== 'accepted') {
+        e.preventDefault()
+        void rewriteFull
+          .mutateAsync({ sceneNo: cur })
+          .then((r) => setViewVersion((m) => ({ ...m, [cur]: r.scene.version })))
+        return
+      }
+
       if (e.key === 'Enter' && cur !== null) {
         const versions = grouped.get(cur) ?? []
         const row = versions[0]
@@ -146,7 +156,7 @@ function WriteView() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [sceneNos, grouped, chapterNo, accept])
+  }, [sceneNos, grouped, chapterNo, accept, rewriteFull])
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -162,7 +172,7 @@ function WriteView() {
             {chapter !== undefined && chapter.wordCount > 0 ? ` · ${chapter.wordCount} 字` : ''}
           </span>
           <span className="ml-auto text-[10px] text-neutral-300">
-            J/K 切换场景 · Enter 接受 · Esc 取消
+            J/K 切换场景 · Enter 接受 · R 重写整场 · Esc 取消
           </span>
         </div>
 
@@ -203,6 +213,16 @@ function WriteView() {
                 }
                 onReject={() =>
                   void reject.mutateAsync({ chapterNo, sceneNo, version: row.version })
+                }
+                onRewriteFull={
+                  chapter?.status === 'finalized'
+                    ? undefined
+                    : () =>
+                        void rewriteFull
+                          .mutateAsync({ sceneNo })
+                          .then((r) =>
+                            setViewVersion((m) => ({ ...m, [sceneNo]: r.scene.version })),
+                          )
                 }
                 onDiff={() => {
                   if (prev === null) return

@@ -8,7 +8,7 @@ import type { FetchLike } from '../llm/types.js'
 import { createTavilySearch } from '../search/tavily.js'
 import { getContext } from '../services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
-import { generateChapter } from '../services/generate-service.js'
+import { generateChapter, rewriteScene } from '../services/generate-service.js'
 import { importChapters } from '../services/import-service.js'
 import { getJob, listJobs, submitGenerate } from '../services/job-service.js'
 import { generatePortrait } from '../services/portrait-service.js'
@@ -177,6 +177,22 @@ export function createActions(deps: ActionDeps = {}): Hono {
       chapterNo,
       apiKey: requireApiKey(deps),
       ...(body.guidance === undefined ? {} : { userGuidance: body.guidance }),
+      ...(body.model === undefined ? {} : { model: body.model }),
+      ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+    })
+    return c.json(r)
+  })
+
+  actions.post('/chapters/:n/scenes/:s/rewrite', async (c) => {
+    const chapterNo = intParam(c.req.param('n'), 'chapterNo')
+    const sceneNo = intParam(c.req.param('s'), 'sceneNo')
+    const body = (await c.req.json().catch(() => ({}))) as { guidance?: string; model?: string }
+    // ★ 整场重写：产生新版本 + 全新段 ID，与「重写这段」不是同一个动作
+    const r = await rewriteScene({
+      chapterNo,
+      sceneNo,
+      apiKey: requireApiKey(deps),
+      ...(body.guidance === undefined ? {} : { guidance: body.guidance }),
       ...(body.model === undefined ? {} : { model: body.model }),
       ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
     })

@@ -58,6 +58,22 @@ export function useAssets() {
   return useQuery({ queryKey: ['assets'], queryFn: () => api<AssetsData>('/assets') })
 }
 
+/** 整场重写：产生新版本 + 全新段 ID（区别于「重写这段」的段级精修） */
+export function useRewriteSceneFull(chapterNo: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { sceneNo: number; guidance?: string }) =>
+      post<{ scene: { sceneNo: number; version: number; wordCount: number } }>(
+        `/chapters/${chapterNo}/scenes/${input.sceneNo}/rewrite`,
+        input.guidance === undefined ? {} : { guidance: input.guidance },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chapter', chapterNo] })
+      void qc.invalidateQueries({ queryKey: ['chapter-text', chapterNo] })
+    },
+  })
+}
+
 /** 生成角色形象：与 CLI `portrait` 同一条服务端链路 */
 export function useGeneratePortrait() {
   const qc = useQueryClient()

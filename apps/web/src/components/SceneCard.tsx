@@ -20,6 +20,8 @@ interface Props {
   onAccept: () => void
   onReject: () => void
   onDiff: () => void
+  /** 整场重写：产生新版本（与段级「重写这段」不同） */
+  onRewriteFull?: (() => void) | undefined
 }
 
 /**
@@ -43,6 +45,7 @@ export function SceneCard({
   onAccept,
   onReject,
   onDiff,
+  onRewriteFull,
 }: Props) {
   const badge = BADGE[row.status]
   const isAccepted = row.status === 'accepted'
@@ -110,6 +113,19 @@ export function SceneCard({
           className="rounded border border-neutral-300 px-2.5 py-1 text-xs text-neutral-700 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:text-neutral-300"
         >
           拒绝
+        </button>
+        <button
+          type="button"
+          disabled={busy || isAccepted || onRewriteFull === undefined}
+          onClick={onRewriteFull}
+          title={
+            isAccepted
+              ? '已经是接受的版本；要重写先换一版或撤销接受'
+              : '整场重写：生成新版本（R 键）'
+          }
+          className="rounded border border-neutral-300 px-2.5 py-1 text-xs text-neutral-700 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:text-neutral-300"
+        >
+          ↻ 重写整场
         </button>
         <button
           type="button"

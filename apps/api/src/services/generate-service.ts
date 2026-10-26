@@ -5,7 +5,12 @@ import { commitAll, initRepo } from '../git/runner.js'
 import { chat } from '../llm/deepseek.js'
 import { type FetchLike, LlmError } from '../llm/types.js'
 import { hashContent } from '../storage/atomic-write.js'
-import { collectChapterSegIds, latestSceneVersion, writeSceneFile } from '../storage/scenes.js'
+import {
+  collectChapterSegIds,
+  latestSceneVersion,
+  readSceneFile,
+  writeSceneFile,
+} from '../storage/scenes.js'
 import { getContext } from './context.js'
 import { loadChapterContext } from './context-loader.js'
 
@@ -227,5 +232,173 @@ export async function generateChapter(
     usage,
     warnings,
     degradedReason,
+  }
+}
+
+export interface RewriteSceneOptions {
+  chapterNo: number
+  sceneNo: number
+  apiKey: string
+  /** 作者对这一次重写的具体要求 */
+  guidance?: string
+  model?: string
+  fetchImpl?: FetchLike
+}
+
+export interface RewriteSceneResult {
+  runId: string
+  chapterNo: number
+  scene: GeneratedScene
+  usage: { input: number; output: number; reasoning: number; cacheHit: number }
+}
+
+/**
+ * 整场重写（spec §4.13 场景卡「↻ 重写」）。
+ *
+ * ★ 与「重写这段」的区别：段级保持段 ID 不变（用于精修一两句），
+ *   整场重写产生新版本、全新段 ID（用于「这一场整体不对」）。
+ *   两者不能合并：段 ID 是跨章引用的锚，整场换版就该换锚。
+ * ★ 仍然走同一套装配：蓝图、世界规则、角色状态、文风样本一个不落——
+ *   否则重写出来的东西会和全书脱节。
+ * ★ 用原来的场景正文作为参考而不是约束：告诉模型「事件可以沿用，字句不必保留」。
+ */
+export async function rewriteScene(opts: RewriteSceneOptions): Promise<RewriteSceneResult> {
+  const { root, db, project } = getContext()
+
+  const loaded = await loadChapterContext(opts.chapterNo, {
+    ...(opts.guidance === undefined ? {} : { userGuidance: opts.guidance }),
+  })
+  const assembled = assemble(loaded.input, DEFAULT_BUDGET)
+
+  const latest = await latestSceneVersion(root, opts.chapterNo, opts.sceneNo)
+  const current =
+    latest === null ? null : await readSceneFile(root, opts.chapterNo, opts.sceneNo, latest)
+  const original = current === null ? '' : current.segments.map((s) => s.text).join('\n\n')
+
+  const instruction = [
+    `【本次只重写第 ${opts.sceneNo} 场】`,
+    '只输出这一场的正文。不要写章节标题，不要输出其他场景，不要使用场景分隔标记。',
+    original === '' ? '' : `以下是这一场的当前稿，可参考其事件，不必保留字句：\n\n${original}`,
+    opts.guidance === undefined || opts.guidance.trim() === ''
+      ? ''
+      : `额外要求：${opts.guidance.trim()}`,
+  ]
+    .filter((x) => x !== '')
+    .join('\n\n')
+
+  const messages = [...assembled.messages, { role: 'user' as const, content: instruction }]
+
+  const runId = newRunId()
+  const model = opts.model ?? 'deepseek-flash'
+  await db.generationRun.create({
+    data: {
+      id: runId,
+      projectId: project.id,
+      chapterNo: opts.chapterNo,
+      commitState: 'pending',
+      purpose: 'rewrite_scene',
+      provider: 'deepseek',
+      model,
+      params: JSON.stringify({ sceneNo: opts.sceneNo }),
+      assembledPrompt: JSON.stringify(messages),
+      tokenEstimate: assembled.tokenEstimate,
+      status: 'running',
+    },
+  })
+
+  const wordsPerChapter = loaded.input.project.wordsPerChapter ?? 3000
+  // 单场大约是整章的三分之一，按 words×6 给足（含 reasoning 额度）
+  const maxTokens = Math.ceil((wordsPerChapter / 3) * 6)
+
+  let content: string
+  let usage: RewriteSceneResult['usage']
+  try {
+    const r = await chat({
+      apiKey: opts.apiKey,
+      model,
+      messages,
+      maxTokens,
+      ...(opts.fetchImpl === undefined ? {} : { fetchImpl: opts.fetchImpl }),
+    })
+    content = r.content
+    usage = r.usage
+  } catch (e) {
+    const msg = e instanceof LlmError ? `${e.code}: ${e.message}` : (e as Error).message
+    await db.generationRun.update({
+      where: { id: runId },
+      data: { status: 'failed', errorMessage: msg, finishedAt: new Date() },
+    })
+    throw e
+  }
+
+  // 模型偶尔仍会带围栏或「第一场」标题，去掉它们，否则正文里会出现假标题
+  const text = content
+    .replace(/^```[a-z]*\r?\n?/i, '')
+    .replace(/```\s*$/, '')
+    .replace(/^第[一二三四五六七八九十百\d]+场[^\n]*\r?\n+/, '')
+    .trim()
+
+  const paragraphs = toSegments(text)
+  if (paragraphs.length === 0) {
+    await db.generationRun.update({
+      where: { id: runId },
+      data: { status: 'failed', errorMessage: 'EMPTY: 重写结果为空', finishedAt: new Date() },
+    })
+    throw new Error('EMPTY: 重写结果为空')
+  }
+
+  const taken = await collectChapterSegIds(root, opts.chapterNo)
+  const segments = paragraphs.map((t) => {
+    const segId = newSegId(Math.random, taken)
+    taken.add(segId)
+    return { segId, text: t }
+  })
+
+  const version = (latest ?? 0) + 1
+  const scene: SceneFile = { sceneNo: opts.sceneNo, version, segments }
+  const { relPath } = await writeSceneFile(root, scene, opts.chapterNo)
+
+  await db.draftSegment.createMany({
+    data: segments.map((s, seq) => ({
+      id: `seg_${opts.chapterNo}_${opts.sceneNo}_${version}_${s.segId}`,
+      projectId: project.id,
+      chapterNo: opts.chapterNo,
+      sceneNo: opts.sceneNo,
+      segId: s.segId,
+      seq,
+      filePath: relPath,
+      contentHash: hashContent(s.text),
+      wordCount: countWords(s.text),
+      status: 'candidate',
+      sourceRunId: runId,
+    })),
+  })
+
+  const wordCount = segments.reduce((n, s) => n + countWords(s.text), 0)
+  await db.generationRun.update({
+    where: { id: runId },
+    data: {
+      status: 'success',
+      finishedAt: new Date(),
+      usageInput: usage.input,
+      usageOutput: usage.output + usage.reasoning,
+      cacheHitTokens: usage.cacheHit,
+      commitState: 'done',
+    },
+  })
+
+  await commitAll(root, `feat(scene): ch${opts.chapterNo} s${opts.sceneNo} v${version} 整场重写`)
+
+  return {
+    runId,
+    chapterNo: opts.chapterNo,
+    scene: {
+      sceneNo: opts.sceneNo,
+      version,
+      relPath,
+      wordCount,
+      segCount: segments.length,
+    },
+    usage,
   }
 }
