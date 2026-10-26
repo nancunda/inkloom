@@ -6,6 +6,7 @@ import { cors } from 'hono/cors'
 import { HTTPException } from 'hono/http-exception'
 import { logger } from 'hono/logger'
 import { type ActionDeps, createActions } from './routes/actions.js'
+import { checkpoints } from './routes/checkpoints.js'
 import { elements } from './routes/elements.js'
 import { toApiError } from './routes/errors.js'
 import { read } from './routes/read.js'
@@ -28,6 +29,7 @@ export function createApp(deps: ActionDeps = {}): Hono {
 
   app.route('/api', read)
   app.route('/api', elements)
+  app.route('/api', checkpoints)
   app.route('/api', settings)
   app.route('/api', createActions(deps))
 

@@ -7,6 +7,7 @@ import type {
   ChapterDetail,
   ChapterText,
   CharacterRow,
+  CheckpointRow,
   DiffResult,
   FinalizeResult,
   GenerateJob,
@@ -44,6 +45,51 @@ export function useJobs() {
     // 有运行中的任务才轮询；全部结束就停，不白耗请求
     refetchInterval: (query) =>
       (query.state.data?.jobs ?? []).some((j) => j.status === 'running') ? 2000 : false,
+  })
+}
+
+export function useCheckpoints() {
+  return useQuery({
+    queryKey: ['checkpoints'],
+    queryFn: () => api<{ checkpoints: CheckpointRow[] }>('/checkpoints'),
+  })
+}
+
+/**
+ * 拍一个检查点：先把当前文件全部提交，再记录每个要素历史文件的行数。
+ * ★ 行数必须在 commit 之后取（createCheckpoint 内部保证），否则回退时
+ *   文件回到这一刻、要素历史却多留了几条，状态会对不上。
+ */
+export function useCreateCheckpoint() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (label: string) => post<{ checkpoint: CheckpointRow }>('/checkpoints', { label }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['checkpoints'] })
+      void qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+}
+
+/**
+ * 回到某个检查点：恢复文件 + 截断要素历史 + 重建索引。
+ * ★ 成功后把整棵树都 invalidate：回退可能动了章节、角色、世界、线索——
+ *   只清某一个 query 的话，界面上会留一半旧数据。
+ */
+export function useRollbackCheckpoint() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      post<{
+        ok: true
+        restoredPaths: string[]
+        truncatedRevisionFiles: string[]
+        warnings: string[]
+        reindex: { characters: number; chapters: number; warnings: string[] }
+      }>(`/checkpoints/${encodeURIComponent(id)}/rollback`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries()
+    },
   })
 }
 

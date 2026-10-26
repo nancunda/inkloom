@@ -281,6 +281,57 @@ describe('POST 接口', () => {
   })
 })
 
+describe('时间机器', () => {
+  it('拍检查点 → 改角色 → 回退：文件与索引都回到那一刻', async () => {
+    const ckRes = await appWithLlm().request('/api/checkpoints', {
+      method: 'POST',
+      body: JSON.stringify({ label: '改名之前' }),
+    })
+    expect(ckRes.status).toBe(200)
+    const ck = (await ckRes.json()) as { checkpoint: { id: string; shortRef: string | null } }
+    expect(ck.checkpoint.shortRef).not.toBeNull()
+
+    // 改角色名（走与界面相同的 CAS 写入）
+    const before = (await (
+      await appWithLlm().request('/api/elements?path=characters%2Findex.json')
+    ).json()) as { data: { name: string }[]; hash: string }
+    const put = await appWithLlm().request('/api/elements', {
+      method: 'PUT',
+      body: JSON.stringify({
+        relPath: 'characters/index.json',
+        entityType: 'character',
+        entityId: 'c1',
+        expectedHash: before.hash,
+        payload: { ...before.data[0], name: '改名后的林岚' },
+      }),
+    })
+    expect(put.status).toBe(200)
+
+    const rb = await appWithLlm().request(`/api/checkpoints/${ck.checkpoint.id}/rollback`, {
+      method: 'POST',
+      body: '{}',
+    })
+    expect(rb.status).toBe(200)
+    const j = (await rb.json()) as { restoredPaths: string[]; reindex: { characters: number } }
+    // 恢复的是顶层条目（git checkout 按目录整棵还原）
+    expect(j.restoredPaths).toContain('characters')
+    expect(j.reindex.characters).toBe(1)
+
+    // 文件与索引都回到「改名之前」
+    const after = (await (
+      await appWithLlm().request('/api/elements?path=characters%2Findex.json')
+    ).json()) as { data: { name: string }[] }
+    expect(after.data[0]?.name).toBe('林岚')
+
+    // 回退本身也留痕：列表里多出一条「回退到…」
+    const list = (await (await appWithLlm().request('/api/checkpoints')).json()) as {
+      checkpoints: { label: string }[]
+    }
+    expect(list.checkpoints).toHaveLength(2)
+    expect(list.checkpoints[0]?.label).toContain('回退到')
+  })
+})
+
 describe('未定义的接口', () => {
   it('→ 404 且带 code', async () => {
     const r = await appWithLlm().request('/api/nope')

@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useBook, useOverview } from '../api/hooks'
 import { type Command, CommandPalette } from '../components/CommandPalette'
+import { TimeMachine } from '../components/TimeMachine'
 import { STATUS_LABEL, STATUS_MARK } from '../lib/status'
 import { AssetsPage } from '../pages/AssetsPage'
 import { CastPage } from '../pages/CastPage'
@@ -36,6 +37,7 @@ export function AppShell() {
   const setPalette = useSessionStore((s) => s.setPalette)
   const setChapter = useSessionStore((s) => s.setChapter)
   const setFocus = useSessionStore((s) => s.setFocus)
+  const [tmOpen, setTmOpen] = useState(false)
 
   // Ctrl+K 命令面板 / Ctrl+Shift+E 专注模式（全局）
   useEffect(() => {
@@ -144,10 +146,15 @@ export function AppShell() {
               </button>
             ))}
           </div>
-          <div className="border-t border-neutral-200 p-2 text-[11px] text-neutral-400">
-            时间机器
-            <span className="ml-1 text-neutral-300">（CLI: checkpoint / rollback）</span>
-          </div>
+          <button
+            type="button"
+            onClick={() => setTmOpen(true)}
+            className="w-full border-t border-neutral-200 px-2.5 py-2 text-left text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+            title="检查点与回退（时间机器）"
+          >
+            ⏱ 时间机器
+            <span className="ml-1 text-[10px] text-neutral-400">检查点 / 回退</span>
+          </button>
         </nav>
 
         {/* 主工作区 */}
@@ -178,6 +185,7 @@ export function AppShell() {
       </footer>
 
       <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />
+      {tmOpen && <TimeMachine onClose={() => setTmOpen(false)} />}
     </div>
   )
 }

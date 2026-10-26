@@ -257,6 +257,16 @@ export interface OverviewChapter {
   beatType: string
 }
 
+export interface CheckpointRow {
+  id: string
+  label: string
+  createdAt: string
+  gitRef: string | null
+  shortRef: string | null
+  /** 这个检查点记录了多少个要素历史文件的位置 */
+  revisions: number
+}
+
 export interface StoryArcRow {
   id: string
   name: string
