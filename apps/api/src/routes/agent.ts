@@ -4,6 +4,7 @@ import { streamSSE } from 'hono/streaming'
 import {
   type AgentStreamEvent,
   getAgentRun,
+  resumeAgentRun,
   reviewAgentRun,
   sendAgentMessage,
   startAgentRun,
@@ -12,7 +13,7 @@ import {
 } from '../agent/run-service.js'
 
 const DEFAULT_GOAL =
-  '从零搭建这本书：世界观、力量体系、人物、关系、卷、蓝图，然后写第 1 章并生成主角形象图。每个阶段结束都停下来等我审阅。'
+  '从零开始搭这本书：先给我一份计划（世界、人物、故事、第 1 章正文），我批准后你按计划逐个任务执行，需要我拍板的地方停下来。'
 
 export const agentRoutes = new Hono()
 
@@ -54,6 +55,11 @@ agentRoutes.post('/agent/runs/:id/messages', async (c) => {
   const text = typeof body?.text === 'string' ? body.text.trim() : ''
   if (text.length === 0) throw new InkloomError('INVALID_INPUT', '消息不能为空')
   return c.json({ run: sendAgentMessage(c.req.param('id'), text) })
+})
+
+/** 预算耗尽/失败后：作者点「继续执行」，恢复被标成 aborted 的计划 */
+agentRoutes.post('/agent/runs/:id/resume', (c) => {
+  return c.json({ run: resumeAgentRun(c.req.param('id')) })
 })
 
 agentRoutes.get('/agent/runs/:id/events', (c) => {

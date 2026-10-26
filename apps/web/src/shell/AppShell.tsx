@@ -6,6 +6,7 @@ import { STATUS_LABEL, STATUS_MARK } from '../lib/status'
 import { AgentPage } from '../pages/AgentPage'
 import { AssetsPage } from '../pages/AssetsPage'
 import { CastPage } from '../pages/CastPage'
+import { LibraryDialog } from '../pages/LibraryDialog'
 import { OverviewPage } from '../pages/OverviewPage'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StoryPage } from '../pages/StoryPage'
@@ -32,7 +33,8 @@ const MODULES: { id: ModuleId; label: string; icon: string }[] = [
  */
 export function AppShell() {
   const { data: book } = useBook()
-  const { data: overview } = useOverview()
+  // 书还没取到时不要请求 /overview：空库/切书瞬间它只会以 404 刷屏
+  const { data: overview } = useOverview(book !== undefined)
   const module = useSessionStore((s) => s.module)
   const setModule = useSessionStore((s) => s.setModule)
   const palette = useSessionStore((s) => s.palette)
@@ -40,6 +42,7 @@ export function AppShell() {
   const setChapter = useSessionStore((s) => s.setChapter)
   const setFocus = useSessionStore((s) => s.setFocus)
   const [tmOpen, setTmOpen] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(false)
 
   // Ctrl+K 命令面板 / Ctrl+Shift+E 专注模式（全局）
   useEffect(() => {
@@ -93,8 +96,18 @@ export function AppShell() {
       <header className="flex h-12 shrink-0 items-center gap-4 border-b border-neutral-200 bg-white px-5">
         <span className="text-[15px] font-semibold tracking-tight text-neutral-900">inkloom</span>
         <span className="h-4 w-px bg-neutral-200" />
-        <span className="text-sm font-medium text-neutral-800">{book?.name ?? '—'}</span>
-        <span className="text-xs text-neutral-400">{book?.genre ?? ''}</span>
+        <button
+          type="button"
+          onClick={() => setLibraryOpen(true)}
+          title="切换书（书库）"
+          className="group flex items-baseline gap-2 rounded px-1 py-0.5 hover:bg-neutral-100"
+        >
+          <span className="text-sm font-medium text-neutral-800">{book?.name ?? '—'}</span>
+          <span className="text-xs text-neutral-400">{book?.genre ?? ''}</span>
+          <span className="text-[10px] text-neutral-400 opacity-0 group-hover:opacity-100">
+            切换
+          </span>
+        </button>
         <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
           v0.0.1
         </span>
@@ -189,6 +202,7 @@ export function AppShell() {
 
       <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />
       {tmOpen && <TimeMachine onClose={() => setTmOpen(false)} />}
+      <LibraryDialog open={libraryOpen} onClose={() => setLibraryOpen(false)} />
     </div>
   )
 }

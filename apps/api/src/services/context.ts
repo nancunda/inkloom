@@ -34,9 +34,27 @@ export async function setContext(ctx: AppContext): Promise<void> {
 
 export function getContext(): AppContext {
   if (current === null) {
-    throw new InkloomError('NOT_FOUND', '尚未打开任何书，请先调用 POST /api/books/open')
+    throw new InkloomError('NOT_FOUND', '尚未打开任何书，请先调用 POST /api/library/open')
   }
   return current
+}
+
+/** 不抛错的只读访问器：书库页与空态判断用 */
+export function peekContext(): AppContext | null {
+  return current
+}
+
+/**
+ * 关闭当前书：先清指针再断开索引连接，返回旧 context。
+ *
+ * ★ 断开连接必须在这里做：Windows 上被句柄钉住的 index.sqlite 删不掉，
+ *   切书时若只切指针，旧库会一直活着（EBUSY）。
+ */
+export async function closeContext(): Promise<AppContext | null> {
+  const prev = current
+  current = null
+  if (prev !== null) await prev.db.$disconnect()
+  return prev
 }
 
 export function clearContext(): void {

@@ -1,14 +1,12 @@
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { resolve } from 'node:path'
 import { serve } from '@hono/node-server'
 import { createApp } from './app.js'
-import { commitAll, initRepo, isRepo } from './git/runner.js'
-import { openBookIndexDb } from './index-db/open-book.js'
-import { setContext } from './services/context.js'
-import { ensureBookGitignore } from './storage/book-gitignore.js'
-import { openProject } from './storage/project.js'
-import { reindex } from './storage/reindex.js'
+import { readLastBook, resolveLibraryRoot } from './library/library.js'
+import { openBookAt } from './library/open-book.js'
+import { closeContext, peekContext } from './services/context.js'
 
 export interface RunningServer {
   /** 实际监听的端口（传 0 时由系统分配） */
@@ -19,62 +17,47 @@ export interface RunningServer {
 }
 
 /**
- * 启动 HTTP 服务（单书模式，Ruling 45）。
+ * 启动 HTTP 服务。
  *
- * ★ 单书：整进程只设一次 context。切换书要重启——
- *   换来的是不用改造 12 个 service 的签名。
- * ★ 返回句柄而不是 void：验收脚本要能关掉它，
- *   否则进程挂在那里不退。port 传 0 则随机分配，不撞端口。
+ * ★ 书库模式：`libraryRoot` 下每个一级目录是一本书；启动时可以显式给
+ *   `bookDir`（兼容 INKLOOM_BOOK），否则恢复上次打开的书；都没有就空态，
+ *   由前端书库页选择/新建。
+ * ★ 单书 context 仍然保留：同一时刻只打开一本，切书走 /api/library/open。
+ * ★ 返回句柄而不是 void：验收脚本要能关掉它，否则进程挂在那里不退。
  */
 export async function startServer(opts: {
-  bookDir: string
+  libraryRoot?: string
+  bookDir?: string
   port?: number
   /** 只在真需要局域网访问时显式传；默认仅本机（spec §9.9） */
   hostname?: string
 }): Promise<RunningServer> {
-  const bookDir = resolve(opts.bookDir)
-  if (!existsSync(bookDir)) {
-    throw new Error(`书籍目录不存在：${bookDir}`)
+  const libraryRoot = resolve(opts.libraryRoot ?? resolveLibraryRoot())
+  await mkdir(libraryRoot, { recursive: true })
+
+  // 显式 bookDir 优先；否则恢复上次打开的书（目录还在才恢复）
+  let target: string | null = null
+  if (opts.bookDir !== undefined && opts.bookDir.trim().length > 0) {
+    target = resolve(opts.bookDir)
+    if (!existsSync(target)) throw new Error(`书籍目录不存在：${target}`)
+  } else {
+    const last = await readLastBook()
+    if (last !== null && existsSync(last)) target = last
   }
 
-  const opened = await openProject(bookDir)
-  const db = await openBookIndexDb(bookDir)
-  // ★ 必须在 setContext 之前数：setContext 会 upsert 一行 Project（外键需要），
-  //   数晚了就永远不为空，下面的重建永远不会触发。
-  const indexWasEmpty = (await db.project.count()) === 0
-  await setContext({ root: bookDir, db, project: opened.project })
-
-  // ★ 索引为空就从文件重建。index.sqlite 在 .gitignore 里（它本就该是可
-  //   丢弃的），新 clone 第一次启动时表能建出来但一条数据也没有，
-  //   界面会像那样显示：五章全是「计划中」、场景一个都看不见。
-  //   「索引可丢弃」的前提是随时能重建——否则它就不是缓存，是命门。
-  if (indexWasEmpty) {
-    const report = await reindex(bookDir, db)
-    console.log(`  ✓ 索引为空，已从文件重建（${report.chapters} 章 / ${report.segments} 段）`)
-    for (const w of report.warnings) console.log(`    ⚠ ${w}`)
-  }
-
-  // ★ 仓库里的示例书不带 .git（嵌套仓库不能入库），
-  //   而 accept / finalize 都会 commit——不补这一下，
-  //   新 clone 的用户第一次点「接受」就吃 GIT_FAILED。
-  const freshRepo = !(await isRepo(bookDir))
-  if (freshRepo) {
-    await initRepo(bookDir)
-  }
-  // ★ 索引是派生层：赶紧让它离开版本历史（老书只停止跟踪，不重写历史）
-  const hygiene = await ensureBookGitignore(bookDir)
-  if (hygiene.untracked.length > 0) {
-    console.log(`  ✓ 索引已移出版本历史（${hygiene.untracked.length} 个文件，下次写入时提交）`)
-  }
-  if (freshRepo) {
-    await commitAll(bookDir, 'chore: 初始化书籍仓库（首次启动）')
-    console.log('  ✓ 已为这本书初始化 Git 仓库')
+  if (target !== null) {
+    try {
+      const opened = await openBookAt(target)
+      for (const note of opened.notes) console.log(`  ✓ ${note}`)
+    } catch (e) {
+      // 上次的书坏了/被删了：降级到空态，不要因此起不来
+      console.warn(`  ⚠ 打开上次的书失败，进入书库空态：${(e as Error).message}`)
+    }
   }
 
   const wanted = opts.port ?? 8787
   // ★ 默认 127.0.0.1，不是 0.0.0.0（spec §9.9）：API 没有鉴权，
   //   绑全网卡意味着同一个咖啡馆 WiFi 里的人都能读写你的书。
-  //   @hono/node-server 不加 hostname 时恰好会绑 0.0.0.0——必须显式传。
   const hostname = opts.hostname ?? '127.0.0.1'
   const server = serve({ fetch: createApp().fetch, port: wanted, hostname })
   if (!server.listening) {
@@ -83,8 +66,14 @@ export async function startServer(opts: {
   const addr = server.address() as AddressInfo
   const port = addr.port
 
+  const current = peekContext()
   console.log(`✓ inkloom API  http://${hostname}:${port}`)
-  console.log(`  书          ${opened.project.name}（${bookDir}）`)
+  console.log(`  书库        ${libraryRoot}`)
+  console.log(
+    current === null
+      ? '  当前书      未打开（浏览器里从书库选择或新建）'
+      : `  当前书      ${current.project.name}（${current.root}）`,
+  )
   if (hostname !== '127.0.0.1' && hostname !== 'localhost') {
     console.log(`  ⚠ 监听 ${hostname}，局域网内可访问（无鉴权，谨慎使用）`)
   }
@@ -96,23 +85,19 @@ export async function startServer(opts: {
       await new Promise<void>((ok, fail) =>
         server.close((e) => (e === undefined || e === null ? ok() : fail(e))),
       )
-      // ★ 连接也是 startServer 开的，close 时必须一起还回去：
-      //   只关 HTTP 不关库的话，Windows 上那本书的 index.sqlite 被句柄
-      //   钉着删不掉（EBUSY），反复启停还会漏连接。
-      await db.$disconnect()
+      // 连接也是这里打开的，close 时必须一起还回去：
+      // Windows 上被句柄钉住的 index.sqlite 删不掉（EBUSY）。
+      await closeContext()
     },
   }
 }
 
 // 直接用 `pnpm api` 启动时才跑（被 import 时不跑）
 if (process.argv[1]?.replace(/\\/g, '/').endsWith('server.ts') === true) {
-  const book = process.env['INKLOOM_BOOK']
-  if (book === undefined) {
-    console.error('缺少 INKLOOM_BOOK=<书籍目录>，例如：INKLOOM_BOOK=fixtures/qixia pnpm api')
-    process.exit(1)
-  }
+  const book = process.env['INKLOOM_BOOK']?.trim()
   await startServer({
-    bookDir: book,
+    libraryRoot: resolveLibraryRoot(),
+    ...(book === undefined || book.length === 0 ? {} : { bookDir: book }),
     port: Number(process.env['PORT'] ?? 8787),
     ...(process.env['HOST'] === undefined ? {} : { hostname: process.env['HOST'] }),
   })

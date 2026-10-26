@@ -10,6 +10,7 @@ import { agentRoutes } from './routes/agent.js'
 import { checkpoints } from './routes/checkpoints.js'
 import { elements } from './routes/elements.js'
 import { toApiError } from './routes/errors.js'
+import { libraryRoutes } from './routes/library.js'
 import { read } from './routes/read.js'
 import { settings } from './routes/settings.js'
 
@@ -29,6 +30,7 @@ export function createApp(deps: ActionDeps = {}): Hono {
   app.get('/api/health', (c) => c.json({ ok: true }))
 
   app.route('/api', read)
+  app.route('/api', libraryRoutes)
   app.route('/api', elements)
   app.route('/api', checkpoints)
   app.route('/api', agentRoutes)

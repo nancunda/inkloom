@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { FetchLike } from '../llm/types.js'
+import { getContext, peekContext } from './context.js'
 import { type GenerateChapterResult, generateChapter } from './generate-service.js'
 
 export interface JobSnapshot {
   id: string
   kind: 'generate'
+  /** 归属：任务列表不能跨书显示 */
+  root: string
   status: 'running' | 'done' | 'failed'
   chapterNo: number
   startedAt: string
@@ -34,9 +37,11 @@ export interface SubmitGenerateOptions {
 
 export function submitGenerate(opts: SubmitGenerateOptions): string {
   const id = randomUUID()
+  const { root } = getContext()
   const snap: JobSnapshot = {
     id,
     kind: 'generate',
+    root,
     status: 'running',
     chapterNo: opts.chapterNo,
     startedAt: new Date().toISOString(),
@@ -69,12 +74,25 @@ export function submitGenerate(opts: SubmitGenerateOptions): string {
 }
 
 export function getJob(id: string): JobSnapshot | undefined {
-  return jobs.get(id)
+  const job = jobs.get(id)
+  if (job === undefined) return undefined
+  return job.root === peekContext()?.root ? job : undefined
 }
 
 /** 最近的任务（新→旧）；任务中心用它渲染列表 */
 export function listJobs(limit = 20): JobSnapshot[] {
-  return [...jobs.values()].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)).slice(0, limit)
+  const root = peekContext()?.root
+  return [...jobs.values()]
+    .filter((j) => j.root === root)
+    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+    .slice(0, limit)
+}
+
+/** 切书前检查：还有 running 的生成任务时不允许切 */
+export function runningJobCount(): number {
+  let n = 0
+  for (const j of jobs.values()) if (j.status === 'running') n += 1
+  return n
 }
 
 /** 测试用：避免用例之间互相污染 */

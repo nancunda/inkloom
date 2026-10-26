@@ -361,12 +361,51 @@ export interface HealthReport {
 
 export type AgentRunStatus = 'running' | 'waiting_review' | 'done' | 'failed' | 'stopped'
 
-export type AgentGateStage = 'world' | 'cast' | 'arcs' | 'draft'
+export type AgentGate =
+  | {
+      kind: 'plan'
+      planId: string
+      title: string
+      summary: string
+      artifacts: string[]
+    }
+  | {
+      kind: 'task'
+      planId: string
+      taskId: string
+      title: string
+      summary: string
+      artifacts: string[]
+    }
 
-export interface AgentGate {
-  stage: AgentGateStage
-  summary: string
+export type AgentPlanStatus = 'drafting' | 'awaiting_approval' | 'approved' | 'done' | 'aborted'
+export type AgentTaskStatus = 'todo' | 'doing' | 'done' | 'blocked'
+export type AgentSkill = 'world' | 'characters' | 'story' | 'chapter' | 'review' | 'free'
+
+export interface AgentPlanTask {
+  id: string
+  title: string
+  skill: AgentSkill
+  brief: string
+  review: 'required' | 'none'
+  status: AgentTaskStatus
   artifacts: string[]
+  feedback: string | null
+  summary: string | null
+  reviewed: boolean
+}
+
+export interface AgentPlan {
+  version: 1
+  id: string
+  title: string
+  goal: string
+  status: AgentPlanStatus
+  summary: string | null
+  feedback: string | null
+  createdAt: string
+  updatedAt: string
+  tasks: AgentPlanTask[]
 }
 
 export interface AgentRunBudget {
@@ -409,6 +448,7 @@ export type AgentEvent =
       decision: 'approve' | 'revise'
       feedback: string | null
     }
+  | { seq: number; at: string; type: 'plan.updated'; plan: AgentPlan }
   | { seq: number; at: string; type: 'run.finished' }
   | { seq: number; at: string; type: 'run.failed'; error: string }
   | { seq: number; at: string; type: 'run.stopped' }
@@ -420,9 +460,34 @@ export interface AgentRun {
   status: AgentRunStatus
   startedAt: string
   finishedAt: string | null
+  planId: string | null
   gate: AgentGate | null
   error: string | null
   budget: AgentRunBudget
   tokens: number
   events: AgentEvent[]
+}
+
+// ---------------------------------------------------------------------------
+// 书库：一个文件夹下每本书是一个一级目录
+// ---------------------------------------------------------------------------
+export interface LibraryBook {
+  folder: string
+  rootPath: string
+  name: string
+  genre: string
+  totalChapters: number | null
+  updatedAt: string
+}
+
+export interface LibraryCurrent {
+  folder: string
+  rootPath: string
+  name: string
+}
+
+export interface LibraryData {
+  libraryRoot: string
+  current: LibraryCurrent | null
+  books: LibraryBook[]
 }

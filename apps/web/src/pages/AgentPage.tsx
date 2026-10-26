@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, post } from '../api/client'
-import type { AgentEvent, AgentGate, AgentRun, AgentRunStatus } from '../api/types'
+import type {
+  AgentEvent,
+  AgentGate,
+  AgentPlan,
+  AgentPlanTask,
+  AgentRun,
+  AgentRunStatus,
+  AgentSkill,
+} from '../api/types'
 import { useSessionStore } from '../stores/session'
 
 const RUN_KEY = 'inkloom.agent.runId'
@@ -18,6 +26,7 @@ type Block =
       summary: string
     }
   | { kind: 'gate'; id: string; gate: AgentGate; resolved: 'approve' | 'revise' | null }
+  | { kind: 'plan'; id: string; plan: AgentPlan }
   | { kind: 'status'; id: string; text: string; tone: 'info' | 'error' }
 
 const TOOL_LABEL: Record<string, string> = {
@@ -25,41 +34,43 @@ const TOOL_LABEL: Record<string, string> = {
   read_element: '读取要素',
   write_element: '写入要素',
   write_blueprint: '写入蓝图',
+  write_plan: '写计划',
+  update_plan: '改计划',
+  update_task: '更新任务',
   request_review: '请求审阅',
   generate_chapter: '生成章节',
   generate_portrait: '生成形象图',
 }
 
-const STAGE_LABEL: Record<AgentGate['stage'], string> = {
+const SKILL_LABEL: Record<AgentSkill, string> = {
   world: '世界',
-  cast: '人物',
-  arcs: '故事',
-  draft: '开篇',
+  characters: '人物',
+  story: '故事',
+  chapter: '正文',
+  review: '审阅',
+  free: '自由',
 }
 
-const STAGES: { id: AgentGate['stage']; label: string; hint: string }[] = [
-  { id: 'world', label: '世界', hint: '规则 · 力量体系 · 地点 · 路线' },
-  { id: 'cast', label: '人物', hint: '角色 · 关系 · 签名' },
-  { id: 'arcs', label: '故事', hint: '卷 · 章节蓝图' },
-  { id: 'draft', label: '开篇', hint: '第 1 章正文 · 主角形象图' },
-]
+const PLAN_STATUS_LABEL: Record<AgentPlan['status'], string> = {
+  drafting: '规划中',
+  awaiting_approval: '待批准',
+  approved: '执行中',
+  done: '已完成',
+  aborted: '已中止',
+}
 
-type StageState = 'todo' | 'working' | 'waiting' | 'done' | 'revise'
-
-const STAGE_STATUS: Record<StageState, string> = {
-  todo: '未开始',
-  working: '进行中',
-  waiting: '等你审阅',
+const TASK_STATUS_LABEL: Record<AgentPlanTask['status'], string> = {
+  todo: '待做',
+  doing: '进行中',
   done: '完成',
-  revise: '已打回',
+  blocked: '卡住',
 }
 
-const STAGE_TONE: Record<StageState, string> = {
+const TASK_TONE: Record<AgentPlanTask['status'], string> = {
   todo: 'text-neutral-400',
-  working: 'text-amber-700',
-  waiting: 'text-indigo-700',
+  doing: 'text-amber-700',
   done: 'text-emerald-700',
-  revise: 'text-rose-700',
+  blocked: 'text-rose-700',
 }
 
 const STATUS_LABEL: Record<AgentRunStatus, string> = {
@@ -79,7 +90,7 @@ const STATUS_TONE: Record<AgentRunStatus, string> = {
 }
 
 const DEFAULT_GOAL =
-  '从零搭建这本书：世界观、力量体系、人物、关系、卷、蓝图，然后写第 1 章并生成主角形象图。每个阶段结束都停下来等我审阅。'
+  '从零开始搭这本书：先给我一份计划（世界、人物、故事、第 1 章正文），我批准后你按计划逐个任务执行，需要我拍板的地方停下来。'
 
 function isRec(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -89,12 +100,20 @@ function summarizeArgs(name: string, args: unknown): string {
   if (!isRec(args)) return ''
   const parts: string[] = []
   if (typeof args['path'] === 'string') parts.push(args['path'])
-  if (typeof args['stage'] === 'string')
-    parts.push(`阶段 ${STAGE_LABEL[args['stage'] as AgentGate['stage']] ?? args['stage']}`)
+  if (typeof args['kind'] === 'string') {
+    const kind = args['kind'] === 'plan' ? '计划' : '任务'
+    const taskId = typeof args['taskId'] === 'string' ? ` · ${args['taskId']}` : ''
+    parts.push(`${kind}审阅${taskId}`)
+  } else if (typeof args['taskId'] === 'string') {
+    parts.push(`任务 ${args['taskId']}`)
+  }
+  if (typeof args['title'] === 'string' && name === 'write_plan') parts.push(args['title'])
+  if (typeof args['status'] === 'string' && name === 'update_task') parts.push(args['status'])
   if (typeof args['chapterNo'] === 'number') parts.push(`第 ${args['chapterNo']} 章`)
   if (typeof args['characterId'] === 'string') parts.push(args['characterId'])
-  if (typeof args['entityId'] === 'string' && typeof args['path'] !== 'string')
+  if (typeof args['entityId'] === 'string' && typeof args['path'] !== 'string') {
     parts.push(`id ${args['entityId']}`)
+  }
   if (parts.length === 0) return JSON.stringify(args).slice(0, 140)
   return parts.join(' · ') + (name === 'write_element' ? ' · 整表写入' : '')
 }
@@ -158,6 +177,8 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
       next[idx] = { ...cur, status: ev.isError ? 'error' : 'ok', summary: ev.summary }
       return next
     }
+    case 'plan.updated':
+      return [...blocks, { kind: 'plan', id: `p${ev.seq}`, plan: ev.plan }]
     case 'gate.waiting':
       return [...blocks, { kind: 'gate', id: `g${ev.seq}`, gate: ev.gate, resolved: null }]
     case 'gate.resolved': {
@@ -172,18 +193,13 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
       const next = [...blocks]
       const pending = idx >= 0 ? (next[idx] as Extract<Block, { kind: 'gate' }>) : null
       if (pending !== null) next[idx] = { ...pending, resolved: ev.decision }
-      const finishedDraft = pending?.gate.stage === 'draft' && ev.decision === 'approve'
-      next.push({
-        kind: 'status',
-        id: `s${ev.seq}`,
-        text:
-          ev.decision === 'revise'
-            ? `作者打回：${ev.feedback ?? ''}`
-            : finishedDraft
-              ? '作者已通过开篇，本轮完成'
-              : '作者已通过，继续下一阶段',
-        tone: 'info',
-      })
+      const text =
+        ev.decision === 'revise'
+          ? `已打回：${ev.feedback ?? ''}`
+          : pending?.gate.kind === 'plan'
+            ? '计划已批准，开始执行任务'
+            : '任务已通过，继续下一个'
+      next.push({ kind: 'status', id: `s${ev.seq}`, text, tone: 'info' })
       return next
     }
     case 'run.failed':
@@ -195,6 +211,14 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
   }
 }
 
+function latestPlan(blocks: Block[]): AgentPlan | null {
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const b = blocks[i]
+    if (b?.kind === 'plan') return b.plan
+  }
+  return null
+}
+
 function moduleFor(artifact: string): 'world' | 'cast' | 'story' | 'write' | 'assets' | null {
   if (artifact.startsWith('world/')) return 'world'
   if (artifact.startsWith('characters/')) return 'cast'
@@ -204,41 +228,112 @@ function moduleFor(artifact: string): 'world' | 'cast' | 'story' | 'write' | 'as
   return null
 }
 
-function stageStates(
-  blocks: Block[],
-  run: AgentRun | null,
-): Record<AgentGate['stage'], StageState> {
-  const states: Record<AgentGate['stage'], StageState> = {
-    world: 'todo',
-    cast: 'todo',
-    arcs: 'todo',
-    draft: 'todo',
-  }
-  for (const b of blocks) {
-    if (b.kind !== 'gate') continue
-    if (b.resolved === 'approve') states[b.gate.stage] = 'done'
-    else if (b.resolved === 'revise') states[b.gate.stage] = 'revise'
-    else states[b.gate.stage] = 'waiting'
-  }
-  if (run?.status === 'running') {
-    const next = STAGES.find((s) => states[s.id] !== 'done')
-    if (next !== undefined && states[next.id] === 'todo') states[next.id] = 'working'
-  }
-  return states
-}
-
-function currentHint(run: AgentRun | null, states: Record<AgentGate['stage'], StageState>): string {
+function currentHint(run: AgentRun | null, plan: AgentPlan | null): string {
   if (run === null) return '还没有开始'
   if (run.status === 'waiting_review' && run.gate !== null) {
-    return `等你审阅「${STAGE_LABEL[run.gate.stage]}」：可以点门禁卡通过，或直接发消息让它改`
+    return run.gate.kind === 'plan'
+      ? `等你批准计划「${run.gate.title}」：通过后我会按任务自动推进`
+      : `等你审阅任务「${run.gate.title}」：可以在卡上通过，或直接发消息让它改`
   }
   if (run.status === 'running') {
-    const working = STAGES.find((s) => states[s.id] === 'working')
-    return working === undefined ? '正在处理你的消息' : `正在做「${working.label}」`
+    if (plan === null) return '正在读全书、制定计划'
+    const doing = plan.tasks.find((t) => t.status === 'doing')
+    return doing === undefined ? '正在处理你的消息' : `正在做「${doing.title}」`
   }
-  if (run.status === 'done') return '本轮完成，可以继续聊下一件事'
-  if (run.status === 'failed') return '本轮失败，开个新会话'
-  return '已停止，可以继续聊或开新会话'
+  if (plan !== null && plan.status === 'done') return '计划完成，可以继续聊下一件事'
+  if (run.status === 'done') return '本轮完成；如果计划还有任务，可以点「继续执行」'
+  if (run.status === 'failed') return '本轮失败；可以「继续执行」或开新会话'
+  return '已停止；可以继续聊，或点「继续执行」'
+}
+
+function Plancard({
+  plan,
+  canResume,
+  onResume,
+}: {
+  plan: AgentPlan | null
+  canResume: boolean
+  onResume: () => void
+}) {
+  if (plan === null) {
+    return (
+      <p className="px-1 text-[11px] leading-5 text-neutral-400">
+        还没有计划。Agent 会先 read_book，再写一份计划请你批准；批准前不会动书里的文件。
+      </p>
+    )
+  }
+  const done = plan.tasks.filter((t) => t.status === 'done').length
+  return (
+    <div>
+      <div className="rounded border border-neutral-200 bg-white px-2.5 py-2">
+        <div className="flex items-baseline gap-1.5">
+          <span className="truncate text-[12px] font-medium text-neutral-800">{plan.title}</span>
+          <span className="ml-auto shrink-0 text-[10px] text-neutral-400">
+            {done}/{plan.tasks.length}
+          </span>
+        </div>
+        <p className="mt-0.5 text-[10px] text-neutral-500">
+          {PLAN_STATUS_LABEL[plan.status]}
+          {plan.status === 'awaiting_approval' ? ' · 等你批准' : ''}
+        </p>
+        {plan.feedback !== null && (
+          <p className="mt-1 rounded bg-rose-50 px-1.5 py-1 text-[10px] leading-4 text-rose-700">
+            打回：{plan.feedback}
+          </p>
+        )}
+      </div>
+
+      <ol className="mt-2 space-y-0.5">
+        {plan.tasks.map((t, i) => (
+          <li key={t.id}>
+            <details className="rounded px-1.5 py-1 hover:bg-neutral-100/70">
+              <summary className="cursor-pointer list-none">
+                <div className="flex items-center gap-1.5 text-[12px]">
+                  <span className="w-3 shrink-0 text-[10px] text-neutral-400">{i + 1}</span>
+                  <span
+                    className={`truncate ${
+                      t.status === 'done' ? 'text-neutral-400 line-through' : 'text-neutral-800'
+                    }`}
+                  >
+                    {t.title}
+                  </span>
+                  <span className={`ml-auto shrink-0 text-[10px] ${TASK_TONE[t.status]}`}>
+                    {TASK_STATUS_LABEL[t.status]}
+                  </span>
+                </div>
+                <div className="ml-[18px] text-[10px] text-neutral-400">
+                  {SKILL_LABEL[t.skill]} · {t.review === 'required' ? '需审阅' : '自动'}
+                </div>
+              </summary>
+              <div className="ml-[18px] mt-1 space-y-1 pb-1">
+                <p className="text-[10px] leading-4 text-neutral-500">{t.brief || '（无细项）'}</p>
+                {t.artifacts.length > 0 && (
+                  <p className="break-all text-[10px] text-neutral-400">
+                    产物：{t.artifacts.join('、')}
+                  </p>
+                )}
+                {t.feedback !== null && (
+                  <p className="rounded bg-rose-50 px-1.5 py-1 text-[10px] leading-4 text-rose-700">
+                    打回：{t.feedback}
+                  </p>
+                )}
+              </div>
+            </details>
+          </li>
+        ))}
+      </ol>
+
+      {canResume && (
+        <button
+          type="button"
+          onClick={onResume}
+          className="mt-2 w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-[11px] text-neutral-700 hover:bg-neutral-50"
+        >
+          继续执行没做完的任务
+        </button>
+      )}
+    </div>
+  )
 }
 
 export function AgentPage() {
@@ -304,7 +399,12 @@ export function AgentPage() {
       const ev = JSON.parse(m.data) as AgentEvent
       if (ev.type === 'ping') return
       appendEvents([ev])
-      if (ev.type === 'gate.waiting' || ev.type === 'gate.resolved' || ev.type === 'run.finished') {
+      if (
+        ev.type === 'gate.waiting' ||
+        ev.type === 'gate.resolved' ||
+        ev.type === 'plan.updated' ||
+        ev.type === 'run.finished'
+      ) {
         void api<{ run: AgentRun }>(`/agent/runs/${run.id}`)
           .then(({ run: next }) => setRun(next))
           .catch(() => undefined)
@@ -333,14 +433,13 @@ export function AgentPage() {
     }
   }
 
-  const send = async (): Promise<void> => {
-    if (run === null || draft.trim().length === 0) return
-    const text = draft.trim()
+  const sendText = async (text: string): Promise<void> => {
+    if (run === null || text.trim().length === 0) return
     setError(null)
     setBusy(true)
     try {
       const { run: next } = await post<{ run: AgentRun }>(`/agent/runs/${run.id}/messages`, {
-        text,
+        text: text.trim(),
       })
       setDraft('')
       adoptRun(next, false)
@@ -351,6 +450,10 @@ export function AgentPage() {
     }
   }
 
+  const send = async (): Promise<void> => {
+    await sendText(draft)
+  }
+
   const stop = async (): Promise<void> => {
     if (run === null) return
     try {
@@ -358,6 +461,20 @@ export function AgentPage() {
       adoptRun(next, false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const resume = async (): Promise<void> => {
+    if (run === null) return
+    setError(null)
+    setBusy(true)
+    try {
+      const { run: next } = await post<{ run: AgentRun }>(`/agent/runs/${run.id}/resume`)
+      adoptRun(next, false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -404,54 +521,38 @@ export function AgentPage() {
   }
 
   const live = run?.status === 'running' || run?.status === 'waiting_review'
-  const states = stageStates(blocks, run)
-  const hint = currentHint(run, states)
+  const plan = latestPlan(blocks)
+  const hint = currentHint(run, plan)
   const canSend = run !== null && run.status !== 'failed'
+  const canResume =
+    run !== null &&
+    (run.status === 'done' || run.status === 'stopped' || run.status === 'failed') &&
+    plan !== null &&
+    plan.tasks.some((t) => t.status !== 'done')
   const placeholder =
     run === null
       ? ''
       : run.status === 'waiting_review'
-        ? '发消息 = 打回本阶段并说明要改什么；想放行请点门禁卡「通过」'
+        ? '发消息 = 打回并说明要改什么；想放行请点门禁卡上的按钮'
         : run.status === 'running'
           ? 'Agent 正在工作：你的消息会在当前步骤之后送达'
           : run.status === 'failed'
-            ? '本轮失败，请开新会话'
-            : '继续聊，比如：把第 2 场改得更克制'
+            ? '本轮失败：点「继续执行」或开新会话'
+            : '继续聊，比如：第 2 章的钩子再狠一点'
 
   return (
     <div className="flex h-full min-h-0 w-full bg-white">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50/60">
+      <aside className="flex w-64 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50/60">
         <div className="border-b border-neutral-200 px-4 py-3">
           <h1 className="text-sm font-semibold text-neutral-900">共创</h1>
           <p className="mt-0.5 text-[11px] leading-4 text-neutral-500">
-            像和编辑对话一样推进；每一步的产物都能去对应模块细看。
+            像和编辑对话一样推进；Agent 先给计划，你批准后它按任务做。
           </p>
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-3">
-          <p className="mb-2 px-1 text-[10px] font-medium tracking-wide text-neutral-400">阶段</p>
-          <ol className="space-y-1">
-            {STAGES.map((s, i) => {
-              const st = states[s.id]
-              return (
-                <li
-                  key={s.id}
-                  className={`rounded px-2 py-1.5 ${
-                    st === 'waiting' ? 'bg-indigo-50' : st === 'working' ? 'bg-amber-50' : ''
-                  }`}
-                >
-                  <div className="flex items-center gap-2 text-[12px]">
-                    <span className="w-3 text-[10px] text-neutral-400">{i + 1}</span>
-                    <span className="font-medium text-neutral-800">{s.label}</span>
-                    <span className={`ml-auto text-[10px] ${STAGE_TONE[st]}`}>
-                      {STAGE_STATUS[st]}
-                    </span>
-                  </div>
-                  <p className="ml-5 text-[10px] leading-4 text-neutral-400">{s.hint}</p>
-                </li>
-              )
-            })}
-          </ol>
+          <p className="mb-2 px-1 text-[10px] font-medium tracking-wide text-neutral-400">计划</p>
+          <Plancard plan={plan} canResume={canResume && !busy} onResume={() => void resume()} />
 
           <div className="mt-4 rounded border border-neutral-200 bg-white px-2.5 py-2">
             <p className="text-[10px] font-medium text-neutral-400">现在</p>
@@ -469,7 +570,7 @@ export function AgentPage() {
               <p className="mt-0.5">{run.tokens.toLocaleString()} tokens</p>
             </>
           ) : (
-            <p>预算：40 步 · 1 章正文 · 1 张形象图</p>
+            <p>预算：按任务数放宽（≥40 步） · 1 章正文 · 1 张形象图</p>
           )}
         </div>
       </aside>
@@ -510,8 +611,8 @@ export function AgentPage() {
               <div className="rounded border border-dashed border-neutral-200 p-5">
                 <p className="text-[13px] font-medium text-neutral-800">开始一段共创</p>
                 <p className="mt-1 text-[11px] leading-5 text-neutral-500">
-                  说清楚这本书要什么。Agent 会自己读全书、按 世界 → 人物 → 故事 → 开篇
-                  推进，每个阶段末尾停下等你放行。
+                  说清楚这本书要什么。Agent 会先读全书、写一份带任务的计划；你批准后它逐项执行，
+                  需要你拍板的地方停下来。计划与任务在左边实时更新。
                 </p>
                 <textarea
                   value={goal}
@@ -529,7 +630,7 @@ export function AgentPage() {
                     开始共创
                   </button>
                   <span className="text-[11px] text-neutral-500">
-                    预算：40 步 · 1 章正文 · 1 张形象图
+                    预算：按任务数放宽（≥40 步） · 1 章正文 · 1 张形象图
                   </span>
                 </div>
               </div>
@@ -627,12 +728,15 @@ export function AgentPage() {
                     </p>
                   )
                 }
+                // 计划快照不进对话流：左侧栏是它的主视图，避免同一份内容出现两次
+                if (b.kind === 'plan') return null
+
                 const g = b.gate
                 return (
                   <div key={b.id} className="rounded border border-indigo-200 bg-indigo-50/40 p-4">
                     <div className="flex items-center gap-2">
                       <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-800">
-                        等待审阅 · {STAGE_LABEL[g.stage]}
+                        {g.kind === 'plan' ? `计划待批准 · ${g.title}` : `任务待审阅 · ${g.title}`}
                       </span>
                       {b.resolved !== null && (
                         <span className="text-[10px] text-neutral-500">
@@ -669,7 +773,7 @@ export function AgentPage() {
                             value={feedback}
                             onChange={(e) => setFeedback(e.target.value)}
                             rows={2}
-                            placeholder="要改什么？写具体一点，Agent 会按这条意见重做本阶段"
+                            placeholder="要改什么？写具体一点，Agent 会按这条意见重做"
                             className="mb-2 w-full resize-none rounded border border-neutral-300 px-2 py-1.5 text-[12px] focus:border-neutral-500 focus:outline-none"
                           />
                         )}
@@ -680,7 +784,7 @@ export function AgentPage() {
                             onClick={() => void review('approve')}
                             className="rounded bg-neutral-900 px-3 py-1.5 text-[11px] text-white disabled:opacity-40"
                           >
-                            {g.stage === 'draft' ? '通过，完成本轮' : '通过，继续'}
+                            {g.kind === 'plan' ? '批准计划' : '通过任务'}
                           </button>
                           {revising ? (
                             <button

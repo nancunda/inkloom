@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "tsc": "tsc --build tsconfig.base.json",
+    "tsc": "tsc --build tsconfig.base.json && tsc -p apps/web --noEmit",
     "test": "vitest run --project unit",
     "test:cov": "vitest run --project unit --coverage",
     "test:int": "vitest run --project integration",

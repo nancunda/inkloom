@@ -5,7 +5,7 @@
 > 不做「一键生成整本小说」的批量流水线。
 > inkloom 提供的是**可靠性**（跨章不崩）、**可控性**（每步可审可退）、**可视化**（结构看得见）。
 
-![共创 Agent](docs/screenshots/accept-agent-chat-top.png)
+![共创 Agent](docs/screenshots/accept-plan-gate.png)
 
 ---
 
@@ -19,7 +19,7 @@
 | 模块 | 干什么 |
 |---|---|
 | **概览** | 定稿进度、张力曲线、未兑现线索、生成记录 |
-| **共创** | 和 Agent 对话，从零搭世界 → 人物 → 故事 → 开篇；每阶段停下等你放行 |
+| **共创** | 和 Agent 对话：它先写计划，你批准后按任务自主执行；需要拍板处停下 |
 | **世界** | 规则、力量体系、地点与路线（地图上拖拽） |
 | **角色** | 角色卡、关系网络（拖两个节点连线建关系）、形象图 |
 | **故事** | 卷、故事弧、逐章蓝图、线索轨迹 |
@@ -32,21 +32,39 @@
 
 ---
 
-## 共创 Agent（对话式）
+## 书库：一个文件夹管所有书
 
-![打回与重新审阅](docs/screenshots/accept-agent-revise.png)
+![切换书](docs/screenshots/accept-library.png)
+
+- 书库根目录默认 `~/inkloom`（`INKLOOM_LIBRARY` 可覆盖），**一级子目录 = 一本书**
+- 每本书仍是独立文件夹（自带 Git 与索引），可以整个拷进 / 拷出书库
+- 顶栏点书名切换书；切书会整页重载，并清掉上一本的查询缓存与 Agent runId
+- 空书库是正常状态：直接在浏览器里「新建一本书」
+- 切书前要求没有进行中的共创会话 / 生成任务——避免把进度写进另一本书
+
+---
+
+## 共创 Agent（计划驱动）
+
+![打回与重新审阅](docs/screenshots/accept-task-gate.png)
 
 像和一位总编对话，而不是提交一个批处理任务：
 
-- **随时说话**：运行中发消息会 `steer` 到当前步之后；**等待审阅时发消息 = 带意见打回**，本阶段重做
+- **先计划，后执行**：Agent 读完全书 → `write_plan` 提交 4–8 个任务 → 你批准 → 它逐项执行；每个任务写明技能、完成标准、是否需要你审阅
+- **任务门禁**：需要审阅的任务完成后停下；通过 → 自动进入下一个任务，打回 → 带意见重做
+- **随时说话**：运行中发消息会 `steer` 到当前步之后；**等待审阅时发消息 = 带意见打回**
 - **连续会话**：本轮完成后可以接着聊（"第 5 场扩一下""下一章蓝图改狠一点"），不重开任务
-- **四阶段**：世界 → 人物 → 故事 → 开篇；左栏实时显示到哪一步、现在等你做什么
-- **通过开篇 = 本轮结束**，不会莫名再弹一次审阅
+- **可恢复**：停止 / 预算耗尽 / 服务重启后，「继续执行」从上次没做完的任务接着做
 - **全程可见**：思考折叠、工具卡片与结果、产物一键跳到对应模块
-- **预算硬约束**：40 步工具调用 / 1 章正文 / 1 张形象图
+- **预算硬约束**：`40 + 2 × 任务数` 步工具调用 / 1 章正文 / 1 张形象图
+- **技能**：`world` 世界、`characters` 人物、`story` 故事、`chapter` 正文、`review` 审阅、`free` 自由
 
 Agent 侧工具：`read_book`、`read_element`、`write_element`、`write_blueprint`、
-`generate_chapter`、`generate_portrait`、`request_review`。
+`write_plan`、`update_plan`、`update_task`、`request_review`、
+`generate_chapter`、`generate_portrait`。
+
+计划定义存 `story/plans/<id>.json`（进 Git，可审阅 / 回滚）；执行状态存
+`.inkloom/agent/plans/<id>.state.json`（不进 Git，随运行更新）。
 运行在 [Pi Agent](https://github.com/earendil-works/pi)（MIT）+ DeepSeek `deepseek-flash`；
 密钥只在服务端环境变量里，浏览器不接触。
 
@@ -61,7 +79,7 @@ Agent 侧工具：`read_book`、`read_element`、`write_element`、`write_bluepr
 3. 双击 `start.bat`
 4. 浏览器打开 **http://127.0.0.1:8787**
 
-内置 Node 运行时与示例书《七霞》。想用自己的书：把 `INKLOOM_BOOK` 指向书目录再启动。
+内置 Node 运行时与示例书《七霞》。启动后在书库里打开它，或新建一本。
 
 ### 开发版
 
@@ -69,7 +87,8 @@ Agent 侧工具：`read_book`、`read_element`、`write_element`、`write_bluepr
 pnpm install
 
 # 终端 1：API（默认 127.0.0.1:8787，无鉴权，因此只绑本机）
-INKLOOM_BOOK=fixtures/qixia pnpm api
+# 书库默认 ~/inkloom；想放别处：INKLOOM_LIBRARY=./books pnpm api
+pnpm api
 
 # 终端 2：前端（Vite，/api 代理到 8787）
 pnpm web                # → http://localhost:5173
@@ -86,6 +105,8 @@ pnpm web                # → http://localhost:5173
 | `DEEPSEEK_API_KEY` | 生成正文、共创 Agent |
 | `SILICONFLOW_API_KEY` | 人物形象图（Kolors） |
 | `TAVILY_API_KEY` | 联网搜索（可选） |
+| `INKLOOM_LIBRARY` | 书库根目录，默认 `~/inkloom` |
+| `INKLOOM_BOOK` | 可选：启动时直接打开某本书（路径） |
 
 没有 key 也能浏览、导入、编辑、导出与回退，只是不能调模型。
 
@@ -180,7 +201,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc + check-deps + 268 单元 + 299 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 294 单元 + 304 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
@@ -189,7 +210,7 @@ pnpm verify:p2a  # 局部重写                          7 条
 pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 ```
 
-**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **共创 Agent（对话式，四阶段门禁）**。
+**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent**。
 
 **已知缺口**
 
@@ -198,7 +219,7 @@ pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 | 1 | TypeSafe 官方 API 从 CN 出口返回 451 | 判断层实际用硅基流动；`typesafe` provider 已就绪 |
 | 2 | 前端无 Playwright 自动化回归 | 界面回归靠手工 + Chrome MCP |
 | 3 | 生图 seed 不可控（Kolors 不支持） | 复现靠 prompt + params 记录 |
-| 4 | 生成任务表与 Agent run 在内存 | 服务重启丢进行中的任务；文件与 git 已落盘，重新发起即可 |
+| 4 | Agent run / 生成任务在内存 | 服务重启丢进行中的会话；计划状态与文件已落盘，重启后「继续执行」即可接着做 |
 | 5 | Agent 思考流是英文 | 模型自选语言；正文与工具参数是中文 |
 
 **明确不做**：并行生成多场景（邻场景正文不存在时章内因果必然丢失）；写作 Skill 市场（需要社区载体）。

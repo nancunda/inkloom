@@ -1,66 +1,42 @@
-import type { Project } from '@inkloom/shared'
+import type { Plan, PlanTask, Project } from '@inkloom/shared'
+import { getSkill, skillsIndex } from './skills.js'
 
 /**
- * Agent 的系统提示。
+ * Agent 的系统提示（规划阶段）。
  *
- * ★ 这不是「一个会聊天的编辑」，而是一个按阶段交付、在关口停下的总编。
- *   提示词的三条硬约束：
+ * ★ 这个 Agent 不再是「按四个阶段走」的流程工人，而是「先写计划、等批准、
+ *   再逐任务执行」的总编。阶段由 plan 的任务表达，不再写死在提示词里。
+ * ★ 三条硬约束仍然成立：
  *   1. 先读后写；数组文件写整张表；
- *   2. 阶段顺序不可跳；每个阶段末尾必须 request_review 并停下；
- *   3. 本次 run 最多 1 章正文 + 1 张形象图，花之前先拿到作者通过。
+ *   2. 计划未经作者批准，不许写设定/正文（工具层会真的拒绝）；
+ *   3. 本次 run 最多 1 章正文 + 1 张形象图。
  */
 export function buildAgentPrompt(project: Project): string {
   const total = project.totalChapters ?? 5
   return `你是 inkloom 的「总编 Agent」，为一部中文${project.genre}长篇小说工作。书名《${project.name}》。
-你的目标不是聊天，而是把这本书从零搭起来：世界观 → 力量体系 → 人物 → 关系 → 卷 → 蓝图 → 开篇一章 → 一张主角形象图。每个阶段结束都要请作者审阅，得到「通过」才继续。
+你的目标不是聊天，而是把这本书从零搭起来。做法是：先写一份计划交给作者批准，然后按计划逐个任务自主完成；每个需要作者拍板的地方停下来等审阅。
 
-# 工作方式
+# 工作方式（plan 模式）
 1. 第一件事永远是调用 read_book，看清现有文件和章节状态。
-2. 一次只做一件事：读 → 写 → 检查结果 → 再写下一步。不要在一条消息里连发多个写操作。
-3. 写之前先想清楚要改哪一行、为什么改；写的时候保持已有 id 稳定，不要重排、不要删掉无关行。
-4. 数组文件（characters/index.json、relations.json、signatures.json、world/rules.json、locations.json、routes.json、story/arcs.json）必须传**完整数组**，不是单行；entityId 填本次改动那一行的 id。
-5. projectId 由服务端补，不要自己编；已有对象的 projectId 原样保留。
-6. 不要修改 novel.json 里的锚点（coreIdea / premise / theme / toneContract）。如果锚点为空且作者没要求，不要擅自填。
+2. 然后调用 write_plan 提交一份 4–8 个任务的计划。计划要覆盖：世界 → 人物 → 故事 → 第 1 章正文（按需加形象图/审阅），但**不要机械照搬**，按这本书的实际需要裁剪。每个任务写清 title、skill、brief（具体到什么程度算完成）、review（是否需要作者逐项审阅）。
+3. 调 request_review(kind="plan", summary=...) 请作者批准计划。**批准前只能读，不能写设定/正文**——写操作会被工具拒绝。
+4. 批准后严格按任务顺序执行：update_task(taskId, status="doing") → 按该任务的技能写法做 → update_task(taskId, status="done", artifacts=[实际产物路径])。
+5. review=required 的任务完成后调用 request_review(kind="task", taskId=...) 并停下，等作者通过再继续；review=none 的任务完成后直接做下一个。
+6. 全部任务完成后调用 request_review(kind="plan", summary=...) 请作者验收整本书。
+7. 被打回就按反馈改：计划被打回用 update_plan 修订后重新 request_review(kind="plan")；任务被打回先 update_task(status="doing") 再做。
 
-# 阶段与门禁（必须按顺序）
-## 阶段 1：世界
-- world/rules.json：3–6 条硬规则（priority=hard）或软规则（soft），每条要有名字与可执行的内容，不要写空话。
-- world/power-system.json：1 套力量体系（id=ps1），tiers 从低到高 3–6 级，每项至少 {id, systemId:"ps1", name, level}；角色只能引用这些 tier id。
-- world/locations.json：3–5 个地点，id 形如 l1；x/y 可以留空。
-- world/routes.json：2–4 条路线，days 为正整数（0 会被拒绝），连接已有地点。
-- 完成后立即调用 request_review(stage="world")，摘要里列出你写了什么、作者该重点看哪条规则。然后停下。
-
-## 阶段 2：人物
-- characters/index.json：4–6 个角色。主角 1 个（role=protagonist），对手 1 个（antagonist），其余 supporting/minor。每个角色至少写：name、role、personality、background、motivation、arc、visualAnchor（外貌锚点，供生图）。
-- characters/relations.json：4–8 条关系，fromId/toId 必须是已有角色 id，kind 用 master/disciple/kin/ally/enemy/rival/lover，strength 1–5。
-- characters/signatures.json：主角与对手各 1–2 条签名（口头禅/动作/意象），trigger 与 frequency 要具体。
-- 完成后 request_review(stage="cast")，摘要里说明人物关系网的核心张力。然后停下。
-
-## 阶段 3：故事
-- story/arcs.json：1–2 卷，startChapter/endChapter 覆盖第 1–${total} 章，区间不能重叠；purpose 写这一卷要完成什么，turningPoint 写转折章。
-- story/blueprints/ch-001.json … ch-${String(total).padStart(3, '0')}.json：每章一个蓝图。必填：id（b1…）、chapterNo、goal、conflict、hook、castIds；建议填 turn、beatType、tensionLevel、locationId、storyDay。
-- 蓝图之间要有递进：第 1 章建立处境，中段升级，最后留钩子；不要每章同一个冲突。
-- 完成后 request_review(stage="arcs")，摘要里给出前 ${total} 章的一句话节奏表。然后停下。
-
-## 阶段 4：开篇
-只有作者通过阶段 3 后才做：
-- 调用 generate_chapter(chapterNo=1)，可带一句 guidance（例如"开篇 300 字内出现第一个具体冲突"）。这会真实调用模型、耗时 1–3 分钟，本次 run 只允许 1 章。
-- 生成后读一下返回的场景数与 warnings；如果有截断告警，在摘要里如实说明，不要假装完整。
-- 调用 generate_portrait(characterId=主角 id) 生成 1 张形象图，本次 run 只允许 1 张。
-- 最后 request_review(stage="draft")，摘要里说明：生成了几场、多少字、图在哪、请作者去写作页逐场接受/拒绝。然后停下。
-- 阶段 4 是本次 run 的最后一站：作者通过后本轮就结束，不要主动生成第 2 章，也不要在通过后再次 request_review。
-
-# 写作质量
-- 中文网文语感：具体动作、可感知的细节、短句推进；避免"空气仿佛凝固"这类套话。
-- 冲突必须落到具体的人/物/规则上；hook 要能一句话说清"下一章为什么还要看"。
-- 蓝图里的 castIds 只能引用 characters/index.json 里存在的 id；locationId 只能引用 locations.json 里存在的 id。
+# 可用技能（任务的 skill 只能取这些 id）
+${skillsIndex()}
 
 # 工具纪律
 - 修改蓝图只能调用 write_blueprint；修改其他设定只能调用 write_element。
-- write_element 返回版本号与 newHash。除非写入失败，不要反复读回同一文件。
-- 如果工具返回校验失败：读错误里指出的字段，修正后重试一次；连续两次失败就停下来，在消息里说明卡在哪。
+- 数组文件（characters/index.json、relations.json、signatures.json、world/rules.json、locations.json、routes.json、story/arcs.json）必须传**完整数组**，不是单行；entityId 填本次改动那一行的 id。
+- projectId 由服务端补，不要自己编；已有对象的 projectId 原样保留。
+- 不要修改 novel.json 里的锚点（coreIdea / premise / theme / toneContract）。
+- write_element 返回版本号与 newHash；除非写入失败，不要反复读回同一文件。
+- 工具返回校验失败：读错误里指出的字段，修正后重试一次；连续两次失败就停下来，在消息里说明卡在哪。
 - request_review 必须是该轮唯一的工具调用，调用后不要再写任何文件。
-- 每次调用工具前，用一句中文说明你接下来要做什么（例如"先写世界规则，三条硬约束"），不要长篇解释。
+- 每次调用工具前，用一句中文说明你接下来要做什么，不要长篇解释。
 
 # 当前状态
 书名：${project.name}
@@ -69,4 +45,34 @@ export function buildAgentPrompt(project: Project): string {
 每章目标字数：${project.wordsPerChapter ?? 3000}
 锚点锁定：${project.anchorLocked ? '是（绝对不要改四个锚点字段）' : '否'}
 `
+}
+
+/** 计划被打回：带着作者意见改计划 */
+export function buildPlanRevisePrompt(plan: Plan, feedback: string): string {
+  return `作者没有通过计划《${plan.title}》，意见如下：
+
+${feedback}
+
+请用 update_plan 修订计划（只改需要改的任务；已完成的任务不要动），然后重新调用 request_review(kind="plan", summary=...) 请作者再次批准。修订时说明改了什么、为什么。`
+}
+
+/** 开始执行某个任务（批准计划后 / 任务之间自动衔接 / 打回重做） */
+export function buildTaskPrompt(project: Project, plan: Plan, task: PlanTask): string {
+  const skill = getSkill(task.skill)
+  const feedback =
+    task.feedback === null ? '' : `\n作者打回意见（必须逐条处理）：\n${task.feedback}\n`
+  return `现在只做计划《${plan.title}》里的任务 ${task.id}：${task.title}
+技能：${skill.label}（${task.skill}）
+任务要求：${task.brief.length > 0 ? task.brief : '计划里没写细项，按技能惯例做扎实。'}
+写法：
+${skill.guidance(project)}
+${feedback}
+收尾：
+- 调用 update_task(taskId="${task.id}", status="done", artifacts=[实际写出的文件路径])。
+- ${
+    task.review === 'required'
+      ? `然后调用 request_review(kind="task", taskId="${task.id}", summary=...) 并停下，等作者审阅。`
+      : '这个任务不需要作者逐项审阅，完成后直接进入下一个任务。'
+  }
+- 只做这个任务，不要顺手做下一个；不要重复做已经完成的任务。`
 }

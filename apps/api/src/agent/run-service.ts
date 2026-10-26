@@ -4,11 +4,15 @@ import { join } from 'node:path'
 import { Agent, type AgentTool, type AgentEvent as PiEvent } from '@earendil-works/pi-agent-core'
 import { createModels } from '@earendil-works/pi-ai'
 import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
-import { InkloomError } from '@inkloom/shared'
-import { getContext } from '../services/context.js'
+import type { Plan } from '@inkloom/shared'
+import { InkloomError, isPlanComplete, nextOpenTask } from '@inkloom/shared'
+import { getContext, peekContext } from '../services/context.js'
+import { loadPlan, readCurrentPlan, writePlanState } from '../storage/plans.js'
+import { writeQueue } from '../storage/queue.js'
 import { agentRunDir } from './book-snapshot.js'
-import { buildAgentPrompt } from './prompt.js'
-import { type AgentGate, createAgentTools, type ReviewStage, type RunBudget } from './tools.js'
+import { deriveGate } from './plan-gate.js'
+import { buildAgentPrompt, buildPlanRevisePrompt, buildTaskPrompt } from './prompt.js'
+import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
 
 export type AgentRunStatus = 'running' | 'waiting_review' | 'done' | 'failed' | 'stopped'
 
@@ -28,6 +32,7 @@ export type AgentStreamPayload =
     }
   | { type: 'gate.waiting'; gate: AgentGate }
   | { type: 'gate.resolved'; decision: 'approve' | 'revise'; feedback: string | null }
+  | { type: 'plan.updated'; plan: Plan }
   | { type: 'run.finished' }
   | { type: 'run.failed'; error: string }
   | { type: 'run.stopped' }
@@ -41,6 +46,8 @@ export interface AgentRunSnapshot {
   status: AgentRunStatus
   startedAt: string
   finishedAt: string | null
+  /** 当前计划 id；计划随事件 plan.updated 回放 */
+  planId: string | null
   gate: AgentGate | null
   error: string | null
   budget: RunBudget
@@ -51,9 +58,13 @@ export interface AgentRunSnapshot {
 interface AgentRun {
   id: string
   goal: string
+  /** 归属：run 只能在创建它的书里被读取、审阅、续聊（切书后不允许跨书写入） */
+  root: string
+  projectId: string
   status: AgentRunStatus
   startedAt: string
   finishedAt: string | null
+  planId: string | null
   gate: AgentGate | null
   error: string | null
   budget: RunBudget
@@ -63,12 +74,59 @@ interface AgentRun {
   seq: number
   agent: Agent
   stopped: boolean
+  /** 本轮工具请求的门禁；agent_end 消费后必须清空，否则下一次 agent_end 会重复投出旧门禁 */
+  gateBox: { current: AgentGate | null }
   journal: string
   journalTail: Promise<void>
 }
 
 const runs = new Map<string, AgentRun>()
 let activeRunId: string | null = null
+
+function ownedByCurrentBook(run: AgentRun): boolean {
+  const ctx = peekContext()
+  return ctx !== null && run.root === ctx.root
+}
+
+/** 跨书访问一律当作不存在：不泄露另一本书的对话内容 */
+function requireOwnedRun(id: string): AgentRun {
+  const run = runs.get(id)
+  if (run === undefined || !ownedByCurrentBook(run)) {
+    throw new InkloomError('NOT_FOUND', `agent run ${id} 不存在（当前书里没有这个会话）`)
+  }
+  return run
+}
+
+/** 是否还有占用中的 run：切书前必须拒绝，避免把进度留在一个已关闭的 context 里 */
+export function hasLiveAgentRun(): boolean {
+  for (const run of runs.values()) {
+    if (run.status === 'running' || run.status === 'waiting_review') return true
+  }
+  return false
+}
+
+/**
+ * 清空已结束的 run。
+ *
+ * ★ done/stopped 的 run 必须清掉：`sendAgentMessage` 能把它们重新激活，
+ *   留在内存里就会在切书后被“续聊”到另一本书。
+ */
+export function clearRuns(): number {
+  let removed = 0
+  for (const [id, run] of runs) {
+    if (run.status === 'running' || run.status === 'waiting_review') continue
+    runs.delete(id)
+    removed += 1
+  }
+  if (activeRunId !== null && !runs.has(activeRunId)) activeRunId = null
+  return removed
+}
+
+/** 仅测试：连 live run 一起清空，避免失败用例留下的 run 污染下一个用例 */
+export function resetRunsForTest(): void {
+  runs.clear()
+  activeRunId = null
+}
 
 let modelsCache: ReturnType<typeof createModels> | null = null
 
@@ -138,7 +196,7 @@ function emit(run: AgentRun, event: AgentStreamPayload, journal = true): void {
   }
 }
 
-function handlePiEvent(run: AgentRun, e: PiEvent, gateBox: { current: AgentGate | null }): void {
+function handlePiEvent(run: AgentRun, e: PiEvent): void {
   switch (e.type) {
     case 'message_update': {
       const ev = e.assistantMessageEvent
@@ -183,10 +241,14 @@ function handlePiEvent(run: AgentRun, e: PiEvent, gateBox: { current: AgentGate 
       return
     }
     case 'agent_end': {
-      if (gateBox.current !== null) {
-        run.gate = gateBox.current
+      // ★ 消费即清空：旧门禁不能活到下一轮。
+      //   实测：批准计划后，任务 1 结束又把同一个 plan 门禁投了一次。
+      const pending = run.gateBox.current
+      run.gateBox.current = null
+      if (pending !== null) {
+        run.gate = pending
         run.status = 'waiting_review'
-        emit(run, { type: 'gate.waiting', gate: gateBox.current })
+        emit(run, { type: 'gate.waiting', gate: pending })
       }
       return
     }
@@ -197,32 +259,155 @@ function handlePiEvent(run: AgentRun, e: PiEvent, gateBox: { current: AgentGate 
 
 async function drive(run: AgentRun, prompt: string): Promise<void> {
   if (run.stopped) return
+  // 新一轮开始：上一轮残留的门禁请求作废
+  run.gateBox.current = null
   run.status = 'running'
   try {
     await run.agent.prompt(prompt)
   } catch (e) {
     if (run.stopped) return
-    run.status = 'failed'
-    run.error = (e as Error).message
-    run.finishedAt = new Date().toISOString()
-    emit(run, { type: 'run.failed', error: run.error })
-    finishRun(run)
+    await failRun(run, (e as Error).message)
     return
   }
   if (run.stopped) return
-  if (run.gate !== null) return
 
+  // 1. 本轮显式设了门禁（agent_end 已写入 run.gate）→ 等作者
+  if (run.gate !== null) {
+    run.status = 'waiting_review'
+    return
+  }
+
+  // 2. 与 plan 对账：门禁是 plan 的投影，不是工具的副产物
+  const plan = run.planId === null ? null : await loadPlan(run.root, run.planId).catch(() => null)
+  if (plan !== null) {
+    const gate = deriveGate(plan)
+    if (gate !== null) {
+      run.gate = gate
+      run.status = 'waiting_review'
+      emit(run, { type: 'gate.waiting', gate })
+      return
+    }
+
+    if (plan.status === 'approved') {
+      if (run.budget.steps >= run.budget.maxSteps) {
+        await failRun(
+          run,
+          `步数预算已用完（${run.budget.maxSteps} 步），还有任务没做完。再发一句话可以继续。`,
+          plan,
+        )
+        return
+      }
+      const next = nextOpenTask(plan)
+      if (next !== null) {
+        const { project } = getContext()
+        void drive(run, buildTaskPrompt(project, plan, next))
+        return
+      }
+      // 全部任务完成，但还没请作者验收：推它一把
+      void drive(
+        run,
+        '所有任务都已完成。请 read_book 核对一遍，然后调用 request_review(kind="plan", summary=...) 请作者验收整本书。',
+      )
+      return
+    }
+  }
+
+  // 3. 没有计划 / 计划已完成：本轮收尾
   const error = run.agent.state.errorMessage
   if (error !== undefined && error.length > 0) {
-    run.status = 'failed'
-    run.error = error
-    emit(run, { type: 'run.failed', error })
-  } else {
-    run.status = 'done'
-    emit(run, { type: 'run.finished' })
+    await failRun(run, error)
+    return
   }
+  run.status = 'done'
   run.finishedAt = new Date().toISOString()
+  emit(run, { type: 'run.finished' })
   finishRun(run)
+}
+
+async function failRun(run: AgentRun, message: string, plan?: Plan | null): Promise<void> {
+  run.status = 'failed'
+  run.error = message
+  run.finishedAt = new Date().toISOString()
+  emit(run, { type: 'run.failed', error: message })
+  await finalizePlanOnRunEnd(run, plan ?? undefined)
+  finishRun(run)
+}
+
+/** 把合并后的 plan 写回状态文件（定义已在 write_plan/update_plan 时写过） */
+async function persistPlan(run: AgentRun, plan: Plan): Promise<void> {
+  await writeQueue.run(async () => {
+    await writePlanState(run.root, plan.id, {
+      status: plan.status,
+      summary: plan.summary,
+      feedback: plan.feedback,
+      tasks: plan.tasks.map((t) => ({
+        id: t.id,
+        status: t.status,
+        artifacts: t.artifacts,
+        feedback: t.feedback,
+        summary: t.summary,
+        reviewed: t.reviewed,
+      })),
+      updatedAt: new Date().toISOString(),
+    })
+  })
+  emit(run, { type: 'plan.updated', plan })
+}
+
+/** 固定 40 步装不下“计划 + 每个任务多轮”；按任务数放宽 */
+function refreshPlanBudget(run: AgentRun, plan: Plan): void {
+  run.budget.maxSteps = Math.max(40, 40 + 2 * plan.tasks.length)
+}
+
+/**
+ * 中止终态：stop / 预算耗尽 / 异常时，不能把任务永久钉在 doing。
+ *   doing → blocked（可恢复），未完成的计划 → aborted。
+ */
+async function finalizePlanOnRunEnd(run: AgentRun, known?: Plan): Promise<void> {
+  const plan =
+    known ?? (run.planId === null ? null : await loadPlan(run.root, run.planId).catch(() => null))
+  if (plan === null || plan.status === 'done' || plan.status === 'aborted') return
+  let changed = false
+  for (const t of plan.tasks) {
+    if (t.status === 'doing') {
+      t.status = 'blocked'
+      changed = true
+    }
+  }
+  if (plan.status === 'approved' || plan.status === 'awaiting_approval') {
+    plan.status = 'aborted'
+    changed = true
+  }
+  if (changed) await persistPlan(run, plan)
+}
+
+/** 打回：计划层重写计划，任务层带着意见重做 */
+async function revise(run: AgentRun, gate: AgentGate, feedback: string): Promise<void> {
+  const plan = run.planId === null ? null : await loadPlan(run.root, run.planId).catch(() => null)
+  if (plan === null) {
+    void drive(run, feedback)
+    return
+  }
+  const { project } = getContext()
+  if (gate.kind === 'plan') {
+    plan.status = isPlanComplete(plan) ? 'approved' : 'drafting'
+    plan.summary = null
+    plan.feedback = feedback
+    await persistPlan(run, plan)
+    void drive(run, buildPlanRevisePrompt(plan, feedback))
+    return
+  }
+  const task = plan.tasks.find((t) => t.id === gate.taskId)
+  if (task === undefined) {
+    void drive(run, feedback)
+    return
+  }
+  task.status = 'doing'
+  task.reviewed = false
+  task.feedback = feedback
+  task.summary = null
+  await persistPlan(run, plan)
+  void drive(run, buildTaskPrompt(project, plan, task))
 }
 
 function finishRun(run: AgentRun): void {
@@ -260,11 +445,37 @@ export async function startAgentRun(goal: string): Promise<AgentRunSnapshot> {
   }
   const gateBox: { current: AgentGate | null } = { current: null }
 
+  // 恢复上一次没做完的计划：等批准 → 直接恢复门禁；已批准 → 接着做下一个任务
+  const currentPlanId = await readCurrentPlan(root)
+  const prior = currentPlanId === null ? null : await loadPlan(root, currentPlanId)
+  const resumable =
+    prior !== null &&
+    (prior.status === 'drafting' ||
+      prior.status === 'awaiting_approval' ||
+      prior.status === 'approved')
+      ? prior
+      : null
+
+  const id = newRunId()
+  const journal = join(agentRunDir(root), `${id}.jsonl`)
+  await mkdir(agentRunDir(root), { recursive: true })
+
+  let run!: AgentRun
   const tools = createAgentTools({
     apiKey,
     imageApiKey: imageApiKey === null || imageApiKey.length === 0 ? null : imageApiKey,
     model: model.id,
     budget,
+    plan: {
+      getPlanId: () => run.planId,
+      setPlanId: (planId) => {
+        run.planId = planId
+      },
+      notify: (plan) => {
+        refreshPlanBudget(run, plan)
+        emit(run, { type: 'plan.updated', plan })
+      },
+    },
     onGate: (gate) => {
       gateBox.current = gate
     },
@@ -288,14 +499,12 @@ export async function startAgentRun(goal: string): Promise<AgentRunSnapshot> {
     },
   })
 
-  const id = newRunId()
-  const journal = join(agentRunDir(root), `${id}.jsonl`)
-  await mkdir(agentRunDir(root), { recursive: true })
-
-  let run!: AgentRun
   run = {
     id,
     goal,
+    root,
+    projectId: project.id,
+    planId: resumable?.id ?? null,
     status: 'running',
     startedAt: new Date().toISOString(),
     finishedAt: null,
@@ -308,33 +517,109 @@ export async function startAgentRun(goal: string): Promise<AgentRunSnapshot> {
     seq: 0,
     agent,
     stopped: false,
+    gateBox,
     journal,
     journalTail: Promise.resolve(),
   }
 
-  agent.subscribe((e) => handlePiEvent(run, e, gateBox))
+  agent.subscribe((e) => handlePiEvent(run, e))
   runs.set(id, run)
   activeRunId = id
   emit(run, { type: 'run.started', goal })
-  void drive(run, goal)
+
+  if (resumable !== null) {
+    emit(run, { type: 'plan.updated', plan: resumable })
+    refreshPlanBudget(run, resumable)
+    // 上次正等作者批准：不叫模型，直接把门禁恢复出来
+    if (resumable.status === 'awaiting_approval') {
+      const gate = deriveGate(resumable)
+      if (gate !== null) {
+        run.gate = gate
+        run.status = 'waiting_review'
+        emit(run, { type: 'gate.waiting', gate })
+        return snapshot(run)
+      }
+    }
+  }
+
+  let initialPrompt = buildAgentPrompt(project)
+  if (resumable !== null && resumable.status === 'approved') {
+    const next = nextOpenTask(resumable)
+    initialPrompt =
+      next !== null
+        ? buildTaskPrompt(project, resumable, next)
+        : '所有任务都已完成。请 read_book 核对一遍，然后调用 request_review(kind="plan", summary=...) 请作者验收整本书。'
+  } else if (resumable !== null && resumable.status === 'drafting') {
+    initialPrompt = `${buildAgentPrompt(project)}
+
+# 继续上一次的计划
+上一次会话留下了未完成的计划《${resumable.title}》（id=${resumable.id}）。请 read_book 后继续：用 update_plan 修订并 request_review(kind="plan")，不要重新 write_plan。`
+  }
+
+  void drive(run, initialPrompt)
+  return snapshot(run)
+}
+
+/**
+ * 继续执行：停在预算/失败/中止后的计划，可以被重新推进。
+ * ★ 只有已结束的 run 能恢复；正在跑/等待审阅的不能走这条路。
+ * ★ aborted 改回 approved：这是作者显式点「继续执行」的意思。
+ */
+export function resumeAgentRun(id: string): AgentRunSnapshot {
+  const run = requireOwnedRun(id)
+  if (run.status === 'running' || run.status === 'waiting_review') {
+    throw new InkloomError('INVALID_INPUT', '这个 run 还在进行中，不需要恢复')
+  }
+  if (run.planId === null) throw new InkloomError('INVALID_INPUT', '这个 run 没有可继续的计划')
+
+  run.status = 'running'
+  run.stopped = false
+  run.finishedAt = null
+  run.error = null
+  run.budget.steps = 0
+  activeRunId = run.id
+  emit(run, { type: 'user.message', text: '继续执行计划里还没完成的任务' })
+
+  void (async () => {
+    const plan = await loadPlan(run.root, run.planId as string).catch(() => null)
+    if (plan === null) {
+      await failRun(run, '计划文件不见了，无法继续')
+      return
+    }
+    if (plan.status === 'aborted') {
+      plan.status = 'approved'
+      await persistPlan(run, plan)
+    }
+    const next = nextOpenTask(plan)
+    if (next === null) {
+      run.status = 'done'
+      run.finishedAt = new Date().toISOString()
+      emit(run, { type: 'run.finished' })
+      finishRun(run)
+      return
+    }
+    const { project } = getContext()
+    void drive(run, buildTaskPrompt(project, plan, next))
+  })()
+
   return snapshot(run)
 }
 
 export function getAgentRun(id: string): AgentRunSnapshot | null {
   const run = runs.get(id)
-  return run === undefined ? null : snapshot(run)
+  if (run === undefined || !ownedByCurrentBook(run)) return null
+  return snapshot(run)
 }
 
 export function subscribeAgentRun(id: string, listener: (e: AgentStreamEvent) => void): () => void {
   const run = runs.get(id)
-  if (run === undefined) return () => undefined
+  if (run === undefined || !ownedByCurrentBook(run)) return () => undefined
   run.listeners.add(listener)
   return () => run.listeners.delete(listener)
 }
 
 export function stopAgentRun(id: string): AgentRunSnapshot {
-  const run = runs.get(id)
-  if (run === undefined) throw new InkloomError('NOT_FOUND', `agent run ${id} 不存在`)
+  const run = requireOwnedRun(id)
   if (run.status === 'running' || run.status === 'waiting_review') {
     run.stopped = true
     run.status = 'stopped'
@@ -342,6 +627,8 @@ export function stopAgentRun(id: string): AgentRunSnapshot {
     run.gate = null
     run.agent.abort()
     emit(run, { type: 'run.stopped' })
+    // doing 不能永久钉住：停止时把当前任务标成 blocked，计划标成 aborted
+    void finalizePlanOnRunEnd(run)
     finishRun(run)
   }
   return snapshot(run)
@@ -352,8 +639,7 @@ export async function reviewAgentRun(
   decision: 'approve' | 'revise',
   feedback: string | null,
 ): Promise<AgentRunSnapshot> {
-  const run = runs.get(id)
-  if (run === undefined) throw new InkloomError('NOT_FOUND', `agent run ${id} 不存在`)
+  const run = requireOwnedRun(id)
   if (run.status !== 'waiting_review' || run.gate === null) {
     throw new InkloomError('INVALID_INPUT', '这个 run 现在不在等待审阅')
   }
@@ -364,9 +650,14 @@ export async function reviewAgentRun(
   run.gate = null
   emit(run, { type: 'gate.resolved', decision, feedback })
 
-  // ★ draft 是最后一站：作者通过开篇 = 本轮结束。
-  //   否则 agent 会以为“还可以继续”，再开一次 draft 门禁（实测发生过）。
-  if (gate.stage === 'draft' && decision === 'approve') {
+  if (decision === 'revise') {
+    await revise(run, gate, feedback ?? '')
+    return snapshot(run)
+  }
+
+  // 批准：门禁是 plan 的投影，批准就是推进 plan 状态
+  const plan = run.planId === null ? null : await loadPlan(run.root, run.planId).catch(() => null)
+  if (plan === null) {
     run.status = 'done'
     run.finishedAt = new Date().toISOString()
     emit(run, { type: 'run.finished' })
@@ -374,19 +665,51 @@ export async function reviewAgentRun(
     return snapshot(run)
   }
 
+  const { project } = getContext()
+
+  if (gate.kind === 'plan') {
+    plan.summary = null
+    plan.feedback = null
+    if (isPlanComplete(plan)) {
+      plan.status = 'done'
+      await persistPlan(run, plan)
+      run.status = 'done'
+      run.finishedAt = new Date().toISOString()
+      emit(run, { type: 'run.finished' })
+      finishRun(run)
+      return snapshot(run)
+    }
+    plan.status = 'approved'
+    refreshPlanBudget(run, plan)
+    await persistPlan(run, plan)
+    const next = nextOpenTask(plan)
+    if (next === null) {
+      run.status = 'done'
+      run.finishedAt = new Date().toISOString()
+      emit(run, { type: 'run.finished' })
+      finishRun(run)
+      return snapshot(run)
+    }
+    void drive(run, buildTaskPrompt(project, plan, next))
+    return snapshot(run)
+  }
+
+  const task = plan.tasks.find((t) => t.id === gate.taskId)
+  if (task === undefined) {
+    throw new InkloomError('INVALID_INPUT', `计划里没有任务 ${gate.taskId}`)
+  }
+  task.reviewed = true
+  task.summary = null
+  task.feedback = null
+  await persistPlan(run, plan)
+  const next = nextOpenTask(plan)
   void drive(
     run,
-    decision === 'approve' ? approvePrompt(gate.stage) : revisePrompt(gate.stage, feedback ?? ''),
+    next !== null
+      ? buildTaskPrompt(project, plan, next)
+      : '所有任务都已完成。请 read_book 核对一遍，然后调用 request_review(kind="plan", summary=...) 请作者验收整本书。',
   )
   return snapshot(run)
-}
-
-function approvePrompt(stage: ReviewStage): string {
-  return `作者已通过「${stage}」阶段。请继续下一阶段；如果需要写文件，先回顾 read_book 的快照再动手。`
-}
-
-function revisePrompt(stage: ReviewStage, feedback: string): string {
-  return `作者打回了「${stage}」阶段。意见：${feedback}\n请按意见修改相关文件，改完再次调用 request_review(stage="${stage}")。`
 }
 
 /**
@@ -397,8 +720,7 @@ function revisePrompt(stage: ReviewStage, feedback: string): string {
  * - 已完成/已停止：同一段 transcript 接着聊，不再重开 run。
  */
 export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
-  const run = runs.get(id)
-  if (run === undefined) throw new InkloomError('NOT_FOUND', `agent run ${id} 不存在`)
+  const run = requireOwnedRun(id)
   if (run.status === 'failed') {
     throw new InkloomError('INVALID_INPUT', '这个 run 失败了，请开新会话')
   }
@@ -413,7 +735,7 @@ export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
     const gate = run.gate
     run.gate = null
     emit(run, { type: 'gate.resolved', decision: 'revise', feedback: text })
-    void drive(run, revisePrompt(gate.stage, text))
+    void revise(run, gate, text)
     return snapshot(run)
   }
 
@@ -421,6 +743,8 @@ export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
   run.stopped = false
   run.finishedAt = null
   activeRunId = run.id
+  // 续聊重置步数预算，但保留章节/生图上限（避免一句话又生成一章）
+  run.budget.steps = 0
   void drive(run, text)
   return snapshot(run)
 }
@@ -432,6 +756,7 @@ function snapshot(run: AgentRun): AgentRunSnapshot {
     status: run.status,
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
+    planId: run.planId,
     gate: run.gate,
     error: run.error,
     budget: run.budget,

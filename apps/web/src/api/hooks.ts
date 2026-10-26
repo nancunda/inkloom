@@ -12,6 +12,8 @@ import type {
   FinalizeResult,
   GenerateJob,
   HealthReport,
+  LibraryCurrent,
+  LibraryData,
   LocationRow,
   OverviewData,
   PowerSystem,
@@ -93,10 +95,11 @@ export function useRollbackCheckpoint() {
   })
 }
 
-export function useOverview() {
+export function useOverview(enabled = true) {
   return useQuery({
     queryKey: ['overview'],
     queryFn: () => api<OverviewData>('/overview'),
+    enabled,
   })
 }
 
@@ -492,5 +495,53 @@ export function useApplyProposals() {
         acceptIds: v.acceptIds,
       }),
     onSuccess: (_d, v) => invalidate(v.chapterNo),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 书库
+// ---------------------------------------------------------------------------
+
+/**
+ * 切书后整页重载：当前页面的 query 缓存、Agent runId、选中的章节
+ * 都属于上一本书，局部 invalidate 清不干净。
+ */
+function reloadAfterBookChange(): void {
+  window.localStorage.removeItem('inkloom.agent.runId')
+  window.location.reload()
+}
+
+export function useLibrary() {
+  return useQuery({
+    queryKey: ['library'],
+    queryFn: () => api<LibraryData>('/library'),
+    retry: false,
+  })
+}
+
+export function useOpenLibraryBook() {
+  return useMutation({
+    mutationFn: (folder: string) =>
+      post<{ current: LibraryCurrent | null }>('/library/open', { folder }),
+    onSuccess: reloadAfterBookChange,
+  })
+}
+
+export function useCreateLibraryBook() {
+  return useMutation({
+    mutationFn: (v: {
+      name: string
+      genre: string
+      totalChapters?: number
+      wordsPerChapter?: number
+    }) => post<{ current: LibraryCurrent | null; folder: string }>('/library/create', v),
+    onSuccess: reloadAfterBookChange,
+  })
+}
+
+export function useCloseLibraryBook() {
+  return useMutation({
+    mutationFn: () => post<{ current: null }>('/library/close'),
+    onSuccess: reloadAfterBookChange,
   })
 }

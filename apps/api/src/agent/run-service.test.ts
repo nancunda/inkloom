@@ -1,7 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { PlanDef, PlanStatus, TaskStatus } from '@inkloom/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { loadPlan, setCurrentPlan, writePlanDef, writePlanState } from '../storage/plans.js'
 
 interface FakeEvent {
   type: string
@@ -18,12 +20,14 @@ interface FakeAgent {
   promptCalls: number
   steers: string[]
   fail: () => void
+  done: () => void
   emit: (e: FakeEvent) => void
 }
 
 // vi.mock 工厂会被提升到 import 之前，共享状态必须用 vi.hoisted 创建
 const h = vi.hoisted(() => ({
   root: '',
+  currentRoot: '',
   agents: [] as FakeAgent[],
 }))
 
@@ -58,6 +62,12 @@ vi.mock('@earendil-works/pi-agent-core', () => {
       })
     }
 
+    /** 模型这一轮正常结束（agent_end 之后 prompt 才 resolve） */
+    done(): void {
+      const resolve = this.resolvers.pop()
+      resolve?.()
+    }
+
     fail(): void {
       const reject = this.rejecters.pop()
       reject?.(new Error('模型调用失败'))
@@ -79,23 +89,30 @@ vi.mock('@earendil-works/pi-agent-core', () => {
   return { Agent: FakeAgentImpl }
 })
 
+const projectFixture = () => ({
+  id: 'proj_unit',
+  folderId: 'folder_unit',
+  rootPath: h.root,
+  name: '测试书',
+  genre: '玄幻',
+  status: 'writing',
+})
+
 vi.mock('../services/context.js', () => ({
-  getContext: () => ({
-    root: h.root,
-    project: {
-      id: 'proj_unit',
-      folderId: 'folder_unit',
-      rootPath: h.root,
-      name: '测试书',
-      genre: '玄幻',
-      status: 'writing',
-    },
-  }),
+  getContext: () => ({ root: h.root, project: projectFixture() }),
+  peekContext: () => ({ root: h.currentRoot, project: projectFixture() }),
 }))
 
-const { getAgentRun, reviewAgentRun, sendAgentMessage, startAgentRun, stopAgentRun } = await import(
-  './run-service.js'
-)
+const {
+  clearRuns,
+  getAgentRun,
+  hasLiveAgentRun,
+  resetRunsForTest,
+  reviewAgentRun,
+  sendAgentMessage,
+  startAgentRun,
+  stopAgentRun,
+} = await import('./run-service.js')
 
 function lastAgent(): FakeAgent {
   const agent = h.agents.at(-1)
@@ -109,74 +126,279 @@ function findTool(agent: FakeAgent, name: string): FakeTool {
   return tool
 }
 
-/** 让 request_review 落进 gateBox，再由 agent_end 把 run 切到等待审阅 */
-async function reachGate(stage: 'world' | 'cast' | 'arcs' | 'draft'): Promise<{
+const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 80))
+
+interface TaskSpec {
   id: string
-  agent: FakeAgent
-}> {
-  const started = await startAgentRun('测试目标')
+  status: TaskStatus
+  review?: 'required' | 'none'
+  reviewed?: boolean
+  feedback?: string | null
+}
+
+/** 直接落一份 plan（定义 + 状态 + 指针），模拟“已有计划”的书 */
+async function seedPlan(
+  status: PlanStatus,
+  tasks: TaskSpec[],
+  summary: string | null = null,
+): Promise<string> {
+  const id = 'plan-test01'
+  const ts = new Date().toISOString()
+  const def: PlanDef = {
+    version: 1,
+    id,
+    title: '测试计划',
+    goal: '把书搭起来',
+    createdAt: ts,
+    tasks: tasks.map((t, i) => ({
+      id: t.id,
+      title: `任务 ${i + 1}`,
+      skill: 'world',
+      brief: '写点东西',
+      review: t.review ?? 'required',
+    })),
+  }
+  await writePlanDef(h.root, def)
+  await writePlanState(h.root, id, {
+    status,
+    summary,
+    feedback: null,
+    updatedAt: ts,
+    tasks: tasks.map((t) => ({
+      id: t.id,
+      status: t.status,
+      artifacts: [],
+      feedback: t.feedback ?? null,
+      summary: null,
+      reviewed: t.reviewed ?? false,
+    })),
+  })
+  await setCurrentPlan(h.root, id)
+  return id
+}
+
+/** 计划门禁：agent 提交计划 → agent_end → waiting_review */
+async function reachPlanGate(): Promise<{ id: string; agent: FakeAgent; planId: string }> {
+  const planId = await seedPlan('drafting', [{ id: 't1', status: 'todo' }])
+  const started = await startAgentRun('开始')
   const agent = lastAgent()
-  await findTool(agent, 'request_review').execute('call_1', {
-    stage,
-    summary: `${stage} 阶段完成`,
-    artifacts: ['world/rules.json'],
+  await findTool(agent, 'request_review').execute('c1', {
+    kind: 'plan',
+    summary: '请批准计划',
   })
   agent.emit({ type: 'agent_end' })
+  agent.done()
+  await tick()
   expect(getAgentRun(started.id)?.status).toBe('waiting_review')
-  return { id: started.id, agent }
+  return { id: started.id, agent, planId }
+}
+
+/** 任务门禁：批准的计划正在做 t1，agent 做完并请求审阅 */
+async function reachTaskGate(): Promise<{ id: string; agent: FakeAgent; planId: string }> {
+  const planId = await seedPlan('approved', [
+    { id: 't1', status: 'doing' },
+    { id: 't2', status: 'todo' },
+  ])
+  const started = await startAgentRun('继续')
+  const agent = lastAgent()
+  await findTool(agent, 'update_task').execute('c1', {
+    taskId: 't1',
+    status: 'done',
+    artifacts: [],
+  })
+  await findTool(agent, 'request_review').execute('c2', {
+    kind: 'task',
+    taskId: 't1',
+    summary: '任务 1 做完了',
+  })
+  agent.emit({ type: 'agent_end' })
+  agent.done()
+  await tick()
+  expect(getAgentRun(started.id)?.status).toBe('waiting_review')
+  return { id: started.id, agent, planId }
 }
 
 beforeEach(async () => {
   h.agents.length = 0
   h.root = await mkdtemp(join(tmpdir(), 'inkloom-agent-unit-'))
+  h.currentRoot = h.root
   process.env['DEEPSEEK_API_KEY'] = 'sk-test'
 })
 
 afterEach(async () => {
   delete process.env['DEEPSEEK_API_KEY']
   await new Promise((r) => setTimeout(r, 20))
+  resetRunsForTest()
   await rm(h.root, { recursive: true, force: true }).catch(() => undefined)
 })
 
-describe('reviewAgentRun 状态机', () => {
-  // 回归：2026-10 实测「通过开篇」后又弹了一次 draft 门禁，
-  // 因为 approve 一律当成“继续下一阶段”，而 draft 已是最后一站。
-  it('★ draft 通过 = 本轮结束，不再续跑', async () => {
-    const { id, agent } = await reachGate('draft')
+describe('计划门禁', () => {
+  it('★ 计划通过 → approved，并自动开始第一个任务', async () => {
+    const { id, agent, planId } = await reachPlanGate()
+    expect(agent.promptCalls).toBe(1)
 
     const reviewed = await reviewAgentRun(id, 'approve', null)
+
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.status).toBe('approved')
+    expect(agent.promptCalls).toBe(2)
+    expect(reviewed.events.map((e) => e.type)).toContain('gate.resolved')
+    stopAgentRun(id)
+  })
+
+  it('计划打回 → 回到 drafting，带意见重新规划', async () => {
+    const { id, agent, planId } = await reachPlanGate()
+
+    await reviewAgentRun(id, 'revise', '任务太粗，拆细一点')
+
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.status).toBe('drafting')
+    expect(plan?.feedback).toBe('任务太粗，拆细一点')
+    expect(agent.promptCalls).toBe(2)
+    stopAgentRun(id)
+  })
+
+  it('★ 全部任务完成后通过计划 = 本轮结束（不再续跑）', async () => {
+    const planId = await seedPlan('awaiting_approval', [
+      { id: 't1', status: 'done', reviewed: true },
+    ])
+    const started = await startAgentRun('验收')
+    const agent = lastAgent()
+
+    // 恢复等待批准：不叫模型
+    expect(agent.promptCalls).toBe(0)
+    expect(getAgentRun(started.id)?.gate?.kind).toBe('plan')
+
+    const reviewed = await reviewAgentRun(started.id, 'approve', null)
 
     expect(reviewed.status).toBe('done')
-    expect(reviewed.gate).toBeNull()
     expect(reviewed.finishedAt).not.toBeNull()
+    expect((await loadPlan(h.root, planId))?.status).toBe('done')
+    expect(agent.promptCalls).toBe(0)
+  })
+})
+
+describe('任务门禁', () => {
+  it('★ 任务通过 → 自动开始下一个任务', async () => {
+    const { id, agent, planId } = await reachTaskGate()
     expect(agent.promptCalls).toBe(1)
-    const types = reviewed.events.map((e) => e.type)
-    expect(types).toContain('gate.waiting')
-    expect(types).toContain('gate.resolved')
-    expect(types).toContain('run.finished')
-    expect(types).not.toContain('run.failed')
-  })
 
-  it('非 draft 阶段通过后继续下一阶段', async () => {
-    const { id, agent } = await reachGate('world')
+    await reviewAgentRun(id, 'approve', null)
 
-    const reviewed = await reviewAgentRun(id, 'approve', null)
-
-    expect(reviewed.status).toBe('running')
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.tasks.find((t) => t.id === 't1')?.reviewed).toBe(true)
+    expect(plan?.tasks.find((t) => t.id === 't2')?.status).toBe('todo')
     expect(agent.promptCalls).toBe(2)
     stopAgentRun(id)
   })
 
-  it('draft 打回后带上意见继续跑', async () => {
-    const { id, agent } = await reachGate('draft')
+  it('任务打回 → 回到 doing，意见写进任务', async () => {
+    const { id, agent, planId } = await reachTaskGate()
 
-    const reviewed = await reviewAgentRun(id, 'revise', '第二章的钩子不够狠')
+    await reviewAgentRun(id, 'revise', '规则太抽象，要能执行')
 
-    expect(reviewed.status).toBe('running')
+    const plan = await loadPlan(h.root, planId)
+    const task = plan?.tasks.find((t) => t.id === 't1')
+    expect(task?.status).toBe('doing')
+    expect(task?.reviewed).toBe(false)
+    expect(task?.feedback).toBe('规则太抽象，要能执行')
     expect(agent.promptCalls).toBe(2)
     stopAgentRun(id)
   })
 
+  it('review=none 的任务不产生门禁', async () => {
+    const planId = await seedPlan('approved', [{ id: 't1', status: 'doing', review: 'none' }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    await findTool(agent, 'update_task').execute('c1', {
+      taskId: 't1',
+      status: 'done',
+      artifacts: [],
+    })
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await tick()
+
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.tasks[0]?.reviewed).toBe(true)
+    // 没有任务门禁；全部完成后自动推进到「请作者验收」
+    expect(getAgentRun(started.id)?.gate).toBeNull()
+    stopAgentRun(started.id)
+  })
+})
+
+describe('门禁回归', () => {
+  it('★ 批准计划后，任务结束时不会重复投出旧计划门禁（gateBox 消费即清空）', async () => {
+    const planId = await seedPlan('drafting', [
+      { id: 't1', status: 'todo', review: 'none' },
+      { id: 't2', status: 'todo' },
+    ])
+    const started = await startAgentRun('开始')
+    const agent = lastAgent()
+    await findTool(agent, 'request_review').execute('c1', { kind: 'plan', summary: '请批准' })
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await tick()
+
+    await reviewAgentRun(started.id, 'approve', null)
+    // 批准后开始 t1（prompt #2）
+    expect(agent.promptCalls).toBe(2)
+
+    // t1 完成，本轮正常结束：旧 gateBox 不能把 plan 门禁再投一次
+    await findTool(agent, 'update_task').execute('c2', {
+      taskId: 't1',
+      status: 'done',
+      artifacts: [],
+    })
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await settle()
+
+    const snap = getAgentRun(started.id)
+    expect(snap?.status).toBe('running')
+    expect(snap?.gate).toBeNull()
+    expect(agent.promptCalls).toBe(3)
+    expect((await loadPlan(h.root, planId))?.tasks[1]?.status).toBe('todo')
+    stopAgentRun(started.id)
+  })
+})
+
+describe('中止终态', () => {
+  it('★ 停止：doing → blocked，已批准的计划 → aborted', async () => {
+    const planId = await seedPlan('approved', [
+      { id: 't1', status: 'doing' },
+      { id: 't2', status: 'todo' },
+    ])
+    const started = await startAgentRun('继续')
+
+    stopAgentRun(started.id)
+    await new Promise((r) => setTimeout(r, 80))
+
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.status).toBe('aborted')
+    expect(plan?.tasks.find((t) => t.id === 't1')?.status).toBe('blocked')
+  })
+
+  it('budget 耗尽且还有任务 → failed，不把任务钉在 doing', async () => {
+    const planId = await seedPlan('approved', [{ id: 't1', status: 'doing' }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    // 直接耗尽步数预算，然后让本轮正常结束
+    const run = getAgentRun(started.id)
+    if (run !== null) run.budget.steps = run.budget.maxSteps
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await new Promise((r) => setTimeout(r, 80))
+
+    const after = getAgentRun(started.id)
+    expect(after?.status).toBe('failed')
+    expect(after?.error).toContain('步数预算')
+    expect((await loadPlan(h.root, planId))?.tasks[0]?.status).toBe('blocked')
+  })
+})
+
+describe('review 基本校验', () => {
   it('不在等待审阅时拒绝 review', async () => {
     const started = await startAgentRun('测试目标')
     await expect(reviewAgentRun(started.id, 'approve', null)).rejects.toThrow(
@@ -186,9 +408,36 @@ describe('reviewAgentRun 状态机', () => {
   })
 
   it('打回必须带意见', async () => {
-    const { id } = await reachGate('cast')
+    const { id } = await reachPlanGate()
     await expect(reviewAgentRun(id, 'revise', '  ')).rejects.toThrow('打回必须写清楚要改什么')
     stopAgentRun(id)
+  })
+})
+
+describe('归属与清理（切书安全）', () => {
+  it('★ run 只属于创建它的书：换书后不可读、不可续聊', async () => {
+    const started = await startAgentRun('测试目标')
+    h.currentRoot = join(h.root, 'other-book')
+
+    expect(getAgentRun(started.id)).toBeNull()
+    expect(() => sendAgentMessage(started.id, '继续')).toThrow('不存在')
+
+    h.currentRoot = h.root
+    expect(getAgentRun(started.id)?.status).toBe('running')
+    stopAgentRun(started.id)
+  })
+
+  it('hasLiveAgentRun 反映占用状态；clearRuns 只清已结束的 run', async () => {
+    const started = await startAgentRun('测试目标')
+    expect(hasLiveAgentRun()).toBe(true)
+
+    clearRuns()
+    expect(getAgentRun(started.id)?.status).toBe('running')
+
+    stopAgentRun(started.id)
+    expect(hasLiveAgentRun()).toBe(false)
+    expect(clearRuns()).toBe(1)
+    expect(getAgentRun(started.id)).toBeNull()
   })
 })
 
@@ -197,46 +446,49 @@ describe('sendAgentMessage（对话式共创）', () => {
     const started = await startAgentRun('测试目标')
     const agent = lastAgent()
 
-    const next = sendAgentMessage(started.id, '顺便把地点名字改短一点')
+    sendAgentMessage(started.id, '顺便看一下节奏')
 
-    expect(next.status).toBe('running')
-    expect(agent.steers).toEqual(['顺便把地点名字改短一点'])
-    expect(next.events.some((e) => e.type === 'user.message')).toBe(true)
+    expect(agent.steers).toEqual(['顺便看一下节奏'])
     stopAgentRun(started.id)
   })
 
-  it('★ 等待审阅时发消息 = 带意见打回，本阶段重做', async () => {
-    const { id, agent } = await reachGate('world')
+  it('★ 等待审阅时发消息 = 带意见打回', async () => {
+    const { id, agent, planId } = await reachPlanGate()
 
-    const next = sendAgentMessage(id, '规则太多，压到三条')
+    sendAgentMessage(id, '把第 2 个任务拆成两半')
+    await settle()
 
-    expect(next.status).toBe('running')
-    expect(next.gate).toBeNull()
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.status).toBe('drafting')
+    expect(plan?.feedback).toBe('把第 2 个任务拆成两半')
     expect(agent.promptCalls).toBe(2)
-    const resolved = next.events.find((e) => e.type === 'gate.resolved')
-    expect(resolved).toMatchObject({ decision: 'revise', feedback: '规则太多，压到三条' })
     stopAgentRun(id)
   })
 
-  it('★ 本轮结束后还能接着聊（同一段 transcript）', async () => {
-    const { id, agent } = await reachGate('draft')
-    await reviewAgentRun(id, 'approve', null)
-    expect(getAgentRun(id)?.status).toBe('done')
+  it('本轮结束后还能接着聊（同一段 transcript）', async () => {
+    const planId = await seedPlan('awaiting_approval', [
+      { id: 't1', status: 'done', reviewed: true },
+    ])
+    const started = await startAgentRun('验收')
+    const agent = lastAgent()
+    await reviewAgentRun(started.id, 'approve', null)
+    expect(getAgentRun(started.id)?.status).toBe('done')
 
-    const next = sendAgentMessage(id, '第 2 场再克制一点')
+    sendAgentMessage(started.id, '第 1 章能不能更狠一点')
+    await tick()
 
-    expect(next.status).toBe('running')
-    expect(next.finishedAt).toBeNull()
-    expect(agent.promptCalls).toBe(2)
-    stopAgentRun(id)
+    expect(agent.promptCalls).toBe(1)
+    expect(getAgentRun(started.id)?.status).toBe('running')
+    expect((await loadPlan(h.root, planId))?.status).toBe('done')
+    stopAgentRun(started.id)
   })
 
   it('失败的 run 不再接收消息', async () => {
     const started = await startAgentRun('测试目标')
-    lastAgent().fail()
-    await new Promise((r) => setTimeout(r, 10))
+    const agent = lastAgent()
+    agent.fail()
+    await tick()
     expect(getAgentRun(started.id)?.status).toBe('failed')
-
-    expect(() => sendAgentMessage(started.id, '继续')).toThrow('这个 run 失败了，请开新会话')
+    expect(() => sendAgentMessage(started.id, '再试一次')).toThrow('失败了')
   })
 })
