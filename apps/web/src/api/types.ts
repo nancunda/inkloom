@@ -180,6 +180,49 @@ export interface SearchResult {
   hits: SearchHit[]
 }
 
+export interface CharacterRow {
+  id: string
+  name: string
+  role: string
+  gender?: string
+  age?: string
+  appearance?: string
+  personality?: string
+  background?: string
+  motivation?: string
+  arc?: string
+  curTierId?: string
+  curPhysical?: string
+  stateChapter?: number
+  stateStale?: boolean
+  visualAnchor?: string
+  [k: string]: unknown
+}
+
+export interface WorldRuleRow {
+  id: string
+  category: string
+  name: string
+  content: string
+  priority: 'hard' | 'soft'
+  [k: string]: unknown
+}
+
+export interface PowerTier {
+  id: string
+  systemId: string
+  name: string
+  level: number
+}
+
+export interface PowerSystem {
+  id: string
+  name: string
+  description?: string
+  tiers: PowerTier[]
+  [k: string]: unknown
+}
+
 export interface SettingsField {
   key: string
   secret: boolean

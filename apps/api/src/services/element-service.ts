@@ -22,6 +22,15 @@ export interface UpsertElementInput {
   payload: unknown
   changeSource: ChangeSource
   changeReason?: string
+  /**
+   * 调用方读到的文件 hash。
+   *
+   * ★ 数组文件（characters/index.json）与单实体 revision 不是同一个粒度：
+   *   前者的 revision payload 是“某个角色的状态补丁”，拿它算出来的 hash
+   *   永远对不上整个数组文件。这种情况下必须由读方带着自己看到的 hash 来，
+   *   才是真正的乐观锁——“我基于这个版本改的”。
+   */
+  expectedHash?: string
 }
 
 export interface UpsertResult {
@@ -70,8 +79,8 @@ export async function upsertElement(input: UpsertElementInput): Promise<UpsertRe
     await ensureRepo(ctx.root)
 
     const prev = await lastRevision(ctx.root, input.entityType, input.entityId)
-    // ★ 基准来自上一条 revision，不是实时读文件（见 expectedHashFromPrev）
-    const expectedHash = expectedHashFromPrev(prev)
+    // 调用方带了 hash 就用它；否则退回“上一条 revision”基准
+    const expectedHash = input.expectedHash ?? expectedHashFromPrev(prev)
 
     const revision: RevisionRecord = nextRevision({
       id: `rev_${randomUUID().replace(/-/g, '').slice(0, 16)}`,

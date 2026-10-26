@@ -6,11 +6,13 @@ import type {
   Book,
   ChapterDetail,
   ChapterText,
+  CharacterRow,
   DiffResult,
   FinalizeResult,
   GenerateJob,
   HealthReport,
   OverviewData,
+  PowerSystem,
   ProposeResult,
   RelationGraphData,
   SceneDetail,
@@ -18,6 +20,7 @@ import type {
   SettingsData,
   ThreadsData,
   WorldData,
+  WorldRuleRow,
 } from './types'
 
 export function useBook() {
@@ -89,6 +92,74 @@ export function useWorld() {
   return useQuery({
     queryKey: ['world'],
     queryFn: () => api<WorldData>('/world'),
+  })
+}
+
+/** 要素文件读取：characters/index.json 等（只允许 characters/ 与 world/ 下） */
+export function useCharacters() {
+  return useQuery({
+    queryKey: ['element', 'characters/index.json'],
+    queryFn: () =>
+      api<{ path: string; data: CharacterRow[] }>('/elements?path=characters%2Findex.json').then(
+        (r) => r.data,
+      ),
+  })
+}
+
+export function useRules() {
+  return useQuery({
+    queryKey: ['element', 'world/rules.json'],
+    queryFn: () =>
+      api<{ path: string; data: WorldRuleRow[] }>('/elements?path=world%2Frules.json').then(
+        (r) => r.data,
+      ),
+  })
+}
+
+export function usePowerSystem() {
+  return useQuery({
+    queryKey: ['element', 'world/power-system.json'],
+    queryFn: () =>
+      api<{ path: string; data: PowerSystem }>('/elements?path=world%2Fpower-system.json').then(
+        (r) => r.data,
+      ),
+  })
+}
+
+/** 保存要素：与 CLI `element set` 同一条写入路径（CAS + revision + commit） */
+export function useSaveElement() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: {
+      relPath: string
+      entityType: string
+      entityId: string
+      payload: unknown
+      reason?: string
+    }) =>
+      // 先读当前 hash 再写：这份编辑是基于刚才读到的那个版本，
+      // 中间被别人（CLI / 另一个标签页）改过就 409，而不是静默覆盖。
+      api<{ hash: string }>(`/elements?path=${encodeURIComponent(input.relPath)}`)
+        .then((r) =>
+          fetch('/api/elements', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ...input, expectedHash: r.hash }),
+          }),
+        )
+        .then(async (r) => {
+          if (!r.ok) {
+            const e = (await r.json().catch(() => null)) as { error?: { message?: string } } | null
+            throw new Error(e?.error?.message ?? `保存失败 HTTP ${r.status}`)
+          }
+          return (await r.json()) as { version: number }
+        }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['element', v.relPath] })
+      // 角色名/关系可能被别处引用，一并刷新
+      void qc.invalidateQueries({ queryKey: ['relations'] })
+      void qc.invalidateQueries({ queryKey: ['overview'] })
+    },
   })
 }
 

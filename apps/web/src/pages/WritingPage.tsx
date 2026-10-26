@@ -103,6 +103,50 @@ function WriteView() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // ★ spec §4.13 键盘流：J/K 切场景、Enter 接受、Esc 取消选中
+  //   输入框里不劫持按键——写作时经常在指导框里打字，
+  //   如果 J/K 在这里被拦住，用户会以为键盘流坏了。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement | null
+      if (
+        t !== null &&
+        (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      ) {
+        return
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const s = useSessionStore.getState()
+      const cur = s.selectedScene
+
+      if (e.key === 'j' || e.key === 'k') {
+        if (sceneNos.length === 0) return
+        e.preventDefault()
+        const idx = cur === null ? -1 : sceneNos.indexOf(cur)
+        const nextIdx =
+          e.key === 'j' ? Math.min(idx + 1, sceneNos.length - 1) : Math.max(idx - 1, 0)
+        const next = sceneNos[nextIdx]
+        if (next !== undefined) s.selectScene(next)
+        return
+      }
+
+      if (e.key === 'Escape') {
+        s.selectScene(null)
+        return
+      }
+
+      if (e.key === 'Enter' && cur !== null) {
+        const versions = grouped.get(cur) ?? []
+        const row = versions[0]
+        if (row === undefined || row.status !== 'candidate') return
+        e.preventDefault()
+        void accept.mutateAsync({ chapterNo, sceneNo: cur, version: row.version })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sceneNos, grouped, chapterNo, accept])
+
   return (
     <div className="flex min-h-0 flex-1">
       <ChapterList />
@@ -115,6 +159,9 @@ function WriteView() {
           <span className="text-xs text-neutral-400">
             {chapter === undefined ? '' : (STATUS_LABEL[chapter.status] ?? chapter.status)}
             {chapter !== undefined && chapter.wordCount > 0 ? ` · ${chapter.wordCount} 字` : ''}
+          </span>
+          <span className="ml-auto text-[10px] text-neutral-300">
+            J/K 切换场景 · Enter 接受 · Esc 取消
           </span>
         </div>
 
