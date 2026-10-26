@@ -1,6 +1,7 @@
 import type { JudgeProvider } from '@inkloom/core'
 import { InkloomError } from '@inkloom/shared'
 import { Hono } from 'hono'
+import type { ImageProvider } from '../assets/image-provider.js'
 import { checkChapter } from '../judge/health-check.js'
 import { resolveJudgeProvider } from '../judge/registry.js'
 import type { FetchLike } from '../llm/types.js'
@@ -10,6 +11,7 @@ import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service
 import { generateChapter } from '../services/generate-service.js'
 import { importChapters } from '../services/import-service.js'
 import { getJob, listJobs, submitGenerate } from '../services/job-service.js'
+import { generatePortrait } from '../services/portrait-service.js'
 import { createRelation } from '../services/relation-service.js'
 import { rewriteSceneSeg } from '../services/rewrite-service.js'
 import { acceptScene, editSceneSeg, rejectScene } from '../services/scene-review-service.js'
@@ -32,6 +34,8 @@ export interface ActionDeps {
   apiKey?: string
   /** 判断层 provider；传 null = 关闭，不传 = 按 INKLOOM_JUDGE 解析 */
   judgeProvider?: JudgeProvider | null
+  /** 生图 provider；测试可注入假图，不传 = 真实调用硅基流动 */
+  imageProvider?: ImageProvider
   /** 前端静态目录（发行包里与 API 同进程提供）；测试可覆盖 */
   webDist?: string
 }
@@ -61,6 +65,43 @@ export function createActions(deps: ActionDeps = {}): Hono {
     return c.json(
       await checkChapter({ chapterNo, provider: resolveJudgeProvider(deps.judgeProvider) }),
     )
+  })
+
+  /**
+   * 角色形象（P4）：从 visualAnchor 生图 → 落盘 → 记 Asset。
+   *
+   * ★ 与 CLI `portrait` 调同一个 generatePortrait：界面不是另一条实现。
+   * ★ key 缺了报 AUTH 并指向「设置」页，而不是笼统的 500。
+   */
+  actions.post('/portraits', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+    const characterId = typeof body?.['characterId'] === 'string' ? body['characterId'].trim() : ''
+    if (characterId === '') throw new InkloomError('INVALID_INPUT', 'characterId 必填')
+
+    const key = (process.env['SILICONFLOW_API_KEY'] ?? '').trim()
+    if (deps.imageProvider === undefined && key === '') {
+      throw new InkloomError('AUTH', '缺少 SILICONFLOW_API_KEY：在「设置」里填硅基流动 Key 后重试')
+    }
+
+    const style =
+      typeof body?.['style'] === 'string' && body['style'].trim() !== ''
+        ? body['style'].trim()
+        : undefined
+    const model =
+      (process.env['SILICONFLOW_IMAGE_MODEL'] ?? '').trim() === ''
+        ? undefined
+        : (process.env['SILICONFLOW_IMAGE_MODEL'] ?? '').trim()
+
+    const result = await generatePortrait({
+      characterId,
+      apiKey: key,
+      ...(style === undefined ? {} : { style }),
+      ...(model === undefined ? {} : { model }),
+      ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+      ...(deps.imageProvider === undefined ? {} : { imageProvider: deps.imageProvider }),
+    })
+
+    return c.json(result)
   })
 
   actions.post('/import', async (c) => {

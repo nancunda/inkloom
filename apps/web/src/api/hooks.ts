@@ -58,6 +58,28 @@ export function useAssets() {
   return useQuery({ queryKey: ['assets'], queryFn: () => api<AssetsData>('/assets') })
 }
 
+/** 生成角色形象：与 CLI `portrait` 同一条服务端链路 */
+export function useGeneratePortrait() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { characterId: string; style?: string }) =>
+      fetch('/api/portraits', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const e = (await r.json().catch(() => null)) as { error?: { message?: string } } | null
+          throw new Error(e?.error?.message ?? `生成失败 HTTP ${r.status}`)
+        }
+        return (await r.json()) as { characterId: string; name: string; filePath: string }
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 export function useChapterText(chapterNo: number) {
   return useQuery({
     queryKey: ['chapter-text', chapterNo],
