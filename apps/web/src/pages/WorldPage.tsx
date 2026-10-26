@@ -1,7 +1,25 @@
 import { useState } from 'react'
-import { usePowerSystem, useRules, useSaveElement } from '../api/hooks'
-import type { PowerSystem, WorldRuleRow } from '../api/types'
+import { useLocations, usePowerSystem, useRoutes, useRules, useSaveElement } from '../api/hooks'
+import type { LocationRow, PowerSystem, RouteRow, WorldRuleRow } from '../api/types'
 import { WorldMap } from '../components/WorldMap'
+
+const LOCATION_TYPES: { value: string; label: string }[] = [
+  { value: 'city', label: '城镇' },
+  { value: 'mountain', label: '山' },
+  { value: 'sect', label: '宗门' },
+  { value: 'secret_realm', label: '秘境' },
+  { value: 'ruin', label: '遗址' },
+  { value: 'plain', label: '原野' },
+]
+
+const ROUTE_MODES: { value: string; label: string }[] = [
+  { value: 'walk', label: '步行' },
+  { value: 'ride', label: '骑行' },
+  { value: 'fly', label: '飞行' },
+  { value: 'teleport', label: '传送' },
+  { value: 'boat', label: '水路' },
+  { value: 'caravan', label: '商队' },
+]
 
 /**
  * 世界（spec §2.1 ②）：力量体系 / 世界规则 / 地点路线。
@@ -10,14 +28,14 @@ import { WorldMap } from '../components/WorldMap'
  *   提示词里全量注入；soft 只作参考，可降级。编辑界面必须让这个区别一眼可见。
  */
 export function WorldPage() {
-  const [tab, setTab] = useState<'rules' | 'map'>('rules')
+  const [tab, setTab] = useState<'rules' | 'places' | 'map'>('rules')
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-6 py-2">
         <h1 className="text-sm font-semibold text-neutral-900">世界</h1>
         <div className="flex gap-1">
-          {(['rules', 'map'] as const).map((t) => (
+          {(['rules', 'places', 'map'] as const).map((t) => (
             <button
               key={t}
               type="button"
@@ -26,7 +44,7 @@ export function WorldPage() {
                 tab === t ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
               }`}
             >
-              {t === 'rules' ? '规则与力量体系' : '地点与路线'}
+              {t === 'rules' ? '规则与力量体系' : t === 'places' ? '地点与路线' : '地图'}
             </button>
           ))}
         </div>
@@ -36,6 +54,8 @@ export function WorldPage() {
         <div className="min-h-0 flex-1">
           <WorldMap />
         </div>
+      ) : tab === 'places' ? (
+        <PlacesEditor />
       ) : (
         <RulesEditor />
       )}
@@ -245,6 +265,378 @@ function RulesEditor() {
 
         <p className="text-[11px] text-neutral-400">
           改动保存后写入 world/rules.json 与 world/power-system.json，下一次生成立即生效。
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 地点与路线编辑。
+ *
+ * ★ 路线天数由系统算（spec P0-13）：写作时引用「走了三天」必须与这里的值一致，
+ *   所以 days 只能在这里填写，AI 不得改。
+ * ★ 校验交给后端：/api/elements 用 shared 的 locationSchema / routeSchema
+ *   解析整个数组，前端只做「别提交空名字」这种即时提示。
+ */
+function PlacesEditor() {
+  const { data: locations } = useLocations()
+  const { data: routes } = useRoutes()
+  const save = useSaveElement()
+  const [locDraft, setLocDraft] = useState<LocationRow[] | null>(null)
+  const [routeDraft, setRouteDraft] = useState<RouteRow[] | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const locs = locDraft ?? locations ?? []
+  const rts = routeDraft ?? routes ?? []
+
+  const nextId = (rows: { id: string }[], prefix: string): string => {
+    const max = rows.reduce((n, r) => {
+      const m = new RegExp(`^${prefix}(\\d+)$`).exec(r.id)
+      return m === null ? n : Math.max(n, Number(m[1]))
+    }, 0)
+    return `${prefix}${max + 1}`
+  }
+
+  const saveLocations = (): void => {
+    if (locDraft === null) return
+    if (locDraft.some((l) => l.name.trim() === '')) {
+      setMsg('地点名称不能为空')
+      return
+    }
+    save.mutate(
+      {
+        relPath: 'world/locations.json',
+        entityType: 'location',
+        entityId: 'locations',
+        payload: locDraft,
+        reason: '界面编辑地点',
+      },
+      {
+        onSuccess: (r) => {
+          setMsg(`地点已保存 · v${r.version}`)
+          setLocDraft(null)
+        },
+        onError: (e) => setMsg(e.message),
+      },
+    )
+  }
+
+  const saveRoutes = (): void => {
+    if (routeDraft === null) return
+    const bad = routeDraft.find(
+      (r) => r.fromId === r.toId || !Number.isInteger(r.days) || r.days <= 0,
+    )
+    if (bad !== undefined) {
+      setMsg('路线：起点与终点不能相同，天数必须是正整数')
+      return
+    }
+    save.mutate(
+      {
+        relPath: 'world/routes.json',
+        entityType: 'route',
+        entityId: 'routes',
+        payload: routeDraft,
+        reason: '界面编辑路线',
+      },
+      {
+        onSuccess: (r) => {
+          setMsg(`路线已保存 · v${r.version}`)
+          setRouteDraft(null)
+        },
+        onError: (e) => setMsg(e.message),
+      },
+    )
+  }
+
+  const nameOf = new Map(locs.map((l) => [l.id, l.name]))
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-5xl space-y-5 p-6">
+        {msg !== null && (
+          <p className="rounded border border-neutral-200 bg-white px-3 py-2 text-[11px] text-neutral-600">
+            {msg}
+          </p>
+        )}
+
+        <section className="rounded-lg border border-neutral-200 bg-white">
+          <div className="flex items-center gap-3 border-b border-neutral-100 px-4 py-2">
+            <h2 className="text-sm font-medium text-neutral-800">地点</h2>
+            <span className="text-[11px] text-neutral-400">{locs.length} 处</span>
+            <button
+              type="button"
+              onClick={() =>
+                setLocDraft([
+                  ...locs,
+                  {
+                    id: nextId(locs, 'l'),
+                    name: '',
+                    type: 'city',
+                    region: '',
+                    description: '',
+                    x: null,
+                    y: null,
+                  },
+                ])
+              }
+              className="rounded border border-neutral-300 px-2 py-0.5 text-[11px] text-neutral-600"
+            >
+              ＋ 添加
+            </button>
+            <button
+              type="button"
+              onClick={saveLocations}
+              disabled={locDraft === null || save.isPending}
+              className="ml-auto rounded bg-neutral-900 px-2.5 py-1 text-[11px] text-white disabled:opacity-30"
+            >
+              保存地点
+            </button>
+          </div>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="border-b border-neutral-100 text-left text-[10px] text-neutral-400">
+                <th className="w-14 px-3 py-1.5">id</th>
+                <th className="w-40 px-2 py-1.5">名称</th>
+                <th className="w-28 px-2 py-1.5">类型</th>
+                <th className="w-28 px-2 py-1.5">地域</th>
+                <th className="px-2 py-1.5">说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {locs.map((l, i) => (
+                <tr key={l.id} className="border-b border-neutral-50 last:border-0">
+                  <td className="px-3 py-1 font-mono text-[10px] text-neutral-400">{l.id}</td>
+                  <td className="px-2 py-1">
+                    <input
+                      aria-label={`地点 ${l.id} 名称`}
+                      value={l.name}
+                      onChange={(e) => {
+                        const next = locs.slice()
+                        next[i] = { ...l, name: e.target.value }
+                        setLocDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1.5 py-0.5"
+                    />
+                  </td>
+                  <td className="px-2 py-1">
+                    <select
+                      aria-label={`地点 ${l.id} 类型`}
+                      value={l.type}
+                      onChange={(e) => {
+                        const next = locs.slice()
+                        next[i] = { ...l, type: e.target.value }
+                        setLocDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1 py-0.5"
+                    >
+                      {LOCATION_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1">
+                    <input
+                      aria-label={`地点 ${l.id} 地域`}
+                      value={l.region ?? ''}
+                      onChange={(e) => {
+                        const next = locs.slice()
+                        next[i] = { ...l, region: e.target.value }
+                        setLocDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1.5 py-0.5"
+                    />
+                  </td>
+                  <td className="px-2 py-1">
+                    <input
+                      aria-label={`地点 ${l.id} 说明`}
+                      value={l.description ?? ''}
+                      onChange={(e) => {
+                        const next = locs.slice()
+                        next[i] = { ...l, description: e.target.value }
+                        setLocDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1.5 py-0.5"
+                    />
+                  </td>
+                </tr>
+              ))}
+              {locs.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-xs text-neutral-400">
+                    还没有地点
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+
+        <section className="rounded-lg border border-neutral-200 bg-white">
+          <div className="flex items-center gap-3 border-b border-neutral-100 px-4 py-2">
+            <h2 className="text-sm font-medium text-neutral-800">路线</h2>
+            <span className="text-[11px] text-neutral-400">天数由这里定，写作用它</span>
+            <button
+              type="button"
+              onClick={() => {
+                const first = locs[0]?.id ?? 'l1'
+                const second = locs[1]?.id ?? first
+                setRouteDraft([
+                  ...rts,
+                  {
+                    id: nextId(rts, 'r'),
+                    fromId: first,
+                    toId: second,
+                    mode: 'walk',
+                    days: 1,
+                    condition: '',
+                    bidirectional: true,
+                  },
+                ])
+              }}
+              className="rounded border border-neutral-300 px-2 py-0.5 text-[11px] text-neutral-600"
+            >
+              ＋ 添加
+            </button>
+            <button
+              type="button"
+              onClick={saveRoutes}
+              disabled={routeDraft === null || save.isPending}
+              className="ml-auto rounded bg-neutral-900 px-2.5 py-1 text-[11px] text-white disabled:opacity-30"
+            >
+              保存路线
+            </button>
+          </div>
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="border-b border-neutral-100 text-left text-[10px] text-neutral-400">
+                <th className="w-14 px-3 py-1.5">id</th>
+                <th className="w-36 px-2 py-1.5">起点</th>
+                <th className="w-36 px-2 py-1.5">终点</th>
+                <th className="w-24 px-2 py-1.5">方式</th>
+                <th className="w-20 px-2 py-1.5">天数</th>
+                <th className="w-20 px-2 py-1.5">双向</th>
+                <th className="px-2 py-1.5">通行条件</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rts.map((r, i) => (
+                <tr key={r.id} className="border-b border-neutral-50 last:border-0">
+                  <td className="px-3 py-1 font-mono text-[10px] text-neutral-400">{r.id}</td>
+                  <td className="px-2 py-1">
+                    <select
+                      aria-label={`路线 ${r.id} 起点`}
+                      value={r.fromId}
+                      onChange={(e) => {
+                        const next = rts.slice()
+                        next[i] = { ...r, fromId: e.target.value }
+                        setRouteDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1 py-0.5"
+                    >
+                      {locs.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name === '' ? l.id : l.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1">
+                    <select
+                      aria-label={`路线 ${r.id} 终点`}
+                      value={r.toId}
+                      onChange={(e) => {
+                        const next = rts.slice()
+                        next[i] = { ...r, toId: e.target.value }
+                        setRouteDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1 py-0.5"
+                    >
+                      {locs.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name === '' ? l.id : l.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1">
+                    <select
+                      aria-label={`路线 ${r.id} 方式`}
+                      value={r.mode}
+                      onChange={(e) => {
+                        const next = rts.slice()
+                        next[i] = { ...r, mode: e.target.value }
+                        setRouteDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1 py-0.5"
+                    >
+                      {ROUTE_MODES.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1">
+                    <input
+                      aria-label={`路线 ${r.id} 天数`}
+                      type="number"
+                      min={1}
+                      value={r.days}
+                      onChange={(e) => {
+                        const next = rts.slice()
+                        next[i] = { ...r, days: Number(e.target.value) }
+                        setRouteDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1.5 py-0.5"
+                    />
+                  </td>
+                  <td className="px-2 py-1 text-center">
+                    <input
+                      aria-label={`路线 ${r.id} 双向`}
+                      type="checkbox"
+                      checked={r.bidirectional}
+                      onChange={(e) => {
+                        const next = rts.slice()
+                        next[i] = { ...r, bidirectional: e.target.checked }
+                        setRouteDraft(next)
+                      }}
+                    />
+                  </td>
+                  <td className="px-2 py-1">
+                    <input
+                      aria-label={`路线 ${r.id} 通行条件`}
+                      value={r.condition ?? ''}
+                      onChange={(e) => {
+                        const next = rts.slice()
+                        next[i] = { ...r, condition: e.target.value }
+                        setRouteDraft(next)
+                      }}
+                      className="w-full rounded border border-neutral-300 px-1.5 py-0.5"
+                    />
+                  </td>
+                </tr>
+              ))}
+              {rts.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-6 text-center text-xs text-neutral-400">
+                    还没有路线
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <p className="px-4 py-2 text-[10px] text-neutral-400">
+            当前：{rts.length} 条路线 · 最长{' '}
+            {rts.length === 0 ? 0 : Math.max(...rts.map((r) => r.days))} 天
+          </p>
+        </section>
+
+        <p className="text-[11px] text-neutral-400">
+          保存后写入 world/locations.json 与 world/routes.json；校验由 shared 的 Zod schema 执行
+          （方式枚举、天数正整数、id 必填）。
         </p>
       </div>
     </div>

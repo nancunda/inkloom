@@ -1,5 +1,5 @@
 import type { EntityType } from '@inkloom/core'
-import { blueprintSchema, InkloomError } from '@inkloom/shared'
+import { blueprintSchema, InkloomError, locationSchema, routeSchema } from '@inkloom/shared'
 import { Hono } from 'hono'
 import { getContext } from '../services/context.js'
 import { readElement, upsertElement } from '../services/element-service.js'
@@ -15,7 +15,34 @@ import { hashContent } from '../storage/atomic-write.js'
  */
 const READABLE = ['characters/', 'world/']
 
-const TYPES = new Set<string>(['character', 'world_rule', 'power_system', 'power_tier'])
+const TYPES = new Set<string>([
+  'character',
+  'world_rule',
+  'power_system',
+  'power_tier',
+  'location',
+  'route',
+])
+
+/**
+ * 数组型世界文件的校验器。
+ *
+ * ★ 直接用 shared 里的 Zod schema：前端表单、CLI、提示词加载器读的是同一套
+ *   约束（mode 枚举、days 必须正整数），不在 HTTP 层再手写一份 if。
+ */
+const WORLD_VALIDATORS: Record<
+  string,
+  { schema: { safeParse: (v: unknown) => SafeParseResult }; label: string }
+> = {
+  'world/locations.json': { schema: locationSchema.array(), label: '地点' },
+  'world/routes.json': { schema: routeSchema.array(), label: '路线' },
+}
+
+interface SafeParseResult {
+  success: boolean
+  data?: unknown
+  error?: { issues: { path: PropertyKey[]; message: string }[] }
+}
 
 function assertPath(rel: string): void {
   if (!READABLE.some((p) => rel.startsWith(p)) || rel.includes('..')) {
@@ -50,11 +77,38 @@ elements.put('/elements', async (c) => {
   if (entityId.trim().length === 0) throw new InkloomError('INVALID_INPUT', 'entityId 不能为空')
   if (!('payload' in body)) throw new InkloomError('INVALID_INPUT', '缺少 payload')
 
+  let payload = body['payload']
+  const validator = WORLD_VALIDATORS[relPath]
+  if (validator !== undefined) {
+    // ★ projectId 是身份锚，由服务端补：前端新建一行时不该知道也不该拼它
+    const { project } = getContext()
+    if (Array.isArray(payload)) {
+      payload = payload.map((row) => {
+        const r = row as { projectId?: unknown }
+        return r.projectId === undefined || r.projectId === ''
+          ? { ...(row as Record<string, unknown>), projectId: project.id }
+          : row
+      })
+    }
+    const parsed = validator.schema.safeParse(payload)
+    if (!parsed.success) {
+      const issues = parsed.error?.issues ?? []
+      throw new InkloomError(
+        'INVALID_INPUT',
+        `${validator.label}校验失败：${issues
+          .slice(0, 3)
+          .map((i) => `${i.path.map(String).join('.')} ${i.message}`)
+          .join('；')}`,
+      )
+    }
+    payload = parsed.data
+  }
+
   const result = await upsertElement({
     entityType: entityType as EntityType,
     entityId,
     relPath,
-    payload: body['payload'],
+    payload,
     changeSource: 'human',
     ...(reason === undefined || reason.length === 0 ? {} : { changeReason: reason }),
     ...(expectedHash === undefined ? {} : { expectedHash }),

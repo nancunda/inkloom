@@ -11,10 +11,12 @@ import type {
   FinalizeResult,
   GenerateJob,
   HealthReport,
+  LocationRow,
   OverviewData,
   PowerSystem,
   ProposeResult,
   RelationGraphData,
+  RouteRow,
   SceneDetail,
   SearchResult,
   SettingsData,
@@ -113,6 +115,26 @@ export function useRules() {
       api<{ path: string; data: WorldRuleRow[] }>('/elements?path=world%2Frules.json').then(
         (r) => r.data,
       ),
+  })
+}
+
+export function useLocations() {
+  return useQuery({
+    queryKey: ['element', 'world/locations.json'],
+    queryFn: () =>
+      api<{ path: string; data: LocationRow[]; hash: string }>(
+        '/elements?path=world%2Flocations.json',
+      ).then((r) => r.data),
+  })
+}
+
+export function useRoutes() {
+  return useQuery({
+    queryKey: ['element', 'world/routes.json'],
+    queryFn: () =>
+      api<{ path: string; data: RouteRow[]; hash: string }>(
+        '/elements?path=world%2Froutes.json',
+      ).then((r) => r.data),
   })
 }
 
