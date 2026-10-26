@@ -1,11 +1,54 @@
 # inkloom
 
-**单用户、本地优先的长篇小说创作工作台。** AI 起草，人确认；要素结构化，过程可回退。
+**本地优先的长篇小说创作工作台：AI 起草，人确认；要素结构化，过程可回退。**
 
-> 反目标：**不做**「一键生成整本小说」的批量流水线。
-> 平台不提升 AI 的文笔天花板，它提供的是**可靠性**（跨章不崩）、**可控性**（每步可审可退）、**可视化**（结构看得见）。
+> 不做「一键生成整本小说」的批量流水线。
+> inkloom 提供的是**可靠性**（跨章不崩）、**可控性**（每步可审可退）、**可视化**（结构看得见）。
 
-![写作页](docs/screenshots/writing.png)
+![共创 Agent](docs/screenshots/accept-agent-chat-top.png)
+
+---
+
+## 它是什么
+
+一本书就是一个文件夹：正文是 Markdown，要素是 JSON，版本历史是书内的 Git 仓库。
+删掉软件，稿子还在；换台机器，`git clone` + 重建索引就能接着写。
+
+八个模块：
+
+| 模块 | 干什么 |
+|---|---|
+| **概览** | 定稿进度、张力曲线、未兑现线索、生成记录 |
+| **共创** | 和 Agent 对话，从零搭世界 → 人物 → 故事 → 开篇；每阶段停下等你放行 |
+| **世界** | 规则、力量体系、地点与路线（地图上拖拽） |
+| **角色** | 角色卡、关系网络（拖两个节点连线建关系）、形象图 |
+| **故事** | 卷、故事弧、逐章蓝图、线索轨迹 |
+| **写作** | 场景候选、diff、接受/拒绝、整场重写、定稿、专注模式 |
+| **素材** | 形象图与参考资产（prompt / provider / params 可复现） |
+| **设置** | 模型、密钥、判断层开关 |
+
+所有写入都经过 **CAS → revision → 索引同步 → git commit**。
+时间机器随时回退；回退不是"删记录"，而是产生一个新的真实状态。
+
+---
+
+## 共创 Agent（对话式）
+
+![打回与重新审阅](docs/screenshots/accept-agent-revise.png)
+
+像和一位总编对话，而不是提交一个批处理任务：
+
+- **随时说话**：运行中发消息会 `steer` 到当前步之后；**等待审阅时发消息 = 带意见打回**，本阶段重做
+- **连续会话**：本轮完成后可以接着聊（"第 5 场扩一下""下一章蓝图改狠一点"），不重开任务
+- **四阶段**：世界 → 人物 → 故事 → 开篇；左栏实时显示到哪一步、现在等你做什么
+- **通过开篇 = 本轮结束**，不会莫名再弹一次审阅
+- **全程可见**：思考折叠、工具卡片与结果、产物一键跳到对应模块
+- **预算硬约束**：40 步工具调用 / 1 章正文 / 1 张形象图
+
+Agent 侧工具：`read_book`、`read_element`、`write_element`、`write_blueprint`、
+`generate_chapter`、`generate_portrait`、`request_review`。
+运行在 [Pi Agent](https://github.com/earendil-works/pi)（MIT）+ DeepSeek `deepseek-flash`；
+密钥只在服务端环境变量里，浏览器不接触。
 
 ---
 
@@ -15,20 +58,17 @@
 
 1. 从 [Releases](https://github.com/nancunda/inkloom/releases) 下载 `inkloom-win-x64.zip`
 2. 解压到任意目录
-3. 双击 `start.bat`（或命令行运行 `start.bat`）
+3. 双击 `start.bat`
 4. 浏览器打开 **http://127.0.0.1:8787**
 
-内置 Node 运行时与示例书《七霞》，解压即用。想用自己的书：把 `INKLOOM_BOOK` 指向你的书目录再启动。
-
-> 生成正文需要 `DEEPSEEK_API_KEY`（可选），写在 `start.bat` 同目录的 `.env` 里：
-> `DEEPSEEK_API_KEY=sk-…`。没有 key 也能浏览、导入、编辑与导出，只是不能调模型。
+内置 Node 运行时与示例书《七霞》。想用自己的书：把 `INKLOOM_BOOK` 指向书目录再启动。
 
 ### 开发版
 
 ```bash
 pnpm install
 
-# 终端 1：API（默认 127.0.0.1:8787，无鉴权，因此默认只绑本机）
+# 终端 1：API（默认 127.0.0.1:8787，无鉴权，因此只绑本机）
 INKLOOM_BOOK=fixtures/qixia pnpm api
 
 # 终端 2：前端（Vite，/api 代理到 8787）
@@ -37,9 +77,21 @@ pnpm web                # → http://localhost:5173
 
 只跑一个端口也行：先 `pnpm --filter @inkloom/web build`，再启动 API，访问 8787 就是完整界面。
 
+### 环境变量
+
+写在仓库根目录的 `.env`（开发版）或 `start.bat` 同目录的 `.env`（便携版）：
+
+| 变量 | 用途 |
+|---|---|
+| `DEEPSEEK_API_KEY` | 生成正文、共创 Agent |
+| `SILICONFLOW_API_KEY` | 人物形象图（Kolors） |
+| `TAVILY_API_KEY` | 联网搜索（可选） |
+
+没有 key 也能浏览、导入、编辑、导出与回退，只是不能调模型。
+
 ---
 
-## 一条章的生命周期
+## 一条章的生命周期（CLI）
 
 ```bash
 pnpm cli create ./my-novel --name 七霞 --genre 玄幻    # 建书（目录树 + 身份锚 + Git 初始提交）
@@ -54,7 +106,7 @@ pnpm cli unfinalize ./my-novel --chapter 1             # 撤销定稿：正文�
 ```
 
 已有稿件可直接导入：`pnpm cli import ./my-novel --from novel.txt --name 七霞 --genre 玄幻`
-（按「第X章 / Chapter N」切章，无标题则整本一章，所有降级都进 warnings）
+（按「第X章 / Chapter N」切章，所有降级都进 warnings）
 
 **三条不变量**
 
@@ -66,12 +118,12 @@ pnpm cli unfinalize ./my-novel --chapter 1             # 撤销定稿：正文�
 
 ---
 
-## 四个视图
+## 结构与可视化
 
 | | |
 |---|---|
 | ![关系网络](docs/screenshots/relations.png) | ![线索轨迹](docs/screenshots/threads.png) |
-| **关系网络**：角色圆环，七种关系着色；**拖两个节点连线直接建立关系**，时间滑块看第 N 章时谁和谁是什么关系 | **线索轨迹**：每条伏笔一行，横轴章号；**线断在右边 = 还没回收**，逾期标红 |
+| **关系网络**：拖两个节点连线直接建关系；时间滑块看第 N 章时谁和谁是什么关系 | **线索轨迹**：每条伏笔一行，横轴章号；线断在右边 = 还没回收，逾期标红 |
 | ![世界地图](docs/screenshots/world.png) | ![专注模式](docs/screenshots/focus.png) |
 | **世界地图**：地点按类型着色，路线标天数（系统算，AI 不得改），单向路线画箭头 | **专注模式** `Ctrl+Shift+E`：全屏、无侧栏、无 AI，点任意一段就地改写 |
 
@@ -87,14 +139,16 @@ pnpm cli unfinalize ./my-novel --chapter 1             # 撤销定稿：正文�
 | **`core` 零 IO** | 纯函数，不碰文件/网络/数据库 | `scripts/check-deps.mjs` 扫描 import |
 | **要素 append-only** | 永不 UPDATE，回退 = 产生新版本 | JSONL 历史 + 写入串行队列 |
 | **正文不进 revision** | 正文历史只归 Git，两套版本系统会互相打架 | `EntityRevision` 类型里没有 `draft_segment` |
+| **派生层可丢弃** | 索引与 Agent 运行日志不进版本历史 | 书内 `.gitignore` + 启动自愈 |
 
 ```
-一本书/                        索引（可丢弃）      版本
-├── novel.json                  .inkloom/          book/.git
-├── chapters/ch-001.md            index.sqlite      每次接受/定稿自动提交
-├── chapters/ch-001/scenes/       （reindex 可全量重建）
-├── characters/ story/ world/
-└── assets/
+一本书/
+├── novel.json                  身份锚与篇幅设定
+├── chapters/ch-001.md          定稿正文（一章一文件）
+├── chapters/ch-001/scenes/     候选场景 sN.vM.md（永远写新版本）
+├── characters/ story/ world/   结构化要素（数组文件，整表写入 + CAS）
+├── styles/ assets/             文风资产与形象图
+└── .inkloom/                   索引（可重建）、revision 历史、Agent journal
 ```
 
 | 包 | 职责 |
@@ -102,9 +156,9 @@ pnpm cli unfinalize ./my-novel --chapter 1             # 撤销定稿：正文�
 | `packages/shared` | Zod schema + 统一错误类型 |
 | `packages/core` | 段标记、版本、状态推导、diff、判断层接口（零 IO） |
 | `packages/prompt` | Prompt 装配（S1–S5 缓存友好 + U1–U9） |
-| `apps/api` | 存储 + 服务层 + HTTP 路由（唯一有副作用的地方） |
+| `apps/api` | 存储 + 服务层 + HTTP 路由 + Agent 运行时（唯一有副作用的地方） |
 | `apps/cli` | 命令行，复用 api 服务层 |
-| `apps/web` | React 19 写作页 + 地图四视图，只读 HTTP |
+| `apps/web` | React 19 工作台，只读 HTTP，SSE 接收 Agent 事件 |
 
 ---
 
@@ -119,15 +173,14 @@ INKLOOM_JUDGE=openai     # 硅基流动（国内可用），需 SILICONFLOW_API_
 INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ```
 
-界面上点「AI 味体检」：每场景三问（反 AI 味 / 节奏 / 一致性），置信度 < 0.75 的结论标「不注入」——阈值不是装饰。
-判断层挂掉只降级，不阻塞写作。
+界面上点「AI 味体检」：每场景三问（反 AI 味 / 节奏 / 一致性），置信度 < 0.75 的结论标「不注入」——阈值不是装饰。判断层挂掉只降级，不阻塞写作。
 
 ---
 
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc + check-deps + 287 测试（27 文件）
+pnpm verify      # biome + tsc + check-deps + 268 单元 + 299 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
@@ -136,7 +189,7 @@ pnpm verify:p2a  # 局部重写                          7 条
 pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 ```
 
-**已完成**：P0 数据底座 → P1 单章共创（生成 / 逐场景确认 / diff / 定稿 / 状态提案）→ P2 局部重写 · txt-md 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象（生图落盘 + Asset 可复现）。
+**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **共创 Agent（对话式，四阶段门禁）**。
 
 **已知缺口**
 
@@ -145,6 +198,7 @@ pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 | 1 | TypeSafe 官方 API 从 CN 出口返回 451 | 判断层实际用硅基流动；`typesafe` provider 已就绪 |
 | 2 | 前端无 Playwright 自动化回归 | 界面回归靠手工 + Chrome MCP |
 | 3 | 生图 seed 不可控（Kolors 不支持） | 复现靠 prompt + params 记录 |
-| 4 | 生成任务表在内存 | 服务重启丢未完成任务；结果已落盘，重提即可 |
+| 4 | 生成任务表与 Agent run 在内存 | 服务重启丢进行中的任务；文件与 git 已落盘，重新发起即可 |
+| 5 | Agent 思考流是英文 | 模型自选语言；正文与工具参数是中文 |
 
-**明确不做**：并行生成多场景（邻场景正文不存在时章内因果必然丢失，spec 定为实验开关且默认关闭）；写作 Skill 市场（需要社区载体）。
+**明确不做**：并行生成多场景（邻场景正文不存在时章内因果必然丢失）；写作 Skill 市场（需要社区载体）。
