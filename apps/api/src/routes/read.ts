@@ -217,13 +217,15 @@ read.get('/assets/file', async (c) => {
 
 read.get('/overview', async (c) => {
   const { root, db, project } = getContext()
-  const [chapters, bps, threadRaw, runs, draftedRows] = await Promise.all([
+  const [chapters, bps, threadRaw, arcRaw, runs, draftedRows] = await Promise.all([
     db.chapter.findMany({
       where: { projectId: project.id },
       select: { chapterNo: true, title: true, status: true, wordCount: true },
     }),
     listBlueprints(),
     readJsonElement(root, 'story/threads.json'),
+    // 卷是张力曲线的分组依据：概览要画「入道卷 / 试炼卷」的区间带
+    readJsonElement(root, 'story/arcs.json'),
     db.generationRun.findMany({ where: { projectId: project.id }, select: { status: true } }),
     // 有候选场景但没定稿的章，在概览里也应显示为「草稿」而不是「计划中」
     db.draftSegment.findMany({
@@ -260,6 +262,19 @@ read.get('/overview', async (c) => {
     (t) => typeof t.payoffWindow === 'number' && lastNo >= t.payoffWindow,
   ).length
 
+  const arcs = (Array.isArray(arcRaw) ? arcRaw : [])
+    .map((a) => a as Record<string, unknown>)
+    .map((a) => ({
+      id: String(a['id'] ?? ''),
+      name: String(a['name'] ?? ''),
+      startChapter: Number(a['startChapter'] ?? 0),
+      endChapter: Number(a['endChapter'] ?? 0),
+      purpose: typeof a['purpose'] === 'string' ? a['purpose'] : null,
+      turningPoint: typeof a['turningPoint'] === 'number' ? a['turningPoint'] : null,
+      order: Number(a['order'] ?? 0),
+    }))
+    .sort((x, y) => x.order - y.order || x.startChapter - y.startChapter)
+
   return c.json({
     chapters: merged,
     stats: {
@@ -270,6 +285,7 @@ read.get('/overview', async (c) => {
       progress: merged.length === 0 ? 0 : done / merged.length,
     },
     threads: { total: threads.length, active: active.length, overdue },
+    arcs,
     runs: { total: runs.length, failed: runs.filter((r) => r.status === 'failed').length },
   })
 })

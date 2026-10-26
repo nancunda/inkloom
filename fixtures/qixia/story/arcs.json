@@ -1,1 +1,22 @@
-[]
+[
+  {
+    "id": "a1",
+    "projectId": "proj_f81c8babe4d642c2",
+    "name": "入道卷",
+    "startChapter": 1,
+    "endChapter": 3,
+    "purpose": "从守碑人养女走到剑冢碑前",
+    "turningPoint": 3,
+    "order": 0
+  },
+  {
+    "id": "a2",
+    "projectId": "proj_f81c8babe4d642c2",
+    "name": "试剑卷",
+    "startChapter": 4,
+    "endChapter": 5,
+    "purpose": "看清碑上名字，决定要不要认",
+    "turningPoint": 5,
+    "order": 1
+  }
+]

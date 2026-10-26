@@ -64,7 +64,7 @@ export function useRewriteSceneFull(chapterNo: number) {
   return useMutation({
     mutationFn: (input: { sceneNo: number; guidance?: string }) =>
       post<{ scene: { sceneNo: number; version: number; wordCount: number } }>(
-        `/chapters/${chapterNo}/scenes/${input.sceneNo}/rewrite`,
+        `/chapters/${chapterNo}/scenes/${input.sceneNo}/rewrite-full`,
         input.guidance === undefined ? {} : { guidance: input.guidance },
       ),
     onSuccess: () => {

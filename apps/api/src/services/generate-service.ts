@@ -375,6 +375,18 @@ export async function rewriteScene(opts: RewriteSceneOptions): Promise<RewriteSc
   })
 
   const wordCount = segments.reduce((n, s) => n + countWords(s.text), 0)
+
+  // 与「生成本章」同一策略：候选稿已落盘，Git 失败不能推翻结果（书可能在
+  // 外部目录里、还没有仓库），只在运行记录里留下失败状态待重试。
+  // ★ initRepo 不能省：测试书/导入的书可能没有 .git，直接 commit 会 500。
+  let commitError: string | null = null
+  try {
+    await initRepo(root)
+    await commitAll(root, `feat(scene): ch${opts.chapterNo} s${opts.sceneNo} v${version} 整场重写`)
+  } catch (e) {
+    commitError = (e as Error).message
+  }
+
   await db.generationRun.update({
     where: { id: runId },
     data: {
@@ -383,11 +395,10 @@ export async function rewriteScene(opts: RewriteSceneOptions): Promise<RewriteSc
       usageInput: usage.input,
       usageOutput: usage.output + usage.reasoning,
       cacheHitTokens: usage.cacheHit,
-      commitState: 'done',
+      commitState: commitError === null ? 'committed' : 'failed',
+      warnings: commitError === null ? null : JSON.stringify([`Git 提交失败：${commitError}`]),
     },
   })
-
-  await commitAll(root, `feat(scene): ch${opts.chapterNo} s${opts.sceneNo} v${version} 整场重写`)
 
   return {
     runId,

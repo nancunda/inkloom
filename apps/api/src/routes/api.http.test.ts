@@ -344,4 +344,23 @@ describe('局部重写接口', () => {
     const j = (await r.json()) as { error: { code: string } }
     expect(j.error.code).toBe('CONFLICT')
   })
+
+  it('★ 整场重写走 /rewrite-full：与段级重写不能被同一个路径吃掉', async () => {
+    // 只给 guidance（段级接口必填 version/segId）。如果整场重写又占了 /rewrite，
+    // 这里会返回 200，段级重写就静默失效了——上一版就是这么坏的。
+    const seg = await appWithRewrite().request('/api/chapters/4/scenes/1/rewrite', {
+      method: 'POST',
+      body: JSON.stringify({ guidance: '更冷' }),
+    })
+    expect(seg.status).toBe(400)
+
+    const full = await appWithRewrite().request('/api/chapters/4/scenes/1/rewrite-full', {
+      method: 'POST',
+      body: JSON.stringify({ guidance: '更冷' }),
+    })
+    expect(full.status).toBe(200)
+    const j = (await full.json()) as { scene: { sceneNo: number; version: number } }
+    expect(j.scene.sceneNo).toBe(1)
+    expect(j.scene.version).toBe(2)
+  })
 })

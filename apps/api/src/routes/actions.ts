@@ -183,7 +183,9 @@ export function createActions(deps: ActionDeps = {}): Hono {
     return c.json(r)
   })
 
-  actions.post('/chapters/:n/scenes/:s/rewrite', async (c) => {
+  // ★ 路径与段级「重写这段」必须分开：两者同名时 Hono 会命中先注册的那个，
+  //   导致段级重写静默变成整场重写（上一版就是这么坏的）。
+  actions.post('/chapters/:n/scenes/:s/rewrite-full', async (c) => {
     const chapterNo = intParam(c.req.param('n'), 'chapterNo')
     const sceneNo = intParam(c.req.param('s'), 'sceneNo')
     const body = (await c.req.json().catch(() => ({}))) as { guidance?: string; model?: string }

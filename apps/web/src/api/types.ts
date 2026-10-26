@@ -257,6 +257,16 @@ export interface OverviewChapter {
   beatType: string
 }
 
+export interface StoryArcRow {
+  id: string
+  name: string
+  startChapter: number
+  endChapter: number
+  purpose: string | null
+  turningPoint: number | null
+  order: number
+}
+
 export interface OverviewData {
   chapters: OverviewChapter[]
   stats: {
@@ -267,6 +277,8 @@ export interface OverviewData {
     progress: number
   }
   threads: { total: number; active: number; overdue: number }
+  /** 卷：张力曲线的分组带，也用于故事页编辑 */
+  arcs: StoryArcRow[]
   runs: { total: number; failed: number }
 }
 

@@ -1,5 +1,11 @@
 import type { EntityType } from '@inkloom/core'
-import { blueprintSchema, InkloomError, locationSchema, routeSchema } from '@inkloom/shared'
+import {
+  blueprintSchema,
+  InkloomError,
+  locationSchema,
+  routeSchema,
+  storyArcSchema,
+} from '@inkloom/shared'
 import { Hono } from 'hono'
 import { getContext } from '../services/context.js'
 import { readElement, upsertElement } from '../services/element-service.js'
@@ -13,7 +19,13 @@ import { hashContent } from '../storage/atomic-write.js'
  * ★ 写入复用 upsertElement：CAS 校验、revision、索引、git commit 一次到位——
  *   前端保存与 CLI `element set` 走的是同一条路。
  */
-const READABLE = ['characters/', 'world/']
+const READABLE = ['characters/', 'world/', 'story/']
+/**
+ * 可写范围比可读窄：story/ 下只开放卷，蓝图与线索有自己的创建/推进接口。
+ * 不然一个 PUT 就能把 threads.json 写成任意形状（还没有校验器护着）。
+ */
+const WRITABLE = ['characters/', 'world/']
+const WRITABLE_EXACT = new Set(['story/arcs.json'])
 
 const TYPES = new Set<string>([
   'character',
@@ -22,6 +34,7 @@ const TYPES = new Set<string>([
   'power_tier',
   'location',
   'route',
+  'story_arc',
 ])
 
 /**
@@ -36,6 +49,8 @@ const WORLD_VALIDATORS: Record<
 > = {
   'world/locations.json': { schema: locationSchema.array(), label: '地点' },
   'world/routes.json': { schema: routeSchema.array(), label: '路线' },
+  // 卷也要过同一套校验：startChapter > endChapter 这种错不该写进书里
+  'story/arcs.json': { schema: storyArcSchema.array(), label: '故事弧' },
 }
 
 interface SafeParseResult {
@@ -46,7 +61,14 @@ interface SafeParseResult {
 
 function assertPath(rel: string): void {
   if (!READABLE.some((p) => rel.startsWith(p)) || rel.includes('..')) {
-    throw new InkloomError('INVALID_INPUT', 'path 只能是 characters/ 或 world/ 下的文件')
+    throw new InkloomError('INVALID_INPUT', 'path 只能是 characters/、world/ 或 story/ 下的文件')
+  }
+}
+
+function assertWritable(rel: string): void {
+  assertPath(rel)
+  if (!WRITABLE.some((p) => rel.startsWith(p)) && !WRITABLE_EXACT.has(rel)) {
+    throw new InkloomError('INVALID_INPUT', `不支持从界面直写：${rel}`)
   }
 }
 
@@ -71,7 +93,7 @@ elements.put('/elements', async (c) => {
   const reason = typeof body['reason'] === 'string' ? body['reason'] : undefined
   const expectedHash = typeof body['expectedHash'] === 'string' ? body['expectedHash'] : undefined
 
-  assertPath(relPath)
+  assertWritable(relPath)
   if (!TYPES.has(entityType))
     throw new InkloomError('INVALID_INPUT', `不支持的 entityType：${entityType}`)
   if (entityId.trim().length === 0) throw new InkloomError('INVALID_INPUT', 'entityId 不能为空')

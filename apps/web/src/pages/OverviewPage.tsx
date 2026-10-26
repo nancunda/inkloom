@@ -20,16 +20,34 @@ const BEAT_LABEL: Record<string, string> = {
 export function OverviewPage() {
   const { data, isLoading } = useOverview()
   const setChapter = useSessionStore((s) => s.setChapter)
+  const setModule = useSessionStore((s) => s.setModule)
 
   if (isLoading) return <p className="p-8 text-sm text-neutral-500">读取概览…</p>
   if (data === undefined) return null
 
-  const { chapters, stats, threads, runs } = data
+  const { chapters, stats, threads, arcs, runs } = data
   const w = 720
-  const h = 140
+  const h = 168
   const pad = 24
+  // 底部留 30px 给卷区间带：曲线是节奏，带子是结构，两者要对齐同一条横轴
+  const bandGap = 30
+  const plotBottom = h - pad - bandGap
   const stepX = chapters.length > 1 ? (w - pad * 2) / (chapters.length - 1) : 0
-  const y = (t: number): number => h - pad - ((t - 1) / 4) * (h - pad * 2)
+  const y = (t: number): number => plotBottom - ((t - 1) / 4) * (plotBottom - pad)
+
+  /** 章号 → 横轴下标；区间端点落在没有蓝图的章上时夹到最近的一章 */
+  const idxStart = (chapterNo: number): number =>
+    Math.max(
+      0,
+      chapters.findIndex((c) => c.chapterNo >= chapterNo),
+    )
+  const idxEnd = (chapterNo: number): number => {
+    for (let i = chapters.length - 1; i >= 0; i -= 1) {
+      const c = chapters[i]
+      if (c !== undefined && c.chapterNo <= chapterNo) return i
+    }
+    return chapters.length - 1
+  }
 
   // 连续 3 章张力相同 = 曲线塌了，标出来
   const flat: string[] = []
@@ -130,7 +148,64 @@ export function OverviewPage() {
                   </title>
                 </circle>
               ))}
+              {/* 卷区间带：一眼看出「这五章属于同一卷」以及卷末转折落在哪 */}
+              {arcs.map((a, k) => {
+                const i0 = idxStart(a.startChapter)
+                const i1 = idxEnd(a.endChapter)
+                if (chapters.length === 0 || i1 < i0) return null
+                const x1 = pad + i0 * stepX - 10
+                const x2 = pad + i1 * stepX + 10
+                const top = h - pad - 4
+                const turnIdx = a.turningPoint === null ? -1 : idxStart(a.turningPoint)
+                return (
+                  <g key={a.id === '' ? `arc-${k}` : a.id}>
+                    <rect
+                      x={x1}
+                      y={top}
+                      width={Math.max(x2 - x1, 8)}
+                      height={16}
+                      rx={3}
+                      fill={k % 2 === 0 ? '#eef2f7' : '#e4eaf2'}
+                    >
+                      <title>
+                        {a.name} · 第 {a.startChapter}–{a.endChapter} 章
+                        {a.purpose === null || a.purpose === '' ? '' : ` · ${a.purpose}`}
+                      </title>
+                    </rect>
+                    <text
+                      x={(x1 + x2) / 2}
+                      y={top + 11}
+                      textAnchor="middle"
+                      fontSize="9"
+                      fill="#64748b"
+                    >
+                      {a.name}
+                    </text>
+                    {turnIdx >= 0 && (
+                      <path
+                        d={`M ${pad + turnIdx * stepX},${top - 7} l 4,4 l -4,4 l -4,-4 z`}
+                        fill="#7c3aed"
+                      >
+                        <title>卷末转折：第 {a.turningPoint} 章</title>
+                      </path>
+                    )}
+                  </g>
+                )
+              })}
             </svg>
+          )}
+          {chapters.length > 0 && arcs.length === 0 && (
+            <p className="mt-1 text-[11px] text-neutral-400">
+              还没有分卷——到
+              <button
+                type="button"
+                onClick={() => setModule('story')}
+                className="mx-1 underline underline-offset-2 hover:text-neutral-700"
+              >
+                故事 → 卷 / 故事弧
+              </button>
+              划一下章节区间
+            </p>
           )}
           {flat.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-[11px] text-amber-700">
