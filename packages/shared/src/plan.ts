@@ -133,14 +133,16 @@ export function mergePlan(def: PlanDef, state: PlanState | null): Plan {
 }
 
 /**
- * 下一个该做的任务：doing 优先（中断恢复），然后 todo，最后 blocked。
+ * 下一个该做的任务：doing 优先（中断恢复），其余按计划顺序取第一个 todo/blocked。
+ *
  * ★ skipped 不参与：作者跳过的事不能又被 Agent 捡回来做。
+ * ★ 不把 blocked 排到最后：计划是有顺序的，跳过卡住的任务去做后面的，
+ *   会让“依赖上一任务产物”的后续任务直接失败；恢复时应该先重试它。
  */
 export function nextOpenTask(plan: Plan): PlanTask | null {
   return (
     plan.tasks.find((t) => t.status === 'doing') ??
-    plan.tasks.find((t) => t.status === 'todo') ??
-    plan.tasks.find((t) => t.status === 'blocked') ??
+    plan.tasks.find((t) => t.status === 'todo' || t.status === 'blocked') ??
     null
   )
 }

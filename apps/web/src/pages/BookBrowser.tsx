@@ -56,7 +56,13 @@ export function BookBrowser({ data }: { data: LibraryData }) {
             const isCurrent = data.current?.folder === b.folder
             return (
               <li key={b.folder} className="flex items-center gap-3 py-3">
-                <div className="min-w-0 flex-1">
+                {/* 整行可点：只有右侧按钮能点是反直觉的 */}
+                <button
+                  type="button"
+                  disabled={busy || isCurrent}
+                  onClick={() => openBook.mutate(b.folder)}
+                  className="min-w-0 flex-1 cursor-pointer rounded text-left hover:bg-neutral-50 disabled:cursor-default disabled:hover:bg-transparent"
+                >
                   <div className="flex items-baseline gap-2">
                     <span className="truncate text-sm font-medium text-neutral-900">{b.name}</span>
                     <span className="shrink-0 text-xs text-neutral-400">{b.genre}</span>
@@ -73,7 +79,7 @@ export function BookBrowser({ data }: { data: LibraryData }) {
                     {' · '}
                     <span className="text-neutral-400">{b.folder}</span>
                   </div>
-                </div>
+                </button>
                 <button
                   type="button"
                   disabled={busy || isCurrent}

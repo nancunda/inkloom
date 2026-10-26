@@ -1,15 +1,27 @@
 import { create } from 'zustand'
 
 /** 八个主模块（spec §2.1 + 共创 Agent） */
-export type ModuleId =
-  | 'overview'
-  | 'agent'
-  | 'world'
-  | 'cast'
-  | 'story'
-  | 'write'
-  | 'assets'
-  | 'settings'
+export const MODULES = [
+  'overview',
+  'agent',
+  'world',
+  'cast',
+  'story',
+  'write',
+  'assets',
+  'settings',
+] as const
+export type ModuleId = (typeof MODULES)[number]
+
+const MODULE_KEY = 'inkloom.module'
+
+/** 刷新后保持上次所在模块：停在共创时按 F5 不该被踢回概览 */
+function initialModule(): ModuleId {
+  const saved = window.localStorage.getItem(MODULE_KEY)
+  return saved !== null && (MODULES as readonly string[]).includes(saved)
+    ? (saved as ModuleId)
+    : 'overview'
+}
 
 interface SessionState {
   chapterNo: number
@@ -38,12 +50,15 @@ export const useSessionStore = create<SessionState>((set) => ({
   chapterNo: 1,
   selectedScene: null,
   // 首屏落在概览：先看「这本书现在怎么样」，再点进写作
-  module: 'overview',
+  module: initialModule(),
   focus: false,
   palette: false,
   setChapter: (n) => set({ chapterNo: n, selectedScene: null, module: 'write' }),
   selectScene: (s) => set({ selectedScene: s }),
-  setModule: (m) => set({ module: m }),
+  setModule: (m) => {
+    window.localStorage.setItem(MODULE_KEY, m)
+    set({ module: m })
+  },
   setFocus: (on) => set({ focus: on }),
   setPalette: (on) => set({ palette: on }),
 }))

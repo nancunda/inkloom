@@ -1,4 +1,4 @@
-import { mkdir, readdir } from 'node:fs/promises'
+import { mkdir, readdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   mergePlan,
@@ -103,4 +103,13 @@ export async function readCurrentPlan(root: string): Promise<string | null> {
   const raw = await readIfExists(currentPlanPath(root))
   const id = raw?.trim() ?? ''
   return /^[a-z0-9][a-z0-9-]*$/.test(id) ? id : null
+}
+
+/**
+ * 丢掉指针（不动计划文件本身）。
+ * ★ 开始一份新计划时用：指针还指着旧计划的话，刷新后的界面会先展示一份
+ *   已经作废的计划，作者会以为新指令被无视了。
+ */
+export async function clearCurrentPlan(root: string): Promise<void> {
+  await rm(currentPlanPath(root), { force: true })
 }

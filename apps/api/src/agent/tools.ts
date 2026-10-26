@@ -792,7 +792,9 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       const blocked = await requireApprovedPlan(deps)
       if (blocked !== null) return blocked
       if (deps.budget.chapterCalls >= deps.budget.maxChapters) {
-        return fail(`本次 run 的章节生成预算已用完（${deps.budget.maxChapters} 章）`)
+        return fail(
+          `本次会话的正文额度（${deps.budget.maxChapters} 章）已用完，这是硬上限。告诉作者点「继续执行」或开新会话；不要重试。`,
+        )
       }
       deps.budget.chapterCalls += 1
       try {
@@ -838,7 +840,9 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         return fail('未配置 SILICONFLOW_API_KEY，无法生成形象图。请作者在设置页填写')
       }
       if (deps.budget.portraitCalls >= deps.budget.maxPortraits) {
-        return fail(`本次 run 的生图预算已用完（${deps.budget.maxPortraits} 张）`)
+        return fail(
+          `本次会话的形象图额度（${deps.budget.maxPortraits} 张）已用完，这是硬上限。告诉作者开新会话；不要重试。`,
+        )
       }
       deps.budget.portraitCalls += 1
       try {

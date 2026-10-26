@@ -67,7 +67,7 @@ describe('mergePlan', () => {
 })
 
 describe('nextOpenTask / isPlanComplete', () => {
-  it('doing 优先（中断恢复），其次 todo、blocked', () => {
+  it('doing 优先（中断恢复）；卡住的任务按顺序先重试，不跳到后面', () => {
     const plan = mergePlan(def, {
       status: 'approved',
       summary: null,
@@ -94,6 +94,34 @@ describe('nextOpenTask / isPlanComplete', () => {
     })
     expect(nextOpenTask(plan)?.id).toBe('chapter-1')
     expect(isPlanComplete(plan)).toBe(false)
+  })
+
+  it('★ 没有 doing 时，blocked 不应被 todo 越过', () => {
+    const plan = mergePlan(def, {
+      status: 'approved',
+      summary: null,
+      feedback: null,
+      updatedAt: '2026-10-26T01:00:00.000Z',
+      tasks: [
+        {
+          id: 'world',
+          status: 'blocked',
+          artifacts: [],
+          feedback: null,
+          summary: null,
+          reviewed: false,
+        },
+        {
+          id: 'chapter-1',
+          status: 'todo',
+          artifacts: [],
+          feedback: null,
+          summary: null,
+          reviewed: false,
+        },
+      ],
+    })
+    expect(nextOpenTask(plan)?.id).toBe('world')
   })
 
   it('全部 done 才算完成', () => {

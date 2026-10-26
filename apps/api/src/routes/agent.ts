@@ -11,6 +11,8 @@ import {
   stopAgentRun,
   subscribeAgentRun,
 } from '../agent/run-service.js'
+import { getContext } from '../services/context.js'
+import { loadPlan, readCurrentPlan } from '../storage/plans.js'
 
 const DEFAULT_GOAL =
   '从零开始搭这本书：先给我一份计划（世界、人物、故事、第 1 章正文），我批准后你按计划逐个任务执行，需要我拍板的地方停下来。'
@@ -24,8 +26,23 @@ agentRoutes.post('/agent/runs', async (c) => {
   } | null
   const raw = body?.goal
   const goal = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : DEFAULT_GOAL
-  const run = await startAgentRun(goal, { replan: body?.mode === 'replan' })
+  const mode =
+    body?.mode === 'new' || body?.mode === 'resume' || body?.mode === 'replan'
+      ? body.mode
+      : undefined
+  const run = await startAgentRun(goal, mode === undefined ? {} : { mode })
   return c.json({ run })
+})
+
+/**
+ * 当前计划（从磁盘读，不依赖内存里的 run）。
+ * ★ run 被回收/服务重启后，界面靠它继续显示计划与恢复入口。
+ */
+agentRoutes.get('/agent/plan', async (c) => {
+  const { root } = getContext()
+  const id = await readCurrentPlan(root)
+  const plan = id === null ? null : await loadPlan(root, id)
+  return c.json({ plan })
 })
 
 agentRoutes.get('/agent/runs/:id', (c) => {

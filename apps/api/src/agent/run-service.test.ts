@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PlanDef, PlanStatus, TaskStatus } from '@inkloom/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadPlan, setCurrentPlan, writePlanDef, writePlanState } from '../storage/plans.js'
+import {
+  loadPlan,
+  readCurrentPlan,
+  setCurrentPlan,
+  writePlanDef,
+  writePlanState,
+} from '../storage/plans.js'
 
 interface FakeEvent {
   type: string
@@ -498,12 +504,44 @@ describe('继续执行与重新规划', () => {
     await settle()
     expect((await loadPlan(h.root, planId))?.status).toBe('aborted')
 
-    const replanned = await startAgentRun('重新来一份计划', { replan: true })
+    const replanned = await startAgentRun('重新来一份计划', { mode: 'replan' })
     expect(replanned.planId).toBeNull()
     expect(replanned.status).toBe('running')
     expect((await loadPlan(h.root, planId))?.status).toBe('aborted')
     expect(lastAgent().prompts.at(-1)).toContain('重新规划')
     stopAgentRun(replanned.id)
+  })
+
+  it('★ 开始新计划：不接旧计划，并把作者目标写进提示词', async () => {
+    const planId = await seedPlan('approved', [{ id: 't1', status: 'doing' }])
+    const prior = await startAgentRun('继续')
+    stopAgentRun(prior.id)
+    await settle()
+
+    const started = await startAgentRun('只规划 3 个只读校对任务，不要生成正文', { mode: 'new' })
+
+    expect(started.planId).toBeNull()
+    expect((await loadPlan(h.root, planId))?.status).toBe('aborted')
+    expect(await readCurrentPlan(h.root)).toBeNull()
+    expect(lastAgent().prompts.at(-1)).toContain('只规划 3 个只读校对任务')
+    stopAgentRun(started.id)
+  })
+
+  it('★ 继续执行（无内存 run）：aborted 计划被救回 approved，从 blocked 任务继续', async () => {
+    const planId = await seedPlan('aborted', [
+      { id: 't1', status: 'blocked' },
+      { id: 't2', status: 'todo' },
+    ])
+
+    const started = await startAgentRun('继续执行计划里没做完的任务', { mode: 'resume' })
+
+    expect(started.planId).toBe(planId)
+    expect(getAgentRun(started.id)?.status).toBe('running')
+    const plan = await loadPlan(h.root, planId)
+    expect(plan?.status).toBe('approved')
+    expect(plan?.tasks[0]?.status).toBe('blocked')
+    expect(lastAgent().prompts.at(-1)).toContain('任务 1')
+    stopAgentRun(started.id)
   })
 })
 

@@ -11,11 +11,21 @@ import { getSkill, skillsIndex } from './skills.js'
  *   2. 计划未经作者批准，不许写设定/正文（工具层会真的拒绝）；
  *   3. 本次 run 最多 1 章正文 + 1 张形象图。
  */
-export function buildAgentPrompt(project: Project): string {
+export function buildAgentPrompt(project: Project, goal?: string): string {
   const total = project.totalChapters ?? 5
+  const brief = goal?.trim() ?? ''
   return `你是 inkloom 的「总编 Agent」，为一部中文${project.genre}长篇小说工作。书名《${project.name}》。
 你的目标不是聊天，而是把这本书从零搭起来。做法是：先写一份计划交给作者批准，然后按计划逐个任务自主完成；每个需要作者拍板的地方停下来等审阅。
+${
+  brief.length === 0
+    ? ''
+    : `
+# 作者这次的委托（优先级最高，逐条遵守）
+${brief}
 
+作者写明的硬约束优先于下面的默认模板：说只做什么、不做什么、要几个任务，就按这个来；不得自行扩大范围（例如作者要求只读校对，就不要安排写文件、生成正文或生图）。
+`
+}
 # 工作方式（plan 模式）
 1. 第一件事永远是调用 read_book，看清现有文件和章节状态。
 2. 然后调用 write_plan 提交一份 4–8 个任务的计划。计划要覆盖：世界 → 人物 → 故事 → 第 1 章正文（按需加形象图/审阅），但**不要机械照搬**，按这本书的实际需要裁剪。每个任务写清 title、skill、brief（具体到什么程度算完成）、review（是否需要作者逐项审阅）。

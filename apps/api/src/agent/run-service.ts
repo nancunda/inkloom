@@ -7,7 +7,7 @@ import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
 import type { Plan } from '@inkloom/shared'
 import { InkloomError, isPlanComplete, nextOpenTask } from '@inkloom/shared'
 import { getContext, peekContext } from '../services/context.js'
-import { loadPlan, readCurrentPlan, writePlanState } from '../storage/plans.js'
+import { clearCurrentPlan, loadPlan, readCurrentPlan, writePlanState } from '../storage/plans.js'
 import { writeQueue } from '../storage/queue.js'
 import { agentRunDir } from './book-snapshot.js'
 import { deriveGate } from './plan-gate.js'
@@ -439,9 +439,41 @@ async function abandonPriorPlan(root: string, plan: Plan): Promise<void> {
   })
 }
 
+/**
+ * 「继续执行」：把中止的计划救回来。
+ *
+ * ★ 上一轮 doing 不能直接复活成 doing（那会把没做完的步骤当成已完成），先转 blocked；
+ *   drive 会从 blocked 任务重新开始。
+ * ★ 不重置 task.reviewed：已经通过的任务不能因为这一下又变回待审。
+ */
+async function reopenAbortedPlan(root: string, plan: Plan): Promise<void> {
+  const tasks = plan.tasks.map((t) =>
+    t.status === 'doing' ? { ...t, status: 'blocked' as const } : t,
+  )
+  plan.tasks = tasks
+  plan.status = 'approved'
+  plan.feedback = null
+  await writeQueue.run(async () => {
+    await writePlanState(root, plan.id, {
+      status: 'approved',
+      summary: plan.summary,
+      feedback: null,
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        status: t.status,
+        artifacts: t.artifacts,
+        feedback: t.feedback,
+        summary: t.summary,
+        reviewed: t.reviewed,
+      })),
+      updatedAt: new Date().toISOString(),
+    })
+  })
+}
+
 export async function startAgentRun(
   goal: string,
-  options: { replan?: boolean } = {},
+  options: { mode?: 'new' | 'resume' | 'replan' } = {},
 ): Promise<AgentRunSnapshot> {
   const { root, project } = getContext()
   if (activeRunId !== null) {
@@ -473,15 +505,22 @@ export async function startAgentRun(
   const gateBox: { current: AgentGate | null } = { current: null }
 
   // 恢复上一次没做完的计划：等批准 → 直接恢复门禁；已批准 → 接着做下一个任务
+  // ★ 只有 mode=resume 才自动接旧计划：作者点「开始共创」时输入了新目标，
+  //   再拿旧计划覆盖他的指令就是「不听人话」。
+  const mode = options.mode ?? 'resume'
   const currentPlanId = await readCurrentPlan(root)
   const prior = currentPlanId === null ? null : await loadPlan(root, currentPlanId)
-  // 作者明确要求重新规划：旧计划作废，本次不恢复它
-  const replanPrior = options.replan === true ? prior : null
-  if (replanPrior !== null) await abandonPriorPlan(root, replanPrior)
+  const replacesPrior = mode === 'new' || mode === 'replan'
+  const priorToClose = replacesPrior ? prior : null
+  if (priorToClose !== null) {
+    await abandonPriorPlan(root, priorToClose)
+    await clearCurrentPlan(root)
+  }
   const resumable =
-    replanPrior === null &&
+    !replacesPrior &&
     prior !== null &&
-    (prior.status === 'drafting' ||
+    (prior.status === 'aborted' ||
+      prior.status === 'drafting' ||
       prior.status === 'awaiting_approval' ||
       prior.status === 'approved')
       ? prior
@@ -514,7 +553,7 @@ export async function startAgentRun(
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: buildAgentPrompt(project),
+      systemPrompt: buildAgentPrompt(project, goal),
       model,
       thinkingLevel: 'low',
       tools: tools as AgentTool[],
@@ -559,6 +598,8 @@ export async function startAgentRun(
   emit(run, { type: 'run.started', goal })
 
   if (resumable !== null) {
+    // 中止的计划：作者点「继续执行」就是显式恢复，先把状态救回来再续跑
+    if (resumable.status === 'aborted') await reopenAbortedPlan(root, resumable)
     emit(run, { type: 'plan.updated', plan: resumable })
     refreshPlanBudget(run, resumable)
     // 上次正等作者批准：不叫模型，直接把门禁恢复出来
@@ -573,12 +614,12 @@ export async function startAgentRun(
     }
   }
 
-  let initialPrompt = buildAgentPrompt(project)
-  if (replanPrior !== null) {
-    initialPrompt = `${buildAgentPrompt(project)}
+  let initialPrompt = buildAgentPrompt(project, goal)
+  if (mode === 'replan' && priorToClose !== null) {
+    initialPrompt = `${buildAgentPrompt(project, goal)}
 
 # 重新规划
-作者放弃了上一份计划《${replanPrior.title}》（id=${replanPrior.id}，已标为中止）。请 read_book 之后用 write_plan 提交一份新计划；不要用 update_plan 修补旧计划。`
+作者放弃了上一份计划《${priorToClose.title}》（id=${priorToClose.id}，已标为中止）。请 read_book 之后用 write_plan 提交一份新计划；不要用 update_plan 修补旧计划。`
   } else if (resumable !== null && resumable.status === 'approved') {
     const next = nextOpenTask(resumable)
     initialPrompt =
@@ -586,7 +627,7 @@ export async function startAgentRun(
         ? buildTaskPrompt(project, resumable, next)
         : '所有任务都已完成。请 read_book 核对一遍，然后调用 request_review(kind="plan", summary=...) 请作者验收整本书。'
   } else if (resumable !== null && resumable.status === 'drafting') {
-    initialPrompt = `${buildAgentPrompt(project)}
+    initialPrompt = `${buildAgentPrompt(project, goal)}
 
 # 继续上一次的计划
 上一次会话留下了未完成的计划《${resumable.title}》（id=${resumable.id}）。请 read_book 后继续：用 update_plan 修订并 request_review(kind="plan")，不要重新 write_plan。`

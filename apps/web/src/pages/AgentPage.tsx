@@ -22,7 +22,7 @@ type Block =
       id: string
       name: string
       args: string
-      status: 'running' | 'ok' | 'error'
+      status: 'running' | 'ok' | 'error' | 'stopped'
       summary: string
     }
   | { kind: 'gate'; id: string; gate: AgentGate; resolved: 'approve' | 'revise' | 'skip' | null }
@@ -68,10 +68,10 @@ const TASK_STATUS_LABEL: Record<AgentPlanTask['status'], string> = {
 }
 
 const TASK_TONE: Record<AgentPlanTask['status'], string> = {
-  todo: 'text-neutral-400',
+  todo: 'text-neutral-500',
   doing: 'text-amber-700',
   done: 'text-emerald-700',
-  skipped: 'text-neutral-400',
+  skipped: 'text-neutral-500',
   blocked: 'text-rose-700',
 }
 
@@ -118,6 +118,22 @@ function summarizeArgs(name: string, args: unknown): string {
   }
   if (parts.length === 0) return JSON.stringify(args).slice(0, 140)
   return parts.join(' · ') + (name === 'write_element' ? ' · 整表写入' : '')
+}
+
+/**
+ * run 结束后，还在「执行中」的工具卡不能永远转圈：
+ * 停止/失败时真实结果未知，标成「已停止」，不能和状态栏矛盾。
+ */
+function settleRunningTools(blocks: Block[]): Block[] {
+  return blocks.map((b) =>
+    b.kind === 'tool' && b.status === 'running'
+      ? {
+          ...b,
+          status: 'stopped' as const,
+          summary: b.summary.length > 0 ? b.summary : '本轮已结束，结果未知',
+        }
+      : b,
+  )
 }
 
 function reduce(blocks: Block[], ev: AgentEvent): Block[] {
@@ -207,9 +223,15 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
       return next
     }
     case 'run.failed':
-      return [...blocks, { kind: 'status', id: `s${ev.seq}`, text: ev.error, tone: 'error' }]
+      return [
+        ...settleRunningTools(blocks),
+        { kind: 'status', id: `s${ev.seq}`, text: ev.error, tone: 'error' },
+      ]
     case 'run.stopped':
-      return [...blocks, { kind: 'status', id: `s${ev.seq}`, text: '已停止', tone: 'info' }]
+      return [
+        ...settleRunningTools(blocks),
+        { kind: 'status', id: `s${ev.seq}`, text: '已停止', tone: 'info' },
+      ]
     default:
       return blocks
   }
@@ -233,7 +255,12 @@ function moduleFor(artifact: string): 'world' | 'cast' | 'story' | 'write' | 'as
 }
 
 function currentHint(run: AgentRun | null, plan: AgentPlan | null): string {
-  if (run === null) return '还没有开始'
+  if (run === null) {
+    if (plan === null) return '还没有开始'
+    return plan.status === 'aborted'
+      ? '上一轮计划已中止：可以「继续执行」或「重新规划」'
+      : '书里有一份上次的计划：可以「继续执行」接着做'
+  }
   if (run.status === 'waiting_review' && run.gate !== null) {
     return run.gate.kind === 'plan'
       ? `等你批准计划「${run.gate.title}」：通过后我会按任务自动推进`
@@ -253,23 +280,13 @@ function currentHint(run: AgentRun | null, plan: AgentPlan | null): string {
   return '已停止；可以继续聊，或点「继续执行」'
 }
 
-function Plancard({
-  plan,
-  canResume,
-  canReplan,
-  onResume,
-  onReplan,
-}: {
-  plan: AgentPlan | null
-  canResume: boolean
-  canReplan: boolean
-  onResume: () => void
-  onReplan: () => void
-}) {
+function Plancard({ plan, loading }: { plan: AgentPlan | null; loading: boolean }) {
   if (plan === null) {
     return (
       <p className="px-1 text-[11px] leading-5 text-neutral-400">
-        还没有计划。Agent 会先 read_book，再写一份计划请你批准；批准前不会动书里的文件。
+        {loading
+          ? '正在读取书里的计划…'
+          : '还没有计划。Agent 会先 read_book，再写一份计划请你批准；批准前不会动书里的文件。'}
       </p>
     )
   }
@@ -279,7 +296,7 @@ function Plancard({
       <div className="rounded border border-neutral-200 bg-white px-2.5 py-2">
         <div className="flex items-baseline gap-1.5">
           <span className="truncate text-[12px] font-medium text-neutral-800">{plan.title}</span>
-          <span className="ml-auto shrink-0 text-[10px] text-neutral-400">
+          <span className="ml-auto shrink-0 text-[10px] text-neutral-500">
             {done}/{plan.tasks.length}
           </span>
         </div>
@@ -302,6 +319,7 @@ function Plancard({
                 <div className="flex items-center gap-1.5 text-[12px]">
                   <span className="w-3 shrink-0 text-[10px] text-neutral-400">{i + 1}</span>
                   <span
+                    title={t.title}
                     className={`truncate ${
                       t.status === 'done' || t.status === 'skipped'
                         ? 'text-neutral-400 line-through'
@@ -310,7 +328,9 @@ function Plancard({
                   >
                     {t.title}
                   </span>
-                  <span className={`ml-auto shrink-0 text-[10px] ${TASK_TONE[t.status]}`}>
+                  <span
+                    className={`ml-auto shrink-0 whitespace-nowrap text-[10px] ${TASK_TONE[t.status]}`}
+                  >
                     {TASK_STATUS_LABEL[t.status]}
                   </span>
                 </div>
@@ -335,29 +355,6 @@ function Plancard({
           </li>
         ))}
       </ol>
-
-      {(canResume || canReplan) && (
-        <div className="mt-2 space-y-1">
-          {canResume && (
-            <button
-              type="button"
-              onClick={onResume}
-              className="w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-[11px] text-neutral-700 hover:bg-neutral-50"
-            >
-              继续执行没做完的任务
-            </button>
-          )}
-          {canReplan && (
-            <button
-              type="button"
-              onClick={onReplan}
-              className="w-full rounded border border-neutral-200 bg-white px-2 py-1.5 text-[11px] text-neutral-500 hover:bg-neutral-50"
-            >
-              重新规划（放弃这份计划）
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -372,6 +369,10 @@ export function AgentPage() {
   const [streamNote, setStreamNote] = useState<string | null>(null)
   const [feedback, setFeedback] = useState('')
   const [revising, setRevising] = useState(false)
+  /** 书里的当前计划（磁盘）：run 被回收后靠它继续显示与恢复 */
+  const [diskPlan, setDiskPlan] = useState<AgentPlan | null>(null)
+  const [diskPlanLoaded, setDiskPlanLoaded] = useState(false)
+  const [runExpired, setRunExpired] = useState(false)
   const lastSeq = useRef(0)
   const bottomRef = useRef<HTMLDivElement>(null)
   const setModule = useSessionStore((s) => s.setModule)
@@ -380,6 +381,7 @@ export function AgentPage() {
     const fresh = events.filter((e) => e.seq > lastSeq.current).sort((a, b) => a.seq - b.seq)
     if (fresh.length === 0) return
     lastSeq.current = fresh[fresh.length - 1]?.seq ?? lastSeq.current
+    for (const e of fresh) if (e.type === 'plan.updated') setDiskPlan(e.plan)
     setBlocks((prev) => fresh.reduce(reduce, prev))
   }
 
@@ -408,6 +410,24 @@ export function AgentPage() {
       })
       .catch(() => {
         localStorage.removeItem(RUN_KEY)
+        // 不静默清空：告诉作者「记录过期了，但计划还在书里」
+        setRunExpired(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 计划从磁盘读：run 被回收/服务重启后，计划与恢复入口仍然可见
+  useEffect(() => {
+    let cancelled = false
+    void api<{ plan: AgentPlan | null }>('/agent/plan')
+      .then(({ plan: saved }) => {
+        if (!cancelled) setDiskPlan(saved)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setDiskPlanLoaded(true)
       })
     return () => {
       cancelled = true
@@ -445,18 +465,33 @@ export function AgentPage() {
     bottomRef.current?.scrollIntoView({ block: 'end' })
   }, [blocks])
 
-  const start = async (): Promise<void> => {
+  const startWith = async (mode: 'new' | 'resume' | 'replan', text?: string): Promise<void> => {
     setError(null)
     setBusy(true)
     try {
-      const { run: started } = await post<{ run: AgentRun }>('/agent/runs', { goal: goal.trim() })
+      const { run: started } = await post<{ run: AgentRun }>('/agent/runs', {
+        goal: text ?? goal.trim(),
+        mode,
+      })
       localStorage.setItem(RUN_KEY, started.id)
+      setRunExpired(false)
+      // 新计划/重新规划会作废旧计划，左栏不能再显示它
+      if (mode !== 'resume') setDiskPlan(null)
       adoptRun(started, true)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
+  }
+
+  const start = async (): Promise<void> => {
+    if (
+      diskPlan !== null &&
+      !window.confirm('开始新计划会把书里现有的计划标记为中止并重新规划，继续？')
+    )
+      return
+    await startWith('new')
   }
 
   const sendText = async (text: string): Promise<void> => {
@@ -491,7 +526,11 @@ export function AgentPage() {
   }
 
   const resume = async (): Promise<void> => {
-    if (run === null) return
+    // 没有内存 run（刷新/被回收）时：让服务端按 resume 模式接上磁盘里的计划
+    if (run === null) {
+      await startWith('resume', '继续执行计划里没做完的任务')
+      return
+    }
     setError(null)
     setBusy(true)
     try {
@@ -505,20 +544,7 @@ export function AgentPage() {
   }
 
   const replan = async (): Promise<void> => {
-    setError(null)
-    setBusy(true)
-    try {
-      const { run: started } = await post<{ run: AgentRun }>('/agent/runs', {
-        goal: goal.trim(),
-        mode: 'replan',
-      })
-      localStorage.setItem(RUN_KEY, started.id)
-      adoptRun(started, true)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
+    await startWith('replan')
   }
 
   const review = async (decision: 'approve' | 'revise' | 'skip'): Promise<void> => {
@@ -562,19 +588,21 @@ export function AgentPage() {
     setError(null)
     setStreamNote(null)
     setDraft('')
+    setRunExpired(false)
     setGoal(DEFAULT_GOAL)
   }
 
   const live = run?.status === 'running' || run?.status === 'waiting_review'
-  const plan = latestPlan(blocks)
+  const plan = latestPlan(blocks) ?? diskPlan
   const hint = currentHint(run, plan)
   const canSend = run !== null && run.status !== 'failed'
   const ended =
     run !== null && (run.status === 'done' || run.status === 'stopped' || run.status === 'failed')
   const openTaskCount =
     plan?.tasks.filter((t) => t.status !== 'done' && t.status !== 'skipped').length ?? 0
-  const canResume = ended && openTaskCount > 0
-  const canReplan = ended && plan?.status === 'aborted'
+  // 没有内存 run 也算可恢复：run 被回收后计划还在磁盘上
+  const canResume = (run === null || ended) && openTaskCount > 0
+  const canReplan = (run === null || ended) && plan?.status === 'aborted'
   const placeholder =
     run === null
       ? ''
@@ -597,20 +625,40 @@ export function AgentPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-3">
-          <p className="mb-2 px-1 text-[10px] font-medium tracking-wide text-neutral-400">计划</p>
-          <Plancard
-            plan={plan}
-            canResume={canResume && !busy}
-            canReplan={canReplan && !busy}
-            onResume={() => void resume()}
-            onReplan={() => void replan()}
-          />
+          <p className="mb-2 px-1 text-[10px] font-medium tracking-wide text-neutral-500">计划</p>
+          <Plancard plan={plan} loading={!diskPlanLoaded} />
 
           <div className="mt-4 rounded border border-neutral-200 bg-white px-2.5 py-2">
-            <p className="text-[10px] font-medium text-neutral-400">现在</p>
+            <p className="text-[10px] font-medium text-neutral-500">现在</p>
             <p className="mt-1 text-[11px] leading-5 text-neutral-700">{hint}</p>
           </div>
         </div>
+
+        {/* 恢复入口常驻在左栏底部：任务多时滚动区把按钮顶到折叠线下，作者找不到 */}
+        {(canResume || canReplan) && (
+          <div className="shrink-0 space-y-1 border-t border-neutral-200 bg-neutral-50 px-3 py-2">
+            {canResume && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void resume()}
+                className="w-full rounded bg-neutral-900 px-2 py-1.5 text-[11px] text-white hover:bg-neutral-800 disabled:opacity-40"
+              >
+                继续执行没做完的任务
+              </button>
+            )}
+            {canReplan && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void replan()}
+                className="w-full rounded border border-neutral-200 bg-white px-2 py-1.5 text-[11px] text-neutral-500 hover:bg-neutral-50 disabled:opacity-40"
+              >
+                重新规划（放弃这份计划）
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="border-t border-neutral-200 px-3 py-2 text-[10px] leading-4 text-neutral-500">
           {run !== null ? (
@@ -658,13 +706,19 @@ export function AgentPage() {
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-3xl px-5 py-5">
+          <div className="mx-auto w-full max-w-3xl px-5 pt-5 pb-16">
+            {run === null && runExpired && (
+              <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
+                上一轮对话记录已过期（服务重启或已回收）。计划仍在书里：可以用左栏的「继续执行」或「重新规划」。
+              </div>
+            )}
             {run === null && (
               <div className="rounded border border-dashed border-neutral-200 p-5">
                 <p className="text-[13px] font-medium text-neutral-800">开始一段共创</p>
                 <p className="mt-1 text-[11px] leading-5 text-neutral-500">
-                  说清楚这本书要什么。Agent 会先读全书、写一份带任务的计划；你批准后它逐项执行，
-                  需要你拍板的地方停下来。计划与任务在左边实时更新。
+                  {diskPlan !== null
+                    ? '书里已有一份计划（见左栏）。「开始共创」会作废它并重新规划。'
+                    : '说清楚这本书要什么。Agent 会先读全书、写一份带任务的计划；你批准后它逐项执行，需要你拍板的地方停下来。计划与任务在左边实时更新。'}
                 </p>
                 <textarea
                   value={goal}
@@ -752,9 +806,11 @@ export function AgentPage() {
                         >
                           {b.status === 'running'
                             ? '执行中…'
-                            : b.status === 'error'
-                              ? '失败'
-                              : '完成'}
+                            : b.status === 'stopped'
+                              ? '已停止'
+                              : b.status === 'error'
+                                ? '失败'
+                                : '完成'}
                         </span>
                       </div>
                       {b.summary.length > 0 && (
@@ -833,7 +889,7 @@ export function AgentPage() {
                             className="mb-2 w-full resize-none rounded border border-neutral-300 px-2 py-1.5 text-[12px] focus:border-neutral-500 focus:outline-none"
                           />
                         )}
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
                             disabled={busy}
