@@ -6,6 +6,7 @@ import { createApp } from './app.js'
 import { commitAll, initRepo, isRepo } from './git/runner.js'
 import { openBookIndexDb } from './index-db/open-book.js'
 import { setContext } from './services/context.js'
+import { ensureBookGitignore } from './storage/book-gitignore.js'
 import { openProject } from './storage/project.js'
 import { reindex } from './storage/reindex.js'
 
@@ -56,8 +57,16 @@ export async function startServer(opts: {
   // ★ 仓库里的示例书不带 .git（嵌套仓库不能入库），
   //   而 accept / finalize 都会 commit——不补这一下，
   //   新 clone 的用户第一次点「接受」就吃 GIT_FAILED。
-  if (!(await isRepo(bookDir))) {
+  const freshRepo = !(await isRepo(bookDir))
+  if (freshRepo) {
     await initRepo(bookDir)
+  }
+  // ★ 索引是派生层：赶紧让它离开版本历史（老书只停止跟踪，不重写历史）
+  const hygiene = await ensureBookGitignore(bookDir)
+  if (hygiene.untracked.length > 0) {
+    console.log(`  ✓ 索引已移出版本历史（${hygiene.untracked.length} 个文件，下次写入时提交）`)
+  }
+  if (freshRepo) {
     await commitAll(bookDir, 'chore: 初始化书籍仓库（首次启动）')
     console.log('  ✓ 已为这本书初始化 Git 仓库')
   }

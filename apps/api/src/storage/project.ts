@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { InkloomError, type Project, projectSchema } from '@inkloom/shared'
 import { atomicWrite, readIfExists } from './atomic-write.js'
+import { ensureBookGitignore } from './book-gitignore.js'
 import { readJsonElement, writeJsonElement } from './elements.js'
 import { type BookPaths, bookPaths } from './paths.js'
 
@@ -97,6 +98,8 @@ export async function createProject(input: CreateProjectInput): Promise<OpenedPr
     createdAt: new Date().toISOString(),
   })
 
+  // 建书就把忽略规则写好：索引从第一天起就不该进版本历史
+  await ensureBookGitignore(input.rootPath)
   // 先写身份锚：即使后续步骤崩溃，也不会把这本书误认成别的书
   await atomicWrite(paths.projectIdFile, folderId)
   await writeJsonElement(input.rootPath, 'novel.json', project)

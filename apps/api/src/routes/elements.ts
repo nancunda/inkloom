@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import type { EntityType } from '@inkloom/core'
 import {
   blueprintSchema,
@@ -9,7 +10,7 @@ import {
 import { Hono } from 'hono'
 import { getContext } from '../services/context.js'
 import { readElement, upsertElement } from '../services/element-service.js'
-import { hashContent } from '../storage/atomic-write.js'
+import { hashContent, readIfExists } from '../storage/atomic-write.js'
 
 /**
  * 要素读写：角色、世界规则、力量体系。
@@ -77,10 +78,14 @@ export const elements = new Hono()
 elements.get('/elements', async (c) => {
   const rel = c.req.query('path') ?? ''
   assertPath(rel)
+  const { root } = getContext()
   const data = await readElement(rel)
   if (data === null) throw new InkloomError('NOT_FOUND', `文件不存在：${rel}`)
-  // 与 writeJsonElement 的落盘格式一致，才能和原子写的 CAS 对上
-  return c.json({ path: rel, data, hash: hashContent(`${JSON.stringify(data, null, 2)}\n`) })
+  // ★ hash 必须来自「磁盘上的真实字节」。文件可能被 git 回退或外部编辑器
+  //   改成 4 空格缩进；拿重新序列化的结果去算 hash，会让刚读到的页面
+  //   第一次保存就 409（验收中回退后就撞上了）。
+  const raw = (await readIfExists(join(root, rel))) ?? ''
+  return c.json({ path: rel, data, hash: hashContent(raw) })
 })
 
 elements.put('/elements', async (c) => {

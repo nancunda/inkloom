@@ -94,7 +94,7 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
     const text = await res.text().catch(() => '')
     const detail = describeFailure(res.status, text)
     if (res.status === 401) {
-      throw new LlmError('AUTH', `鉴权失败（检查 .env 里的 DEEPSEEK_API_KEY）：${detail}`, 401)
+      throw new LlmError('AUTH', `鉴权失败（在「设置」里检查 DEEPSEEK_API_KEY）：${detail}`, 401)
     }
     if (res.status === 429) {
       const ra = res.headers.get('retry-after')
@@ -106,18 +106,26 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
 
   const json = (await res.json()) as DeepSeekResponse
   const content = json.choices?.[0]?.message?.content ?? ''
+  const usage = {
+    input: json.usage?.prompt_tokens ?? 0,
+    output: json.usage?.completion_tokens ?? 0,
+    reasoning: json.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+    cacheHit: json.usage?.prompt_cache_hit_tokens ?? 0,
+  }
   if (content.trim().length === 0) {
-    throw new LlmError('EMPTY', '模型返回空内容（不落候选稿）')
+    // ★ 最常见的根因：推理模型把 max_tokens 全花在 reasoning 上，正文 0 字。
+    //   笼统的“空内容”会让用户反复重试；把 finish_reason 和思考消耗说清楚。
+    const finish = json.choices?.[0]?.finish_reason ?? 'unknown'
+    const msg =
+      finish === 'length' && usage.reasoning > 0
+        ? `思考耗尽了 ${usage.reasoning} tokens 的预算（finish_reason=length），正文未产出。请重试，或调低本章目标字数后重新生成`
+        : `模型返回空内容（finish_reason=${finish}）`
+    throw new LlmError('EMPTY', msg, null, null, usage)
   }
 
   return {
     content,
-    usage: {
-      input: json.usage?.prompt_tokens ?? 0,
-      output: json.usage?.completion_tokens ?? 0,
-      reasoning: json.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
-      cacheHit: json.usage?.prompt_cache_hit_tokens ?? 0,
-    },
+    usage,
     finishReason: json.choices?.[0]?.finish_reason ?? 'unknown',
   }
 }

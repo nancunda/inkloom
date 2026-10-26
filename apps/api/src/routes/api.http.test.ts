@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -329,6 +329,31 @@ describe('时间机器', () => {
     }
     expect(list.checkpoints).toHaveLength(2)
     expect(list.checkpoints[0]?.label).toContain('回退到')
+  })
+
+  it('★ 文件缩进不是 2 空格时，GET 拿到的 hash 仍能直接用于 PUT（回退/外部编辑后）', async () => {
+    // 模拟 git 恢复或外部编辑器：4 空格缩进，和服务端写出的格式不同
+    const file = join(root, 'characters/index.json')
+    const data = [
+      { id: 'c1', projectId: pid, name: '林岚', role: 'protagonist', curPhysical: '健康' },
+    ]
+    await writeFile(file, `${JSON.stringify(data, null, 4)}\n`, 'utf8')
+
+    const got = (await (
+      await appWithLlm().request('/api/elements?path=characters%2Findex.json')
+    ).json()) as { data: { id: string; projectId: string }[]; hash: string }
+
+    const put = await appWithLlm().request('/api/elements', {
+      method: 'PUT',
+      body: JSON.stringify({
+        relPath: 'characters/index.json',
+        entityType: 'character',
+        entityId: 'c1',
+        expectedHash: got.hash,
+        payload: { ...got.data[0], curPhysical: '轻微擦伤' },
+      }),
+    })
+    expect(put.status).toBe(200)
   })
 })
 

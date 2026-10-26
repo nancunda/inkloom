@@ -51,7 +51,7 @@ function intParam(raw: string | undefined, name: string): number {
 function requireApiKey(deps: ActionDeps): string {
   const key = deps.apiKey ?? process.env['DEEPSEEK_API_KEY']
   if (key === undefined || key.trim().length === 0) {
-    throw new InkloomError('AUTH', '缺少 DEEPSEEK_API_KEY（见 .env.example）')
+    throw new InkloomError('AUTH', '缺少 DEEPSEEK_API_KEY：在「设置」里填好后重试')
   }
   return key
 }

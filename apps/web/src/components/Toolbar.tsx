@@ -71,6 +71,24 @@ export function Toolbar({ chapter, plain = false }: Props) {
       }
     >
       <div className="space-y-4 px-0 py-0">
+        {/* ★ 失败提示要“粘”在视线里：验收时空内容失败的信息在右栏最底部，等同于没看见 */}
+        {error !== null && (
+          <div
+            role="alert"
+            className="sticky top-0 z-10 rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800"
+          >
+            <div className="flex items-start gap-2">
+              <span className="flex-1 whitespace-pre-wrap">{error}</span>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="shrink-0 text-[11px] text-rose-500 hover:text-rose-800"
+              >
+                知道了
+              </button>
+            </div>
+          </div>
+        )}
         <section>
           <label
             htmlFor="guidance"
@@ -305,12 +323,6 @@ export function Toolbar({ chapter, plain = false }: Props) {
           </button>
           {report !== null && <HealthReportView report={report} />}
         </section>
-
-        {error !== null && (
-          <p className="rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800">
-            {error}
-          </p>
-        )}
       </div>
     </aside>
   )

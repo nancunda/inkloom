@@ -1,6 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { InkloomError } from '@inkloom/shared'
 import { WriteQueue } from '../storage/queue.js'
@@ -137,17 +136,17 @@ export async function currentHead(cwd: string): Promise<string | null> {
 /** 把指定路径恢复到某个 commit（时间点回退用） */
 export async function checkoutPaths(cwd: string, ref: string, paths: string[]): Promise<void> {
   if (paths.length === 0) return
-  // ★ 先过滤不存在的路径：`git checkout <ref> -- <pathspec>` 对不匹配的
-  //   pathspec 会整体失败，而时间点回退时“那个文件当时还不存在”是正常情况。
-  const existing: string[] = []
-  for (const p of paths) {
-    try {
-      await stat(join(cwd, p))
-      existing.push(p)
-    } catch {
-      // 不存在就跳过
-    }
-  }
+  // ★ 只保留「ref 里真实存在」的 pathspec：不匹配的 pathspec 会让整条命令失败。
+  //   不能用磁盘上的存在性判断——回退前用户可能把整个 chapters/ 删了，
+  //   而 checkout 本应该把整个目录重新创建出来；按磁盘过滤会让回退直接失败。
+  const listed = await git(cwd, ['ls-tree', '--name-only', ref, '--', ...paths])
+  const present = new Set(
+    listed
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+  )
+  const existing = paths.filter((p) => present.has(p))
   if (existing.length === 0) return
   await git(cwd, ['checkout', ref, '--', ...existing])
 }

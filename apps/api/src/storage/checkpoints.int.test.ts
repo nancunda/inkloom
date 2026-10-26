@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { RevisionRecord } from '@inkloom/core'
 import type { InkloomError } from '@inkloom/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { initRepo } from '../git/runner.js'
+import { git, initRepo } from '../git/runner.js'
 import {
   checkpointRelPath,
   createCheckpoint,
@@ -114,7 +114,6 @@ describe('rollbackToCheckpoint', () => {
   })
 
   it('恢复被改动的文件内容（只限 TRACKED_DIRS 内的路径）', async () => {
-    const { mkdir } = await import('node:fs/promises')
     await mkdir(join(root, 'chapters'), { recursive: true })
     const rel = join('chapters', 'ch-001.md')
     await writeFile(join(root, rel), '第一版', 'utf8')
@@ -124,5 +123,63 @@ describe('rollbackToCheckpoint', () => {
 
     await rollbackToCheckpoint(root, ck.id)
     expect(await readFile(join(root, rel), 'utf8')).toBe('第一版')
+  })
+
+  it('★ 回退会删掉检查点之后新增的文件（不能留幽灵章）', async () => {
+    await mkdir(join(root, 'chapters'), { recursive: true })
+    await writeFile(join(root, 'chapters', 'ch-001.md'), '第一章', 'utf8')
+    const ck = await createCheckpoint(root, '只有一章')
+
+    await writeFile(join(root, 'chapters', 'ch-002.md'), '第二章', 'utf8')
+    await createCheckpoint(root, '两章')
+
+    await rollbackToCheckpoint(root, ck.id)
+    await expect(readFile(join(root, 'chapters', 'ch-002.md'), 'utf8')).rejects.toThrow()
+    expect(await readFile(join(root, 'chapters', 'ch-001.md'), 'utf8')).toBe('第一章')
+  })
+
+  it('★ 回退后工作区干净，且快照与回退记录都进了 git 历史', async () => {
+    await mkdir(join(root, 'chapters'), { recursive: true })
+    await writeFile(join(root, 'chapters', 'ch-001.md'), '甲', 'utf8')
+    const ck = await createCheckpoint(root, '起')
+    await writeFile(join(root, 'chapters', 'ch-002.md'), '乙', 'utf8')
+
+    await rollbackToCheckpoint(root, ck.id)
+
+    expect((await git(root, ['status', '--porcelain'])).trim()).toBe('')
+    const log = await git(root, ['log', '--oneline'])
+    expect(log).toContain('回退前快照')
+    expect(log).toContain(`回退到 起 (${ck.id})`)
+  })
+
+  it('★ 检查点之后新建实体的 revision 文件被清空', async () => {
+    const ck = await createCheckpoint(root, '还没有 c1')
+    await appendRevision(root, rec(1))
+    await createCheckpoint(root, '有 c1')
+
+    await rollbackToCheckpoint(root, ck.id)
+    expect(await countRevisionLines(root, 'character', 'c1')).toBe(0)
+  })
+
+  it('★ 整个目录被删掉也能回退（恢复不能看磁盘上还在不在）', async () => {
+    await mkdir(join(root, 'chapters'), { recursive: true })
+    await writeFile(join(root, 'chapters', 'ch-001.md'), '第一章', 'utf8')
+    const ck = await createCheckpoint(root, '有目录')
+
+    await rm(join(root, 'chapters'), { recursive: true, force: true })
+
+    await rollbackToCheckpoint(root, ck.id)
+    expect(await readFile(join(root, 'chapters', 'ch-001.md'), 'utf8')).toBe('第一章')
+  })
+
+  it('索引文件不进版本历史（.gitignore 自动补全）', async () => {
+    await mkdir(join(root, '.inkloom'), { recursive: true })
+    await writeFile(join(root, '.inkloom', 'index.sqlite'), 'binary', 'utf8')
+
+    await createCheckpoint(root, 'A')
+
+    const tracked = await git(root, ['ls-files'])
+    expect(tracked).not.toContain('index.sqlite')
+    expect(await readFile(join(root, '.gitignore'), 'utf8')).toContain('.inkloom/index.sqlite')
   })
 })

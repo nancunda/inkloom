@@ -124,9 +124,22 @@ export async function generateChapter(
     truncated = r.finishReason === 'length'
   } catch (e) {
     const msg = e instanceof LlmError ? `${e.code}: ${e.message}` : (e as Error).message
+    // 失败也要记账：EMPTY 往往是推理烧完了预算，这段成本不能凭空消失
+    const used = e instanceof LlmError ? e.usage : null
     await db.generationRun.update({
       where: { id: runId },
-      data: { status: 'failed', errorMessage: msg, finishedAt: new Date() },
+      data: {
+        status: 'failed',
+        errorMessage: msg,
+        finishedAt: new Date(),
+        ...(used === null
+          ? {}
+          : {
+              usageInput: used.input,
+              usageOutput: used.output + used.reasoning,
+              cacheHitTokens: used.cacheHit,
+            }),
+      },
     })
     throw e
   }
@@ -324,9 +337,21 @@ export async function rewriteScene(opts: RewriteSceneOptions): Promise<RewriteSc
     usage = r.usage
   } catch (e) {
     const msg = e instanceof LlmError ? `${e.code}: ${e.message}` : (e as Error).message
+    const used = e instanceof LlmError ? e.usage : null
     await db.generationRun.update({
       where: { id: runId },
-      data: { status: 'failed', errorMessage: msg, finishedAt: new Date() },
+      data: {
+        status: 'failed',
+        errorMessage: msg,
+        finishedAt: new Date(),
+        ...(used === null
+          ? {}
+          : {
+              usageInput: used.input,
+              usageOutput: used.output + used.reasoning,
+              cacheHitTokens: used.cacheHit,
+            }),
+      },
     })
     throw e
   }

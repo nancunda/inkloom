@@ -102,11 +102,23 @@ export async function upsertElement(input: UpsertElementInput): Promise<UpsertRe
     await appendRevision(ctx.root, revision)
 
     // 4. 索引（失败只告警，不回滚——见 syncElement 的设计原则）
-    const synced = await syncElement(ctx.db, ctx.project.id, input.entityType, input.payload)
-    if (!synced.ok && synced.error !== undefined) {
-      console.warn(
-        `[index] ${input.entityType}/${input.entityId} 同步失败（reindex 可修复）：${synced.error}`,
-      )
+    // ★ 列表文件（characters/index.json）的 payload 是整张表，
+    //   不能直接丢给 syncElement（它要的是“一行”）：验收里因此刷出
+    //   「payload 缺少 id」。按 entityId 取出本行；取不到 = 这行被删了。
+    const indexPayload = Array.isArray(input.payload)
+      ? (input.payload as Record<string, unknown>[]).find((row) => row['id'] === input.entityId)
+      : input.payload
+    if (indexPayload === undefined) {
+      if (input.entityType === 'character') {
+        await ctx.db.character.deleteMany({ where: { id: input.entityId } })
+      }
+    } else {
+      const synced = await syncElement(ctx.db, ctx.project.id, input.entityType, indexPayload)
+      if (!synced.ok && synced.error !== undefined) {
+        console.warn(
+          `[index] ${input.entityType}/${input.entityId} 同步失败（reindex 可修复）：${synced.error}`,
+        )
+      }
     }
 
     // 5. git

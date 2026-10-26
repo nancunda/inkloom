@@ -159,6 +159,20 @@ export function CastPage() {
         </button>
       </header>
 
+      {/* ★ 提示条在页面级：保存成功会关闭编辑面板，写在面板里的提示会跟着消失 */}
+      {msg !== null && (
+        <div
+          role="status"
+          className={`shrink-0 border-b px-6 py-1.5 text-[11px] ${
+            msg.startsWith('已')
+              ? 'border-neutral-100 bg-neutral-50 text-neutral-600'
+              : 'border-rose-100 bg-rose-50 text-rose-700'
+          }`}
+        >
+          {msg}
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1 overflow-y-auto p-6">
           {tab === 'graph' ? (
@@ -241,7 +255,6 @@ export function CastPage() {
             </div>
 
             <div className="border-t border-neutral-100 p-3">
-              {msg !== null && <p className="mb-2 text-[11px] text-neutral-500">{msg}</p>}
               <button
                 type="button"
                 onClick={submit}

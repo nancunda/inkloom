@@ -38,18 +38,27 @@ export class LlmError extends Error {
   readonly status: number | null
   /** 429 时服务端给的 retry-after 秒数 */
   readonly retryAfterSec: number | null
+  /**
+   * 失败前已经消耗掉的 token。
+   *
+   * ★ 空内容（EMPTY）不是“没花钱”：推理已经把额度烧完了。
+   *   不把 usage 带出去，成本报表里这段就是凭空消失的。
+   */
+  readonly usage: ChatUsage | null
 
   constructor(
     code: LlmErrorCode,
     message: string,
     status: number | null = null,
     retryAfterSec: number | null = null,
+    usage: ChatUsage | null = null,
   ) {
     super(message)
     this.name = 'LlmError'
     this.code = code
     this.status = status
     this.retryAfterSec = retryAfterSec
+    this.usage = usage
   }
 }
 

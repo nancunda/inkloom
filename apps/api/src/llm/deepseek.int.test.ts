@@ -145,6 +145,27 @@ describe('chat — 错误映射（spec §7.1）', () => {
     }
   })
 
+  it('★ 思考耗尽预算导致空输出 → 说清原因并带上 usage', async () => {
+    const body = {
+      choices: [{ message: { content: '' }, finish_reason: 'length' }],
+      usage: {
+        prompt_tokens: 1500,
+        completion_tokens: 12000,
+        completion_tokens_details: { reasoning_tokens: 12000 },
+      },
+    }
+    try {
+      await chat({ ...base, fetchImpl: fakeFetch(200, body) })
+      throw new Error('应当抛错')
+    } catch (e) {
+      const err = e as LlmError
+      expect(err.code).toBe('EMPTY')
+      expect(err.message).toContain('12000')
+      expect(err.message).toContain('正文未产出')
+      expect(err.usage?.reasoning).toBe(12000)
+    }
+  })
+
   it('★ 超时 → TIMEOUT', async () => {
     const slow: FetchLike = (_u, init) =>
       new Promise((_resolve, reject) => {

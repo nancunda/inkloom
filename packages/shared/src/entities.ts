@@ -177,8 +177,8 @@ export const locationSchema = z.object({
   type: z.enum(['city', 'mountain', 'sect', 'secret_realm', 'ruin', 'plain']),
   region: z.string().optional(),
   description: z.string().optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
+  x: z.number().nullable().optional(),
+  y: z.number().nullable().optional(),
   deletedAt: isoDate.optional(),
 })
 export type Location = z.infer<typeof locationSchema>
