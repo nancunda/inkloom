@@ -27,6 +27,8 @@ interface BlueprintLite {
   conflict: string
   /** 章末钩子：蓝图表格要展示，也是新建时必填项 */
   hook: string
+  /** 出场角色 id：写作页右栏要用它列「谁出场」 */
+  castIds: string[]
   tensionLevel: number
   beatType: string
 }
@@ -56,6 +58,7 @@ async function listBlueprints(): Promise<BlueprintLite[]> {
       goal: b.goal,
       conflict: b.conflict,
       hook: b.hook,
+      castIds: b.castIds,
       tensionLevel: b.tensionLevel,
       beatType: b.beatType,
     })

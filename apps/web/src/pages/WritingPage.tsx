@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   useAcceptScene,
+  useBlueprints,
   useBook,
   useChapter,
   useChapterText,
@@ -11,10 +12,10 @@ import {
 } from '../api/hooks'
 import type { SceneRow } from '../api/types'
 import { ChapterList } from '../components/ChapterList'
+import { ChapterPanel } from '../components/ChapterPanel'
 import { DiffView } from '../components/DiffView'
 import { FocusMode } from '../components/FocusMode'
 import { SceneCard } from '../components/SceneCard'
-import { Toolbar } from '../components/Toolbar'
 import { STATUS_LABEL } from '../lib/status'
 import { useSessionStore } from '../stores/session'
 
@@ -165,6 +166,8 @@ function WriteView() {
           </span>
         </div>
 
+        <ChapterBlueprintHead chapterNo={chapterNo} />
+
         <ChapterTextBlock chapterNo={chapterNo} />
 
         {isLoading && <p className="text-sm text-neutral-500">加载中…</p>}
@@ -233,8 +236,33 @@ function WriteView() {
         )}
       </main>
 
-      <Toolbar chapter={chapter} />
+      <ChapterPanel chapter={chapter} />
       {focus && <FocusMode />}
+    </div>
+  )
+}
+
+/** 中栏顶部的蓝图头：目标 / 冲突 / 张力，写之前先知道这章要干什么 */
+function ChapterBlueprintHead({ chapterNo }: { chapterNo: number }) {
+  const { data } = useBlueprints()
+  const b = data?.chapters.find((c) => c.chapterNo === chapterNo)
+  if (b === undefined) return null
+  return (
+    <div className="mb-3 rounded-lg border border-neutral-200 bg-white px-4 py-2.5">
+      <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+        <span>本章蓝图</span>
+        <span className="text-neutral-700" role="img" aria-label={`张力 ${b.tensionLevel} / 5`}>
+          {'●'.repeat(b.tensionLevel)}
+          {'○'.repeat(Math.max(0, 5 - b.tensionLevel))}
+        </span>
+        <span>张力 {b.tensionLevel}/5</span>
+      </div>
+      <p className="mt-1 text-[13px] text-neutral-800">目标：{b.goal}</p>
+      <p className="mt-0.5 text-[12px] text-neutral-500">
+        冲突：{b.conflict}
+        <span className="mx-1.5 text-neutral-300">|</span>
+        钩子：{b.hook}
+      </p>
     </div>
   )
 }

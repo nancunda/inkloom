@@ -72,6 +72,7 @@ export interface BlueprintLite {
   goal: string
   conflict: string
   hook: string
+  castIds: string[]
   tensionLevel: number
   beatType: string
 }

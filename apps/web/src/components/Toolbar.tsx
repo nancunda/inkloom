@@ -13,6 +13,8 @@ import type { ChapterDetail, HealthReport, ProposeResult, SearchResult } from '.
 
 interface Props {
   chapter: ChapterDetail | undefined
+  /** 嵌在右栏里时不要再套一层宽度/边框/背景 */
+  plain?: boolean
 }
 
 /**
@@ -21,7 +23,7 @@ interface Props {
  * ★ 每个按钮的 disabled 都由「数据能否支持这个动作」推出，并附 title 说明原因。
  *   例如定稿要求「本章没有 candidate」——这个规则是后端定的，前端只是把它显示出来。
  */
-export function Toolbar({ chapter }: Props) {
+export function Toolbar({ chapter, plain = false }: Props) {
   const chapterNo = chapter?.chapterNo ?? 0
   const generate = useGenerate()
   const finalize = useFinalize()
@@ -63,8 +65,12 @@ export function Toolbar({ chapter }: Props) {
   }
 
   return (
-    <aside className="w-80 shrink-0 overflow-y-auto border-l border-neutral-200 bg-neutral-50">
-      <div className="space-y-4 p-4">
+    <aside
+      className={
+        plain ? '' : 'w-80 shrink-0 overflow-y-auto border-l border-neutral-200 bg-neutral-50'
+      }
+    >
+      <div className="space-y-4 px-0 py-0">
         <section>
           <label
             htmlFor="guidance"

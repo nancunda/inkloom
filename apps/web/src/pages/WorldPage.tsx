@@ -404,8 +404,6 @@ function PlacesEditor() {
     )
   }
 
-  const nameOf = new Map(locs.map((l) => [l.id, l.name]))
-
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-5 p-6">
