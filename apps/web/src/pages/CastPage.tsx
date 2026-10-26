@@ -56,6 +56,37 @@ export function CastPage() {
     setMsg(null)
   }
 
+  /** 删除：从数组移除。revision 与 git 历史会留下它，不是真的“消失” */
+  const removeCharacter = (): void => {
+    if (cast === undefined || editing === null) return
+    const target = cast.find((c) => c.id === editing)
+    if (target === undefined) return
+    if (
+      !window.confirm(
+        `删除「${target.name}」？\n关系里对它的引用不会自动清理，可从书内 git 历史找回。`,
+      )
+    ) {
+      return
+    }
+    const next = cast.filter((c) => c.id !== editing)
+    save.mutate(
+      {
+        relPath: 'characters/index.json',
+        entityType: 'character',
+        entityId: editing,
+        payload: next,
+        reason: '界面删除角色',
+      },
+      {
+        onSuccess: (r) => {
+          setMsg(`已删除 ${target.name} · v${r.version}`)
+          setEditing(null)
+        },
+        onError: (e) => setMsg(e.message),
+      },
+    )
+  }
+
   const submit = (): void => {
     if (cast === undefined || editing === null) return
     const idx = cast.findIndex((c) => c.id === editing)
@@ -219,6 +250,15 @@ export function CastPage() {
               >
                 {save.isPending ? '保存中…' : '保存'}
               </button>
+              {rows.some((c) => c.id === editing) && (
+                <button
+                  type="button"
+                  onClick={removeCharacter}
+                  className="mt-2 w-full rounded border border-neutral-200 py-1 text-[11px] text-neutral-400 hover:text-rose-600"
+                >
+                  删除角色
+                </button>
+              )}
               <p className="mt-2 text-[10px] text-neutral-400">
                 保存会写入 characters/index.json，并自动生成 revision 与 git commit。
               </p>

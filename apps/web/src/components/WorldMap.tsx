@@ -9,7 +9,7 @@ import {
   Position,
   ReactFlow,
 } from '@xyflow/react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import '@xyflow/react/dist/style.css'
 import { useWorld } from '../api/hooks'
 
@@ -81,11 +81,14 @@ const NODE_TYPES = { place: PlaceNodeView }
  *
  * ★ 有坐标用坐标（作者手工摆位），没坐标一律自动圆环——不在前端
  *   "猜"一个看起来像地图的假坐标，那会把作者没表达的空间关系画出来。
+ * ★ 传了 onMove 才允许拖：拖完只改本地位置并上报，写盘由调用方决定——
+ *   查看地图时不该因为误拖就改了书。
  * ★ 路线标注天数而不是距离：天数才是 P0-13 要求系统算的那个数，
  *   也是写作时真正会引用的数（「走了三天」）。
  */
-export function WorldMap() {
+export function WorldMap({ onMove }: { onMove?: (id: string, x: number, y: number) => void }) {
   const { data, isLoading } = useWorld()
+  const [localPos, setLocalPos] = useState<Record<string, { x: number; y: number }>>({})
 
   const { nodes, edges } = useMemo(() => {
     const locations = data?.locations ?? []
@@ -105,7 +108,8 @@ export function WorldMap() {
       return {
         id: l.id,
         type: 'place',
-        position: hasCoords && l.x !== null && l.y !== null ? { x: l.x, y: l.y } : auto,
+        position:
+          localPos[l.id] ?? (hasCoords && l.x !== null && l.y !== null ? { x: l.x, y: l.y } : auto),
         data: { name: l.name, type: l.type, region: l.region },
       }
     })
@@ -127,7 +131,7 @@ export function WorldMap() {
     }))
 
     return { nodes: nodeList, edges: edgeList }
-  }, [data])
+  }, [data, localPos])
 
   if (isLoading) return <p className="p-6 text-sm text-neutral-500">读取世界…</p>
 
@@ -148,7 +152,11 @@ export function WorldMap() {
         <span>
           {nodes.length} 个地点 · {edges.length} 条路线
         </span>
-        <span className="ml-auto text-neutral-400">路线上的天数由系统计算，写作时直接引用</span>
+        <span className="ml-auto text-neutral-400">
+          {onMove === undefined
+            ? '路线上的天数由系统计算，写作时直接引用'
+            : '拖动地点调整位置，松手后点「保存布局」'}
+        </span>
       </div>
       <div className="relative min-h-0 flex-1">
         <div className="absolute inset-0">
@@ -158,7 +166,11 @@ export function WorldMap() {
             nodeTypes={NODE_TYPES}
             fitView
             fitViewOptions={{ padding: 0.2 }}
-            nodesDraggable={false}
+            nodesDraggable={onMove !== undefined}
+            onNodeDragStop={(_, node) => {
+              setLocalPos((p) => ({ ...p, [node.id]: { x: node.position.x, y: node.position.y } }))
+              onMove?.(node.id, node.position.x, node.position.y)
+            }}
           >
             <Background />
             <Controls showInteractive={false} />

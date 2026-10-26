@@ -50,15 +50,7 @@ export function WorldPage() {
         </div>
       </header>
 
-      {tab === 'map' ? (
-        <div className="min-h-0 flex-1">
-          <WorldMap />
-        </div>
-      ) : tab === 'places' ? (
-        <PlacesEditor />
-      ) : (
-        <RulesEditor />
-      )}
+      {tab === 'map' ? <MapEditor /> : tab === 'places' ? <PlacesEditor /> : <RulesEditor />}
     </div>
   )
 }
@@ -272,6 +264,69 @@ function RulesEditor() {
 }
 
 /**
+ * 地图布局编辑：拖完不立即写盘，而是攒成「已移动」再保存。
+ *
+ * ★ 查看与编辑分开：没拖动时地图就是个只看不动的图；
+ *   拖了就明确告诉你要不要保存，避免误拖改书。
+ */
+function MapEditor() {
+  const { data: locations } = useLocations()
+  const save = useSaveElement()
+  const [moved, setMoved] = useState<Record<string, { x: number; y: number }>>({})
+  const [msg, setMsg] = useState<string | null>(null)
+  const count = Object.keys(moved).length
+
+  const submit = (): void => {
+    if (locations === undefined || count === 0) return
+    const next = locations.map((l) => {
+      const p = moved[l.id]
+      return p === undefined ? l : { ...l, x: Math.round(p.x), y: Math.round(p.y) }
+    })
+    save.mutate(
+      {
+        relPath: 'world/locations.json',
+        entityType: 'location',
+        entityId: 'locations',
+        payload: next,
+        reason: '界面拖动地图保存布局',
+      },
+      {
+        onSuccess: (r) => {
+          setMsg(`布局已保存 · v${r.version}`)
+          setMoved({})
+        },
+        onError: (e) => setMsg(e.message),
+      },
+    )
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-4 py-1.5 text-[11px]">
+        <span className="text-neutral-500">
+          {count === 0 ? '拖动地点调整位置' : `${count} 个地点已移动`}
+        </span>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={count === 0 || save.isPending}
+          className="rounded bg-neutral-900 px-2.5 py-1 text-[11px] text-white disabled:opacity-30"
+        >
+          {save.isPending ? '保存中…' : '保存布局'}
+        </button>
+        {msg !== null && <span className="text-neutral-500">{msg}</span>}
+        <span className="ml-auto text-neutral-400">
+          坐标写入 world/locations.json，下次打开就在原位
+        </span>
+      </div>
+      <div className="min-h-0 flex-1">
+        <WorldMap onMove={(id, x, y) => setMoved((m) => ({ ...m, [id]: { x, y } }))} />
+      </div>
+    </div>
+  )
+}
+
+/**
  * 地点与路线编辑。
  *
  * ★ 路线天数由系统算（spec P0-13）：写作时引用「走了三天」必须与这里的值一致，
@@ -401,6 +456,7 @@ function PlacesEditor() {
                 <th className="w-28 px-2 py-1.5">类型</th>
                 <th className="w-28 px-2 py-1.5">地域</th>
                 <th className="px-2 py-1.5">说明</th>
+                <th className="w-8 px-2 py-1.5" />
               </tr>
             </thead>
             <tbody>
@@ -461,11 +517,21 @@ function PlacesEditor() {
                       className="w-full rounded border border-neutral-300 px-1.5 py-0.5"
                     />
                   </td>
+                  <td className="px-1 py-1 text-center">
+                    <button
+                      type="button"
+                      aria-label={`删除地点 ${l.id}`}
+                      onClick={() => setLocDraft(locs.filter((x) => x.id !== l.id))}
+                      className="text-neutral-300 hover:text-rose-600"
+                    >
+                      ×
+                    </button>
+                  </td>
                 </tr>
               ))}
               {locs.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-xs text-neutral-400">
+                  <td colSpan={6} className="px-3 py-6 text-center text-xs text-neutral-400">
                     还没有地点
                   </td>
                 </tr>
@@ -519,6 +585,7 @@ function PlacesEditor() {
                 <th className="w-20 px-2 py-1.5">天数</th>
                 <th className="w-20 px-2 py-1.5">双向</th>
                 <th className="px-2 py-1.5">通行条件</th>
+                <th className="w-8 px-2 py-1.5" />
               </tr>
             </thead>
             <tbody>
@@ -617,11 +684,21 @@ function PlacesEditor() {
                       className="w-full rounded border border-neutral-300 px-1.5 py-0.5"
                     />
                   </td>
+                  <td className="px-1 py-1 text-center">
+                    <button
+                      type="button"
+                      aria-label={`删除路线 ${r.id}`}
+                      onClick={() => setRouteDraft(rts.filter((x) => x.id !== r.id))}
+                      className="text-neutral-300 hover:text-rose-600"
+                    >
+                      ×
+                    </button>
+                  </td>
                 </tr>
               ))}
               {rts.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-xs text-neutral-400">
+                  <td colSpan={8} className="px-3 py-6 text-center text-xs text-neutral-400">
                     还没有路线
                   </td>
                 </tr>

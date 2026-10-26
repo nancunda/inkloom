@@ -181,6 +181,8 @@ export function useSaveElement() {
       // 角色名/关系可能被别处引用，一并刷新
       void qc.invalidateQueries({ queryKey: ['relations'] })
       void qc.invalidateQueries({ queryKey: ['overview'] })
+      // 地点/路线同时被 /api/world 读取（地图），不刷新的话图还是旧位置
+      void qc.invalidateQueries({ queryKey: ['world'] })
     },
   })
 }
