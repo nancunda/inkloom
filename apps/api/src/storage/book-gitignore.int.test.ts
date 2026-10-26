@@ -37,4 +37,22 @@ describe('ensureBookGitignore', () => {
     expect(await git(root, ['ls-files', '--', '.inkloom/index.sqlite'])).toBe('')
     expect(await readFile(index, 'utf8')).toBe('sqlite-bytes')
   })
+
+  // 回归：Agent journal 含完整思考与工具参数，且会被 commitAll 顺手带上。
+  // 它只是排查日志，不该进书的版本历史。
+  it('★ Agent 运行日志：写入忽略规则并停止跟踪', async () => {
+    const runs = join(root, '.inkloom', 'agent', 'runs')
+    await mkdir(runs, { recursive: true })
+    const log = join(runs, 'ar_test.jsonl')
+    await writeFile(log, '{"type":"run.started"}\n', 'utf8')
+    await commitAll(root, 'chore: 初始化（journal 误入库）')
+    expect(await git(root, ['ls-files', '--', '.inkloom/agent'])).toContain('ar_test.jsonl')
+
+    const r = await ensureBookGitignore(root)
+
+    expect(r.added).toContain('.inkloom/agent/')
+    expect(r.untracked).toContain('.inkloom/agent/runs/ar_test.jsonl')
+    expect(await git(root, ['ls-files', '--', '.inkloom/agent'])).toBe('')
+    expect(await readFile(log, 'utf8')).toContain('run.started')
+  })
 })

@@ -354,3 +354,74 @@ export interface HealthReport {
   /** 判断层不可用时的说明；非空说明这次体检被降级了 */
   degraded: string | null
 }
+
+// ---------------------------------------------------------------------------
+// Agent（共创循环）
+// ---------------------------------------------------------------------------
+
+export type AgentRunStatus = 'running' | 'waiting_review' | 'done' | 'failed' | 'stopped'
+
+export type AgentGateStage = 'world' | 'cast' | 'arcs' | 'draft'
+
+export interface AgentGate {
+  stage: AgentGateStage
+  summary: string
+  artifacts: string[]
+}
+
+export interface AgentRunBudget {
+  steps: number
+  maxSteps: number
+  chapterCalls: number
+  maxChapters: number
+  portraitCalls: number
+  maxPortraits: number
+}
+
+export type AgentEvent =
+  | { seq: number; at: string; type: 'run.started'; goal: string }
+  | { seq: number; at: string; type: 'thinking.delta'; text: string }
+  | { seq: number; at: string; type: 'text.delta'; text: string }
+  | { seq: number; at: string; type: 'assistant.message'; text: string; thinking: string }
+  | {
+      seq: number
+      at: string
+      type: 'tool.started'
+      toolCallId: string
+      toolName: string
+      args: unknown
+    }
+  | {
+      seq: number
+      at: string
+      type: 'tool.ended'
+      toolCallId: string
+      toolName: string
+      isError: boolean
+      summary: string
+    }
+  | { seq: number; at: string; type: 'gate.waiting'; gate: AgentGate }
+  | {
+      seq: number
+      at: string
+      type: 'gate.resolved'
+      decision: 'approve' | 'revise'
+      feedback: string | null
+    }
+  | { seq: number; at: string; type: 'run.finished' }
+  | { seq: number; at: string; type: 'run.failed'; error: string }
+  | { seq: number; at: string; type: 'run.stopped' }
+  | { seq: number; at: string; type: 'ping' }
+
+export interface AgentRun {
+  id: string
+  goal: string
+  status: AgentRunStatus
+  startedAt: string
+  finishedAt: string | null
+  gate: AgentGate | null
+  error: string | null
+  budget: AgentRunBudget
+  tokens: number
+  events: AgentEvent[]
+}

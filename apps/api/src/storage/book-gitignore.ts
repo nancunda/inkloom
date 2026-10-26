@@ -14,12 +14,15 @@ const IGNORE_LINES = [
   '.inkloom/index.sqlite',
   '.inkloom/index.sqlite-wal',
   '.inkloom/index.sqlite-shm',
+  '# inkloom：Agent 运行日志（完整思考与工具参数）只用于排查，不进版本历史',
+  '.inkloom/agent/',
 ]
 
-const INDEX_PATHS = [
+const IGNORED_PATHS = [
   '.inkloom/index.sqlite',
   '.inkloom/index.sqlite-wal',
   '.inkloom/index.sqlite-shm',
+  '.inkloom/agent',
 ]
 
 export interface GitignoreResult {
@@ -46,7 +49,7 @@ export async function ensureBookGitignore(root: string): Promise<GitignoreResult
 
   const untracked: string[] = []
   if (await isRepo(root)) {
-    const listed = await git(root, ['ls-files', '--', ...INDEX_PATHS])
+    const listed = await git(root, ['ls-files', '--', ...IGNORED_PATHS])
     const tracked = listed
       .split('\n')
       .map((s) => s.trim())

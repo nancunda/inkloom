@@ -3,6 +3,7 @@ import { useBook, useOverview } from '../api/hooks'
 import { type Command, CommandPalette } from '../components/CommandPalette'
 import { TimeMachine } from '../components/TimeMachine'
 import { STATUS_LABEL, STATUS_MARK } from '../lib/status'
+import { AgentPage } from '../pages/AgentPage'
 import { AssetsPage } from '../pages/AssetsPage'
 import { CastPage } from '../pages/CastPage'
 import { OverviewPage } from '../pages/OverviewPage'
@@ -14,6 +15,7 @@ import { type ModuleId, useSessionStore } from '../stores/session'
 
 const MODULES: { id: ModuleId; label: string; icon: string }[] = [
   { id: 'overview', label: '概览', icon: '◎' },
+  { id: 'agent', label: '共创', icon: '✳' },
   { id: 'world', label: '世界', icon: '◈' },
   { id: 'cast', label: '角色', icon: '◆' },
   { id: 'story', label: '故事', icon: '❖' },
@@ -160,6 +162,7 @@ export function AppShell() {
         {/* 主工作区 */}
         <main className="flex min-w-0 flex-1">
           {module === 'overview' && <OverviewPage />}
+          {module === 'agent' && <AgentPage />}
           {module === 'world' && <WorldPage />}
           {module === 'cast' && <CastPage />}
           {module === 'story' && <StoryPage />}

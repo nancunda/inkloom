@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ImageProvider } from '../assets/image-provider.js'
+import { git } from '../git/runner.js'
 import type { IndexDb } from '../index-db/client.js'
 import type { FetchLike } from '../llm/types.js'
 import { writeJsonElement } from '../storage/elements.js'
@@ -83,6 +84,11 @@ describe('generatePortrait（P4）', () => {
     expect(asset?.prompt).toContain('左眉一道旧疤')
     expect(asset?.visualAnchor).toContain('左眉一道旧疤')
     expect(JSON.parse(asset?.params ?? '{}')).toMatchObject({ image_size: '1024x1024' })
+
+    // ★ 形象图必须进书的 git：换机/克隆/回退时不能只剩一条 DB 记录
+    expect(await git(root, ['ls-files', '--', 'assets/characters/c1.png'])).toContain(
+      'assets/characters/c1.png',
+    )
   })
 
   it('★ prompt 以 visualAnchor 开头（锚点第一，appearance 只作补充）', async () => {

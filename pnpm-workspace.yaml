@@ -11,3 +11,6 @@ allowBuilds:
   '@prisma/engines': true
   # workerd 是 vitest 的间接依赖，本项目不用其运行时
   workerd: false
+  # pi-ai 的 Bedrock/Google 适配带进来的构建脚本；本项目只用 DeepSeek 通道
+  '@google/genai': false
+  protobufjs: false

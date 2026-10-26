@@ -1,7 +1,15 @@
 import { create } from 'zustand'
 
-/** 七个主模块（spec §2.1） */
-export type ModuleId = 'overview' | 'world' | 'cast' | 'story' | 'write' | 'assets' | 'settings'
+/** 八个主模块（spec §2.1 + 共创 Agent） */
+export type ModuleId =
+  | 'overview'
+  | 'agent'
+  | 'world'
+  | 'cast'
+  | 'story'
+  | 'write'
+  | 'assets'
+  | 'settings'
 
 interface SessionState {
   chapterNo: number

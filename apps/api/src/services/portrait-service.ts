@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { InkloomError } from '@inkloom/shared'
 import { createSiliconFlowImage, type ImageProvider } from '../assets/image-provider.js'
+import { commitAll, initRepo } from '../git/runner.js'
 import type { FetchLike } from '../llm/types.js'
 import { getContext } from '../services/context.js'
 import { readJsonElement } from '../storage/elements.js'
@@ -43,9 +44,11 @@ interface CharacterRow {
  *   一致的硬特征」，appearance 只是补充描述。顺序反了会漂。
  * ★ 图片存本地 `assets/characters/<id>.png`，Asset 行记下完整 prompt /
  *   provider / model / params —— 可复现是这一层的全部意义。
+ * ★ 图片同时进 git：换机、克隆与回退时形象图不能丢（二进制直接存，不做 LFS）。
  */
 export async function generatePortrait(opts: PortraitOptions): Promise<PortraitResult> {
   const { root, db, project } = getContext()
+  await initRepo(root)
 
   const raw = await readJsonElement(root, 'characters/index.json')
   const list = Array.isArray(raw) ? (raw as CharacterRow[]) : []
@@ -118,6 +121,11 @@ export async function generatePortrait(opts: PortraitOptions): Promise<PortraitR
       anchorSource: 'character_card',
     },
   })
+
+  await commitAll(
+    root,
+    `feat(asset): 角色形象 ${opts.characterId}（${image.provider}/${image.model}）`,
+  )
 
   return {
     characterId: opts.characterId,
