@@ -212,6 +212,38 @@ export function useDiff(chapterNo: number, sceneNo: number, from: number, to: nu
   })
 }
 
+/** 新建章节蓝图：id / projectId 由服务端生成 */
+export function useCreateBlueprint() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: {
+      chapterNo: number
+      title?: string
+      goal: string
+      conflict: string
+      hook: string
+      beatType?: string
+      tensionLevel?: number
+    }) =>
+      fetch('/api/blueprints', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const e = (await r.json().catch(() => null)) as { error?: { message?: string } } | null
+          throw new Error(e?.error?.message ?? `新建失败 HTTP ${r.status}`)
+        }
+        return (await r.json()) as { chapterNo: number; version: number }
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['blueprints'] })
+      void qc.invalidateQueries({ queryKey: ['book'] })
+      void qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+}
+
 export function useBlueprints() {
   return useQuery({
     queryKey: ['blueprints'],

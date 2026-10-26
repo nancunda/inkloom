@@ -71,6 +71,7 @@ export interface BlueprintLite {
   title: string | null
   goal: string
   conflict: string
+  hook: string
   tensionLevel: number
   beatType: string
 }

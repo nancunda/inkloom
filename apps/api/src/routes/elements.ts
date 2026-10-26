@@ -1,6 +1,7 @@
 import type { EntityType } from '@inkloom/core'
-import { InkloomError } from '@inkloom/shared'
+import { blueprintSchema, InkloomError } from '@inkloom/shared'
 import { Hono } from 'hono'
+import { getContext } from '../services/context.js'
 import { readElement, upsertElement } from '../services/element-service.js'
 import { hashContent } from '../storage/atomic-write.js'
 
@@ -60,4 +61,50 @@ elements.put('/elements', async (c) => {
   })
 
   return c.json({ ok: true, path: relPath, ...result })
+})
+
+/**
+ * 新建章节蓝图（一章一个文件）。
+ *
+ * ★ id 与 projectId 由服务端生成：前者是全书唯一标识，后者是身份锚，
+ *   都不该由前端拼。章号冲突直接 409，而不是静默覆盖别人的蓝图。
+ */
+elements.post('/blueprints', async (c) => {
+  const { project } = getContext()
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+  if (body === null) throw new InkloomError('INVALID_INPUT', '请求体必须是 JSON 对象')
+
+  const chapterNo = Number(body['chapterNo'])
+  if (!Number.isInteger(chapterNo) || chapterNo <= 0) {
+    throw new InkloomError('INVALID_INPUT', 'chapterNo 必须是正整数')
+  }
+
+  const relPath = `story/blueprints/ch-${String(chapterNo).padStart(3, '0')}.json`
+  if ((await readElement(relPath)) !== null) {
+    throw new InkloomError('CONFLICT', `第 ${chapterNo} 章的蓝图已存在`)
+  }
+
+  const parsed = blueprintSchema.safeParse({
+    ...body,
+    id: `b${chapterNo}`,
+    projectId: project.id,
+    chapterNo,
+  })
+  if (!parsed.success) {
+    throw new InkloomError(
+      'INVALID_INPUT',
+      parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('；'),
+    )
+  }
+
+  const result = await upsertElement({
+    entityType: 'blueprint',
+    entityId: parsed.data.id,
+    relPath,
+    payload: parsed.data,
+    changeSource: 'human',
+    changeReason: '界面新建章节蓝图',
+  })
+
+  return c.json({ ok: true, chapterNo, relPath, ...result })
 })

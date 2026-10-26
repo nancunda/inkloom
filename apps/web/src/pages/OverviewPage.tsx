@@ -7,7 +7,8 @@ const BEAT_LABEL: Record<string, string> = {
   rising: '上升',
   climax: '高潮',
   twist: '转折',
-  cooldown: '回落',
+  falling: '回落',
+  resolution: '收束',
 }
 
 /**

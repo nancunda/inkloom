@@ -25,6 +25,8 @@ interface BlueprintLite {
   title: string | null
   goal: string
   conflict: string
+  /** 章末钩子：蓝图表格要展示，也是新建时必填项 */
+  hook: string
   tensionLevel: number
   beatType: string
 }
@@ -53,6 +55,7 @@ async function listBlueprints(): Promise<BlueprintLite[]> {
       title: b.title ?? null,
       goal: b.goal,
       conflict: b.conflict,
+      hook: b.hook,
       tensionLevel: b.tensionLevel,
       beatType: b.beatType,
     })

@@ -44,24 +44,42 @@ export function CastPage() {
     setMsg(null)
   }
 
+  /** 新建：id 取现有 cN 的最大值 +1，保持和 CLI 写入的角色同一套命名 */
+  const startNew = (): void => {
+    const maxN = rows.reduce((n, c) => {
+      const m = /^c(\d+)$/.exec(c.id)
+      return m === null ? n : Math.max(n, Number(m[1]))
+    }, 0)
+    const id = `c${maxN + 1}`
+    setEditing(id)
+    setDraft({ id, name: '', role: 'supporting', personality: '', background: '', motivation: '' })
+    setMsg(null)
+  }
+
   const submit = (): void => {
     if (cast === undefined || editing === null) return
     const idx = cast.findIndex((c) => c.id === editing)
-    if (idx < 0) return
-    const next = cast.slice()
-    const merged = { ...cast[idx], ...draft } as CharacterRow
-    next[idx] = merged
+    // idx < 0 = 新建：追加而不是替换
+    const base: CharacterRow =
+      idx >= 0 ? (cast[idx] as CharacterRow) : ({ id: editing, name: '', role: '' } as CharacterRow)
+    const merged = { ...base, ...draft } as CharacterRow
+    if (merged.name.trim() === '') {
+      setMsg('名字不能为空')
+      return
+    }
+    const next = idx >= 0 ? cast.slice() : [...cast, merged]
+    if (idx >= 0) next[idx] = merged
     save.mutate(
       {
         relPath: 'characters/index.json',
         entityType: 'character',
         entityId: editing,
         payload: next,
-        reason: '界面编辑角色卡',
+        reason: idx >= 0 ? '界面编辑角色卡' : '界面新建角色',
       },
       {
         onSuccess: (r) => {
-          setMsg(`已保存 · 版本 v${r.version}`)
+          setMsg(idx >= 0 ? `已保存 · 版本 v${r.version}` : `已创建 ${merged.name} · v${r.version}`)
           setEditing(null)
         },
         onError: (e) => setMsg(e.message),
@@ -69,7 +87,16 @@ export function CastPage() {
     )
   }
 
-  const editingRow = rows.find((c) => c.id === editing)
+  // 新建的角色还不在 rows 里，用 draft 兑一个占位行，否则面板不会渲染
+  const editingRow: CharacterRow | undefined =
+    editing === null
+      ? undefined
+      : (rows.find((c) => c.id === editing) ??
+        ({
+          id: editing,
+          name: String(draft.name ?? ''),
+          role: String(draft.role ?? ''),
+        } as CharacterRow))
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col">
@@ -92,6 +119,13 @@ export function CastPage() {
         <span className="ml-auto text-[11px] text-neutral-400">
           {rows.length} 个角色 · {edges.length} 条关系
         </span>
+        <button
+          type="button"
+          onClick={startNew}
+          className="rounded bg-neutral-900 px-2.5 py-1 text-[11px] text-white"
+        >
+          ＋ 新建角色
+        </button>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -138,7 +172,9 @@ export function CastPage() {
         {editingRow !== undefined && (
           <aside className="flex w-[360px] shrink-0 flex-col border-l border-neutral-200 bg-white">
             <div className="flex items-center gap-2 border-b border-neutral-100 px-4 py-2">
-              <span className="text-sm font-medium text-neutral-800">{editingRow.name}</span>
+              <span className="text-sm font-medium text-neutral-800">
+                {editingRow.name.trim() === '' ? '新角色' : editingRow.name}
+              </span>
               <span className="text-[10px] text-neutral-400">{editingRow.id}</span>
               <button
                 type="button"
