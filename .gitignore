@@ -72,3 +72,6 @@ Thumbs.db
 # 这些是流程副产物，不是项目产物。丢了可从 git log 恢复。
 # ============================================================
 .superpowers/
+
+# 发行包产物（由 scripts/build-release.mjs 生成）
+release/

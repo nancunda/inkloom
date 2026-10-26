@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { bookPaths } from '../storage/paths.js'
 import { type IndexDb, openIndexDb } from './client.js'
@@ -23,16 +24,36 @@ async function hasSchema(db: IndexDb): Promise<boolean> {
 /**
  * 跑一次 Prisma 迁移（幂等：已是最新则跳过）。
  *
- * ★ 为什么用子进程：Prisma 没有公开的编程式 migrate API。
- *   `migrate deploy` 是幂等的，重复执行安全。
- *   P1 做发布版时应改为内嵌 migration.sql 直接执行，摆脱对 prisma CLI 的运行时依赖。
+ * ★ 必须用**包内的** prisma CLI，不能依赖全局 pnpm：便携发行包里
+ *   没有 pnpm，`pnpm exec prisma` 会直接报「'prisma' 不是内部或外部命令」。
+ * ★ schema 路径也要探测：开发时在 apps/api/prisma，发行包里在 app/prisma。
  */
 function runMigrate(dbPath: string): void {
   // ★ 同样必须 resolve：Prisma CLI 的 file: 相对路径也按 schema 目录解析
   const url = `file:${resolve(dbPath).split('\\').join('/')}`
-  execSync('pnpm exec prisma migrate deploy', {
+  const localSchema = join(API_DIR, 'prisma', 'schema.prisma')
+  const schema = existsSync(localSchema)
+    ? localSchema
+    : join(API_DIR, '..', '..', 'prisma', 'schema.prisma')
+  const args = ['migrate', 'deploy', '--schema', schema]
+  const env = { ...process.env, INKLOOM_DATABASE_URL: url }
+
+  // ★ 不用 require.resolve('prisma')：它的 package.json 不保证暴露
+  //   build/index.js，resolve 失败就会静默回退到 pnpm（发行包里没有 pnpm）。
+  //   直接按两个可能的位置找文件，最直白也最可靠。
+  const cli =
+    [
+      join(API_DIR, 'node_modules/prisma/build/index.js'),
+      join(API_DIR, '..', '..', 'node_modules/prisma/build/index.js'),
+    ].find((p) => existsSync(p)) ?? null
+  if (cli !== null) {
+    const quoted = args.map((a) => `"${a}"`).join(' ')
+    execSync(`"${process.execPath}" "${cli}" ${quoted}`, { cwd: API_DIR, env, stdio: 'pipe' })
+    return
+  }
+  execSync(`pnpm exec prisma ${args.map((a) => `"${a}"`).join(' ')}`, {
     cwd: API_DIR,
-    env: { ...process.env, INKLOOM_DATABASE_URL: url },
+    env,
     stdio: 'pipe',
   })
 }
