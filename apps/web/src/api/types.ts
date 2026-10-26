@@ -380,6 +380,7 @@ export interface AgentRunBudget {
 
 export type AgentEvent =
   | { seq: number; at: string; type: 'run.started'; goal: string }
+  | { seq: number; at: string; type: 'user.message'; text: string }
   | { seq: number; at: string; type: 'thinking.delta'; text: string }
   | { seq: number; at: string; type: 'text.delta'; text: string }
   | { seq: number; at: string; type: 'assistant.message'; text: string; thinking: string }

@@ -5,6 +5,7 @@ import {
   type AgentStreamEvent,
   getAgentRun,
   reviewAgentRun,
+  sendAgentMessage,
   startAgentRun,
   stopAgentRun,
   subscribeAgentRun,
@@ -46,6 +47,13 @@ agentRoutes.post('/agent/runs/:id/review', async (c) => {
   const feedback = typeof body?.feedback === 'string' ? body.feedback : null
   const run = await reviewAgentRun(c.req.param('id'), decision, feedback)
   return c.json({ run })
+})
+
+agentRoutes.post('/agent/runs/:id/messages', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { text?: unknown } | null
+  const text = typeof body?.text === 'string' ? body.text.trim() : ''
+  if (text.length === 0) throw new InkloomError('INVALID_INPUT', '消息不能为空')
+  return c.json({ run: sendAgentMessage(c.req.param('id'), text) })
 })
 
 agentRoutes.get('/agent/runs/:id/events', (c) => {

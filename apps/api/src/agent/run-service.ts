@@ -8,12 +8,13 @@ import { InkloomError } from '@inkloom/shared'
 import { getContext } from '../services/context.js'
 import { agentRunDir } from './book-snapshot.js'
 import { buildAgentPrompt } from './prompt.js'
-import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
+import { type AgentGate, createAgentTools, type ReviewStage, type RunBudget } from './tools.js'
 
 export type AgentRunStatus = 'running' | 'waiting_review' | 'done' | 'failed' | 'stopped'
 
 export type AgentStreamPayload =
   | { type: 'run.started'; goal: string }
+  | { type: 'user.message'; text: string }
   | { type: 'thinking.delta'; text: string }
   | { type: 'text.delta'; text: string }
   | { type: 'assistant.message'; text: string; thinking: string }
@@ -373,11 +374,54 @@ export async function reviewAgentRun(
     return snapshot(run)
   }
 
-  const prompt =
-    decision === 'approve'
-      ? `作者已通过「${gate.stage}」阶段。请继续下一阶段；如果需要写文件，先回顾 read_book 的快照再动手。`
-      : `作者打回了「${gate.stage}」阶段。意见：${feedback ?? ''}\n请按意见修改相关文件，改完再次调用 request_review(stage="${gate.stage}")。`
-  void drive(run, prompt)
+  void drive(
+    run,
+    decision === 'approve' ? approvePrompt(gate.stage) : revisePrompt(gate.stage, feedback ?? ''),
+  )
+  return snapshot(run)
+}
+
+function approvePrompt(stage: ReviewStage): string {
+  return `作者已通过「${stage}」阶段。请继续下一阶段；如果需要写文件，先回顾 read_book 的快照再动手。`
+}
+
+function revisePrompt(stage: ReviewStage, feedback: string): string {
+  return `作者打回了「${stage}」阶段。意见：${feedback}\n请按意见修改相关文件，改完再次调用 request_review(stage="${stage}")。`
+}
+
+/**
+ * 对话式共创：任何时刻都可以再说话。
+ *
+ * - 运行中：steer 到当前轮之后，不打断正在跑的工具；
+ * - 等待审阅：视为「带修改意见的打回」，本阶段重做；
+ * - 已完成/已停止：同一段 transcript 接着聊，不再重开 run。
+ */
+export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
+  const run = runs.get(id)
+  if (run === undefined) throw new InkloomError('NOT_FOUND', `agent run ${id} 不存在`)
+  if (run.status === 'failed') {
+    throw new InkloomError('INVALID_INPUT', '这个 run 失败了，请开新会话')
+  }
+  emit(run, { type: 'user.message', text })
+
+  if (run.status === 'running') {
+    run.agent.steer({ role: 'user', content: text, timestamp: Date.now() })
+    return snapshot(run)
+  }
+
+  if (run.status === 'waiting_review' && run.gate !== null) {
+    const gate = run.gate
+    run.gate = null
+    emit(run, { type: 'gate.resolved', decision: 'revise', feedback: text })
+    void drive(run, revisePrompt(gate.stage, text))
+    return snapshot(run)
+  }
+
+  run.status = 'running'
+  run.stopped = false
+  run.finishedAt = null
+  activeRunId = run.id
+  void drive(run, text)
   return snapshot(run)
 }
 

@@ -16,6 +16,8 @@ interface FakeAgent {
   opts: { initialState: { tools: FakeTool[] } }
   state: { errorMessage?: string }
   promptCalls: number
+  steers: string[]
+  fail: () => void
   emit: (e: FakeEvent) => void
 }
 
@@ -30,8 +32,10 @@ vi.mock('@earendil-works/pi-agent-core', () => {
     opts: { initialState: { tools: FakeTool[] } }
     state: { errorMessage?: string } = {}
     promptCalls = 0
+    steers: string[] = []
     listeners: ((e: FakeEvent) => void)[] = []
     resolvers: (() => void)[] = []
+    rejecters: ((e: Error) => void)[] = []
 
     constructor(opts: { initialState: { tools: FakeTool[] } }) {
       this.opts = opts
@@ -48,14 +52,24 @@ vi.mock('@earendil-works/pi-agent-core', () => {
     /** 永不主动 resolve：测试自己控制「模型还在跑」与「运行结束」的时序 */
     prompt(): Promise<void> {
       this.promptCalls += 1
-      return new Promise<void>((resolve) => {
+      return new Promise<void>((resolve, reject) => {
         this.resolvers.push(resolve)
+        this.rejecters.push(reject)
       })
+    }
+
+    fail(): void {
+      const reject = this.rejecters.pop()
+      reject?.(new Error('模型调用失败'))
     }
 
     abort(): void {
       const resolve = this.resolvers.pop()
       resolve?.()
+    }
+
+    steer(message: { content: unknown }): void {
+      this.steers.push(String(message.content))
     }
 
     emit(e: FakeEvent): void {
@@ -79,7 +93,7 @@ vi.mock('../services/context.js', () => ({
   }),
 }))
 
-const { getAgentRun, reviewAgentRun, startAgentRun, stopAgentRun } = await import(
+const { getAgentRun, reviewAgentRun, sendAgentMessage, startAgentRun, stopAgentRun } = await import(
   './run-service.js'
 )
 
@@ -175,5 +189,54 @@ describe('reviewAgentRun 状态机', () => {
     const { id } = await reachGate('cast')
     await expect(reviewAgentRun(id, 'revise', '  ')).rejects.toThrow('打回必须写清楚要改什么')
     stopAgentRun(id)
+  })
+})
+
+describe('sendAgentMessage（对话式共创）', () => {
+  it('运行中发消息 → steer 到当前轮之后', async () => {
+    const started = await startAgentRun('测试目标')
+    const agent = lastAgent()
+
+    const next = sendAgentMessage(started.id, '顺便把地点名字改短一点')
+
+    expect(next.status).toBe('running')
+    expect(agent.steers).toEqual(['顺便把地点名字改短一点'])
+    expect(next.events.some((e) => e.type === 'user.message')).toBe(true)
+    stopAgentRun(started.id)
+  })
+
+  it('★ 等待审阅时发消息 = 带意见打回，本阶段重做', async () => {
+    const { id, agent } = await reachGate('world')
+
+    const next = sendAgentMessage(id, '规则太多，压到三条')
+
+    expect(next.status).toBe('running')
+    expect(next.gate).toBeNull()
+    expect(agent.promptCalls).toBe(2)
+    const resolved = next.events.find((e) => e.type === 'gate.resolved')
+    expect(resolved).toMatchObject({ decision: 'revise', feedback: '规则太多，压到三条' })
+    stopAgentRun(id)
+  })
+
+  it('★ 本轮结束后还能接着聊（同一段 transcript）', async () => {
+    const { id, agent } = await reachGate('draft')
+    await reviewAgentRun(id, 'approve', null)
+    expect(getAgentRun(id)?.status).toBe('done')
+
+    const next = sendAgentMessage(id, '第 2 场再克制一点')
+
+    expect(next.status).toBe('running')
+    expect(next.finishedAt).toBeNull()
+    expect(agent.promptCalls).toBe(2)
+    stopAgentRun(id)
+  })
+
+  it('失败的 run 不再接收消息', async () => {
+    const started = await startAgentRun('测试目标')
+    lastAgent().fail()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(getAgentRun(started.id)?.status).toBe('failed')
+
+    expect(() => sendAgentMessage(started.id, '继续')).toThrow('这个 run 失败了，请开新会话')
   })
 })
