@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, post } from './client'
 import type {
+  AssetsData,
   BlueprintLite,
   Book,
   ChapterDetail,
@@ -8,6 +9,7 @@ import type {
   FinalizeResult,
   GenerateJob,
   HealthReport,
+  OverviewData,
   ProposeResult,
   RelationGraphData,
   SceneDetail,
@@ -36,6 +38,17 @@ export function useJobs() {
     refetchInterval: (query) =>
       (query.state.data?.jobs ?? []).some((j) => j.status === 'running') ? 2000 : false,
   })
+}
+
+export function useOverview() {
+  return useQuery({
+    queryKey: ['overview'],
+    queryFn: () => api<OverviewData>('/overview'),
+  })
+}
+
+export function useAssets() {
+  return useQuery({ queryKey: ['assets'], queryFn: () => api<AssetsData>('/assets') })
 }
 
 export function useWorld() {

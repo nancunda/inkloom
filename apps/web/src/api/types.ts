@@ -11,6 +11,8 @@ export interface ChapterSummary {
 
 export interface Book {
   id: string
+  /** 身份锚：书在磁盘上换位置也不会认错 */
+  folderId?: string
   name: string
   genre: string
   coreIdea?: string
@@ -176,6 +178,37 @@ export interface SearchResult {
   provider: string
   query: string
   hits: SearchHit[]
+}
+
+export interface OverviewChapter {
+  chapterNo: number
+  title: string | null
+  status: string
+  wordCount: number
+  tensionLevel: number
+  beatType: string
+}
+
+export interface OverviewData {
+  chapters: OverviewChapter[]
+  stats: {
+    total: number
+    finalized: number
+    words: number
+    wordsPerChapter: number
+    progress: number
+  }
+  threads: { total: number; active: number; overdue: number }
+  runs: { total: number; failed: number }
+}
+
+export interface AssetItem {
+  ownerId: string
+  filePath: string
+}
+
+export interface AssetsData {
+  characters: AssetItem[]
 }
 
 export interface RelationNode {

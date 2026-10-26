@@ -1,0 +1,183 @@
+import { useEffect, useMemo } from 'react'
+import { useBook, useOverview } from '../api/hooks'
+import { type Command, CommandPalette } from '../components/CommandPalette'
+import { STATUS_LABEL, STATUS_MARK } from '../lib/status'
+import { AssetsPage } from '../pages/AssetsPage'
+import { CastPage } from '../pages/CastPage'
+import { OverviewPage } from '../pages/OverviewPage'
+import { SettingsPage } from '../pages/SettingsPage'
+import { StoryPage } from '../pages/StoryPage'
+import { WorldPage } from '../pages/WorldPage'
+import { WritingPage } from '../pages/WritingPage'
+import { type ModuleId, useSessionStore } from '../stores/session'
+
+const MODULES: { id: ModuleId; label: string; icon: string }[] = [
+  { id: 'overview', label: '概览', icon: '◎' },
+  { id: 'world', label: '世界', icon: '◈' },
+  { id: 'cast', label: '角色', icon: '◆' },
+  { id: 'story', label: '故事', icon: '❖' },
+  { id: 'write', label: '写作', icon: '✎' },
+  { id: 'assets', label: '素材', icon: '▧' },
+  { id: 'settings', label: '设置', icon: '⚙' },
+]
+
+/**
+ * 应用骨架：顶栏 + 左栏（七个模块）+ 主工作区 + 底栏（spec §2.1 / §4.13）。
+ *
+ * ★ 写作模块自带第二列（章节列表）与右栏（本章蓝图/角色/未兑现），
+ *   其余模块占满主工作区——不为了对齐而把不同密度的界面塞进同一套栅格。
+ */
+export function AppShell() {
+  const { data: book } = useBook()
+  const { data: overview } = useOverview()
+  const module = useSessionStore((s) => s.module)
+  const setModule = useSessionStore((s) => s.setModule)
+  const palette = useSessionStore((s) => s.palette)
+  const setPalette = useSessionStore((s) => s.setPalette)
+  const setChapter = useSessionStore((s) => s.setChapter)
+  const setFocus = useSessionStore((s) => s.setFocus)
+
+  // Ctrl+K 命令面板 / Ctrl+Shift+E 专注模式（全局）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const s = useSessionStore.getState()
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        s.setPalette(!s.palette)
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault()
+        s.setFocus(!s.focus)
+      } else if (e.key === 'Escape') {
+        s.setFocus(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const commands: Command[] = useMemo(() => {
+    const chapters = (book?.chapters ?? []).map((c) => ({
+      id: `ch-${c.chapterNo}`,
+      label: c.title !== null ? c.title : `第 ${c.chapterNo} 章`,
+      hint: `${STATUS_LABEL[c.status] ?? c.status}${c.wordCount > 0 ? ` · ${c.wordCount} 字` : ''}`,
+      run: () => setChapter(c.chapterNo),
+    }))
+    const mods = MODULES.map((m) => ({
+      id: `mod-${m.id}`,
+      label: `打开「${m.label}」`,
+      run: () => setModule(m.id),
+    }))
+    return [
+      ...chapters,
+      ...mods,
+      {
+        id: 'focus',
+        label: '进入专注模式（纯编辑）',
+        hint: 'Ctrl+Shift+E',
+        run: () => setFocus(true),
+      },
+    ]
+  }, [book, setChapter, setModule, setFocus])
+
+  const words = overview?.stats.words ?? 0
+  const chapterNo = useSessionStore((s) => s.chapterNo)
+  const current = book?.chapters.find((c) => c.chapterNo === chapterNo)
+
+  return (
+    <div className="flex h-screen flex-col bg-neutral-50">
+      {/* 顶栏 */}
+      <header className="flex h-12 shrink-0 items-center gap-4 border-b border-neutral-200 bg-white px-5">
+        <span className="text-[15px] font-semibold tracking-tight text-neutral-900">inkloom</span>
+        <span className="h-4 w-px bg-neutral-200" />
+        <span className="text-sm font-medium text-neutral-800">{book?.name ?? '—'}</span>
+        <span className="text-xs text-neutral-400">{book?.genre ?? ''}</span>
+        <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
+          v0.0.1
+        </span>
+        <span className="ml-2 text-xs text-neutral-400">
+          {overview?.stats.finalized ?? 0}/{overview?.stats.total ?? 0} 章定稿
+        </span>
+
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPalette(true)}
+            className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500 hover:bg-neutral-100"
+            title="命令面板"
+          >
+            🔍 Ctrl+K
+          </button>
+          <span className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500">
+            任务 {overview?.runs.total ?? 0}
+          </span>
+          <button
+            type="button"
+            onClick={() => setModule('settings')}
+            className={`rounded px-2.5 py-1 text-[11px] ${
+              module === 'settings'
+                ? 'bg-neutral-900 text-white'
+                : 'text-neutral-500 hover:bg-neutral-100'
+            }`}
+          >
+            设置
+          </button>
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        {/* 左栏：七个模块 */}
+        <nav className="flex w-[168px] shrink-0 flex-col border-r border-neutral-200 bg-white">
+          <div className="flex-1 space-y-0.5 p-2">
+            {MODULES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setModule(m.id)}
+                className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] ${
+                  module === m.id
+                    ? 'bg-neutral-900 text-white'
+                    : 'text-neutral-600 hover:bg-neutral-100'
+                }`}
+              >
+                <span className="w-4 text-center text-[11px] opacity-70">{m.icon}</span>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-neutral-200 p-2 text-[11px] text-neutral-400">
+            时间机器
+            <span className="ml-1 text-neutral-300">（CLI: checkpoint / rollback）</span>
+          </div>
+        </nav>
+
+        {/* 主工作区 */}
+        <main className="flex min-w-0 flex-1">
+          {module === 'overview' && <OverviewPage />}
+          {module === 'world' && <WorldPage />}
+          {module === 'cast' && <CastPage />}
+          {module === 'story' && <StoryPage />}
+          {module === 'write' && <WritingPage />}
+          {module === 'assets' && <AssetsPage />}
+          {module === 'settings' && <SettingsPage />}
+        </main>
+      </div>
+
+      {/* 底栏 */}
+      <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-neutral-200 bg-white px-5 text-[11px] text-neutral-500">
+        <span>{words.toLocaleString()} 字</span>
+        <span className="text-neutral-300">|</span>
+        <span>
+          {current?.title ?? '—'} · {STATUS_MARK[current?.status ?? 'planned'] ?? '○'}{' '}
+          {STATUS_LABEL[current?.status ?? 'planned'] ?? '计划中'}
+        </span>
+        <span className="text-neutral-300">|</span>
+        <span>deepseek-flash</span>
+        <span className="ml-auto text-neutral-400">
+          自动保存 · 文件即真相（每次接受/定稿自动 commit）
+        </span>
+      </footer>
+
+      <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />
+    </div>
+  )
+}

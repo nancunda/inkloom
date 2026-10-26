@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   useAcceptScene,
   useBook,
@@ -16,19 +16,6 @@ import { SceneCard } from '../components/SceneCard'
 import { Toolbar } from '../components/Toolbar'
 import { STATUS_LABEL } from '../lib/status'
 import { useSessionStore } from '../stores/session'
-
-/**
- * ★ 地图按需加载：React Flow 单独就有 ~260 kB，
- *   不切分的话每次打开写作页都要白等它下载完。
- */
-const StoryMap = lazy(() => import('../components/StoryMap').then((m) => ({ default: m.StoryMap })))
-const RelationGraph = lazy(() =>
-  import('../components/RelationGraph').then((m) => ({ default: m.RelationGraph })),
-)
-const ThreadTimeline = lazy(() =>
-  import('../components/ThreadTimeline').then((m) => ({ default: m.ThreadTimeline })),
-)
-const WorldMap = lazy(() => import('../components/WorldMap').then((m) => ({ default: m.WorldMap })))
 
 /** 把同一场景的多个版本按 sceneNo 分组，最新版在前 */
 function groupByScene(rows: SceneRow[]): Map<number, SceneRow[]> {
@@ -55,71 +42,9 @@ function prevExistingVersion(versions: SceneRow[], version: number): number | nu
 }
 
 export function WritingPage() {
-  const view = useSessionStore((s) => s.view)
-  // ★ 两分支拆成独立组件：在这里写 if/return 会让下面的 hook 变成条件调用
-  return view === 'map' ? <MapView /> : <WriteView />
-}
-
-function MapView() {
-  const setChapter = useSessionStore((s) => s.setChapter)
-  const setView = useSessionStore((s) => s.setView)
-  const [sub, setSub] = useState<'chapters' | 'relations' | 'threads' | 'world'>('chapters')
-
-  const tabCls = (active: boolean): string =>
-    `rounded px-2.5 py-1 text-xs ${
-      active ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-    }`
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b border-neutral-200 px-4 py-2">
-        <button
-          type="button"
-          onClick={() => setSub('chapters')}
-          className={tabCls(sub === 'chapters')}
-        >
-          章节结构
-        </button>
-        <button
-          type="button"
-          onClick={() => setSub('relations')}
-          className={tabCls(sub === 'relations')}
-        >
-          关系网络
-        </button>
-        <button
-          type="button"
-          onClick={() => setSub('threads')}
-          className={tabCls(sub === 'threads')}
-        >
-          线索轨迹
-        </button>
-        <button type="button" onClick={() => setSub('world')} className={tabCls(sub === 'world')}>
-          世界地图
-        </button>
-      </div>
-      {/* ★ 给图一个确定高度：React Flow 要在父容器量到宽高（#004），
-          flex-1 的百分比高度在 Suspense 层里量不到。 */}
-      <div className="min-h-0" style={{ height: 'calc(100vh - 140px)' }}>
-        <Suspense fallback={<p className="p-8 text-sm text-neutral-500">加载地图…</p>}>
-          {sub === 'chapters' ? (
-            <StoryMap
-              onPick={(n) => {
-                setChapter(n)
-                setView('write')
-              }}
-            />
-          ) : sub === 'relations' ? (
-            <RelationGraph />
-          ) : sub === 'threads' ? (
-            <ThreadTimeline />
-          ) : (
-            <WorldMap />
-          )}
-        </Suspense>
-      </div>
-    </div>
-  )
+  // 写作模块：内部分两列（章节列表 + 正文/场景），右栏是本章信息。
+  // 地图/关系/线索/世界已拆到「故事」「角色」「世界」三个模块里。
+  return <WriteView />
 }
 
 function WriteView() {

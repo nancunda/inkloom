@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { diffText, summarizeDiff } from '@inkloom/core'
 import { blueprintSchema, InkloomError } from '@inkloom/shared'
@@ -180,6 +180,92 @@ read.get('/relations', async (c) => {
     })
 
   return c.json({ chapterNo, nodes, edges })
+})
+
+read.get('/assets', async (c) => {
+  const { root } = getContext()
+  const dir = join(bookPaths(root).assets, 'characters')
+  const names = await readdir(dir).catch(() => [] as string[])
+  const files = names.filter((n) => /\.(png|jpe?g|webp)$/i.test(n))
+  return c.json({
+    characters: files.map((name) => ({
+      ownerId: name.replace(/\.[a-z]+$/i, ''),
+      filePath: `assets/characters/${name}`,
+    })),
+  })
+})
+
+/** 素材二进制（图廊用）；只允许 assets/ 下的路径，防目录穿越 */
+read.get('/assets/file', async (c) => {
+  const { root } = getContext()
+  const rel = c.req.query('path') ?? ''
+  if (!rel.startsWith('assets/') || rel.includes('..')) {
+    throw new InkloomError('INVALID_INPUT', 'path 必须是 assets/ 下的文件')
+  }
+  const abs = join(root, rel)
+  const buf = await readFile(abs).catch(() => null)
+  if (buf === null) throw new InkloomError('NOT_FOUND', `文件不存在：${rel}`)
+  const type = rel.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+  return c.body(buf, 200, { 'content-type': type, 'cache-control': 'no-cache' })
+})
+
+read.get('/overview', async (c) => {
+  const { root, db, project } = getContext()
+  const [chapters, bps, threadRaw, runs, draftedRows] = await Promise.all([
+    db.chapter.findMany({
+      where: { projectId: project.id },
+      select: { chapterNo: true, title: true, status: true, wordCount: true },
+    }),
+    listBlueprints(),
+    readJsonElement(root, 'story/threads.json'),
+    db.generationRun.findMany({ where: { projectId: project.id }, select: { status: true } }),
+    // 有候选场景但没定稿的章，在概览里也应显示为「草稿」而不是「计划中」
+    db.draftSegment.findMany({
+      where: { projectId: project.id },
+      select: { chapterNo: true },
+      distinct: ['chapterNo'],
+    }),
+  ])
+  const drafted = new Set(draftedRows.map((r) => r.chapterNo))
+
+  const wordsPerChapter = 3000
+  const merged = bps.map((b) => {
+    const ch = chapters.find((x) => x.chapterNo === b.chapterNo)
+    return {
+      chapterNo: b.chapterNo,
+      title: b.title,
+      status: ch?.status ?? (drafted.has(b.chapterNo) ? 'drafting' : 'planned'),
+      wordCount: ch?.wordCount ?? 0,
+      tensionLevel: b.tensionLevel,
+      beatType: b.beatType,
+    }
+  })
+  const done = merged.filter((m) => m.status === 'finalized').length
+  const words = merged.reduce((n, m) => n + m.wordCount, 0)
+
+  const threads = (Array.isArray(threadRaw) ? threadRaw : []) as {
+    status?: unknown
+    payoffWindow?: unknown
+    advancedChapters?: unknown
+  }[]
+  const active = threads.filter((t) => t.status === 'active')
+  const lastNo = merged.length > 0 ? Math.max(...merged.map((m) => m.chapterNo)) : 0
+  const overdue = active.filter(
+    (t) => typeof t.payoffWindow === 'number' && lastNo >= t.payoffWindow,
+  ).length
+
+  return c.json({
+    chapters: merged,
+    stats: {
+      total: merged.length,
+      finalized: done,
+      words,
+      wordsPerChapter,
+      progress: merged.length === 0 ? 0 : done / merged.length,
+    },
+    threads: { total: threads.length, active: active.length, overdue },
+    runs: { total: runs.length, failed: runs.filter((r) => r.status === 'failed').length },
+  })
 })
 
 interface ThreadRow {
