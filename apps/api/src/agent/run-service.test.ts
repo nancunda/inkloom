@@ -431,14 +431,15 @@ describe('中止终态', () => {
     agent.done()
     await new Promise((r) => setTimeout(r, 80))
 
+    const before = agent.promptCalls
     const resumed = resumeAgentRun(started.id)
     expect(resumed.status).toBe('running')
     expect(resumed.budget.steps).toBe(0)
     expect(resumed.planId).toBe(planId)
 
     await new Promise((r) => setTimeout(r, 80))
-    expect(agent.promptCalls).toBeGreaterThanOrEqual(2)
-    expect(agent.prompts.at(-1)).toContain('t1')
+    expect(agent.promptCalls).toBe(before + 1)
+    expect(agent.prompts.at(-1)).toContain('任务 t1')
     stopAgentRun(started.id)
   })
 })

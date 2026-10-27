@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initRepo } from '../git/runner.js'
 import type { IndexDb } from '../index-db/client.js'
 import { closeContext, setContext } from '../services/context.js'
+import { generateChapter } from '../services/generate-service.js'
 import {
   loadPlan,
   readCurrentPlan,
@@ -18,12 +19,12 @@ import { freshIndexDb } from '../test-utils/index-db-fixture.js'
 import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
 
 vi.mock('../services/generate-service.js', () => ({
-  generateChapter: async ({ chapterNo }: { chapterNo: number }) => ({
+  generateChapter: vi.fn(async ({ chapterNo }: { chapterNo: number }) => ({
     runId: `run_${chapterNo}`,
     chapterNo,
     scenes: [],
     warnings: [],
-  }),
+  })),
 }))
 
 let root: string
@@ -242,11 +243,13 @@ describe('章节与形象图额度', () => {
     await submitPlan()
     await approvePlan()
     budget.chapterCalls = 0
+    vi.mocked(generateChapter).mockClear()
 
     for (let n = 1; n <= 3; n += 1) {
       const r = await tool('generate_chapter').execute(`c-${n}`, { chapterNo: n })
       expect(r.isError).toBeFalsy()
     }
     expect(budget.chapterCalls).toBe(3)
+    expect(vi.mocked(generateChapter)).toHaveBeenCalledTimes(3)
   })
 })

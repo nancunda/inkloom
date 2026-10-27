@@ -53,9 +53,9 @@ export const SKILLS: Record<PlanSkill, Skill> = {
     label: '正文',
     summary: '生成一章初稿（含形象图）',
     guidance:
-      () => `- 调用 generate_chapter(chapterNo=N)，可带一句 guidance（例如"开篇 300 字内出现第一个具体冲突"）。这会真实调用模型、耗时 1–3 分钟，本次 run 只允许 1 章。
+      () => `- 调用 generate_chapter(chapterNo=N)，可带一句 guidance（例如"开篇 300 字内出现第一个具体冲突"）。这会真实调用模型、耗时 1–3 分钟；一次会话可连续生成多章，只要计划里还有这个任务。
 - 生成后读一下返回的场景数与 warnings；如果有截断告警，在摘要里如实说明，不要假装完整。
-- 需要主角形象图时调用 generate_portrait(characterId=主角 id)，本次 run 只允许 1 张。
+- 需要主角形象图时调用 generate_portrait(characterId=主角 id)；一次会话可连续生成多张。
 - 产物在 chapters/ch-NNN/scenes/ 下，是候选稿；作者去写作页逐场接受/拒绝，不要自己宣布定稿。`,
   },
   review: {

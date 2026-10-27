@@ -290,14 +290,15 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
     }
 
     if (plan.status === 'approved') {
-      if (run.budget.steps >= run.budget.maxSteps) {
+      const next = nextOpenTask(plan)
+      // ★ 只有「还有任务」才暂停；任务全做完时步数用完也要去请作者验收
+      if (run.budget.steps >= run.budget.maxSteps && next !== null) {
         pauseRun(
           run,
           `步数预算已用完（${run.budget.maxSteps} 步），还有任务没做完。点「继续执行」接着跑。`,
         )
         return
       }
-      const next = nextOpenTask(plan)
       if (next !== null) {
         const { project } = getContext()
         void drive(run, buildTaskPrompt(project, plan, next))
