@@ -29,9 +29,7 @@ const budget: RunBudget = {
   steps: 0,
   maxSteps: 40,
   chapterCalls: 0,
-  maxChapters: 1,
   portraitCalls: 0,
-  maxPortraits: 1,
 }
 
 function tool(name: string): AgentTool {

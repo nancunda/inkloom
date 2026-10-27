@@ -42,10 +42,10 @@ export type { AgentGate } from './plan-gate.js'
 export interface RunBudget {
   steps: number
   maxSteps: number
+  /** 只统计；不再拦截（作者可以连续写多章） */
   chapterCalls: number
-  maxChapters: number
+  /** 只统计；不再拦截 */
   portraitCalls: number
-  maxPortraits: number
 }
 
 /** run-service 与工具之间的计划桥：工具改状态、run 层知道当前计划 */
@@ -786,16 +786,11 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     name: 'generate_chapter',
     label: '生成章节候选稿',
     description:
-      '按已写好的蓝图生成一章候选稿（会真实调用模型，耗时 1–3 分钟，可能截断）。每次 run 只允许 1 章；生成结果落盘为候选场景，等作者在写作页接受/拒绝。',
+      '按已写好的蓝图生成一章候选稿（会真实调用模型，耗时 1–3 分钟，可能截断）。一次会话可连续生成多章；生成结果落盘为候选场景，等作者在写作页接受/拒绝。',
     parameters: GENERATE_CHAPTER,
     execute: async (_id, params) => {
       const blocked = await requireApprovedPlan(deps)
       if (blocked !== null) return blocked
-      if (deps.budget.chapterCalls >= deps.budget.maxChapters) {
-        return fail(
-          `本次会话的正文额度（${deps.budget.maxChapters} 章）已用完，这是硬上限。告诉作者点「继续执行」或开新会话；不要重试。`,
-        )
-      }
       deps.budget.chapterCalls += 1
       try {
         const r = await generateChapter({
@@ -831,18 +826,13 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     name: 'generate_portrait',
     label: '生成角色形象图',
     description:
-      '为角色生成一张形象图（真实调用硅基流动，约 10–30 秒）。每次 run 只允许 1 张；角色需要有 visualAnchor 或 appearance。',
+      '为角色生成一张形象图（真实调用硅基流动，约 10–30 秒）。一次会话可连续生成多张；角色需要有 visualAnchor 或 appearance。',
     parameters: GENERATE_PORTRAIT,
     execute: async (_id, params) => {
       const blocked = await requireApprovedPlan(deps)
       if (blocked !== null) return blocked
       if (deps.imageApiKey === null) {
         return fail('未配置 SILICONFLOW_API_KEY，无法生成形象图。请作者在设置页填写')
-      }
-      if (deps.budget.portraitCalls >= deps.budget.maxPortraits) {
-        return fail(
-          `本次会话的形象图额度（${deps.budget.maxPortraits} 张）已用完，这是硬上限。告诉作者开新会话；不要重试。`,
-        )
       }
       deps.budget.portraitCalls += 1
       try {

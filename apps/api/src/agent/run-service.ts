@@ -14,7 +14,7 @@ import { deriveGate } from './plan-gate.js'
 import { buildAgentPrompt, buildPlanRevisePrompt, buildTaskPrompt } from './prompt.js'
 import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
 
-export type AgentRunStatus = 'running' | 'waiting_review' | 'done' | 'failed' | 'stopped'
+export type AgentRunStatus = 'running' | 'waiting_review' | 'paused' | 'done' | 'failed' | 'stopped'
 
 export type AgentStreamPayload =
   | { type: 'run.started'; goal: string }
@@ -34,6 +34,7 @@ export type AgentStreamPayload =
   | { type: 'gate.resolved'; decision: 'approve' | 'revise' | 'skip'; feedback: string | null }
   | { type: 'plan.updated'; plan: Plan }
   | { type: 'run.finished' }
+  | { type: 'run.paused'; reason: string }
   | { type: 'run.failed'; error: string }
   | { type: 'run.stopped' }
   | { type: 'ping' }
@@ -290,10 +291,9 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
 
     if (plan.status === 'approved') {
       if (run.budget.steps >= run.budget.maxSteps) {
-        await failRun(
+        pauseRun(
           run,
-          `步数预算已用完（${run.budget.maxSteps} 步），还有任务没做完。再发一句话可以继续。`,
-          plan,
+          `步数预算已用完（${run.budget.maxSteps} 步），还有任务没做完。点「继续执行」接着跑。`,
         )
         return
       }
@@ -333,6 +333,18 @@ async function failRun(run: AgentRun, message: string, plan?: Plan | null): Prom
   finishRun(run)
 }
 
+/**
+ * 步数耗尽：暂停而不是失败。
+ * ★ 不调用 finalizePlanOnRunEnd：任务必须保持 doing，resume 才会从它接着做。
+ * ★ 不设 run.error：这不是失败；原因只进事件流。
+ */
+function pauseRun(run: AgentRun, message: string): void {
+  run.status = 'paused'
+  run.finishedAt = new Date().toISOString()
+  emit(run, { type: 'run.paused', reason: message })
+  finishRun(run)
+}
+
 /** 把合并后的 plan 写回状态文件（定义已在 write_plan/update_plan 时写过） */
 async function persistPlan(run: AgentRun, plan: Plan): Promise<void> {
   await writeQueue.run(async () => {
@@ -354,9 +366,9 @@ async function persistPlan(run: AgentRun, plan: Plan): Promise<void> {
   emit(run, { type: 'plan.updated', plan })
 }
 
-/** 固定 40 步装不下“计划 + 每个任务多轮”；按任务数放宽 */
+/** 固定 40 步装不下「计划 + 每任务多轮」；按任务数放宽 */
 function refreshPlanBudget(run: AgentRun, plan: Plan): void {
-  run.budget.maxSteps = Math.max(40, 40 + 2 * plan.tasks.length)
+  run.budget.maxSteps = Math.max(80, 80 + 2 * plan.tasks.length)
 }
 
 /**
@@ -496,11 +508,9 @@ export async function startAgentRun(
 
   const budget: RunBudget = {
     steps: 0,
-    maxSteps: 40,
+    maxSteps: 80,
     chapterCalls: 0,
-    maxChapters: 1,
     portraitCalls: 0,
-    maxPortraits: 1,
   }
   const gateBox: { current: AgentGate | null } = { current: null }
 

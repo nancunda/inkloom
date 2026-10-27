@@ -78,6 +78,7 @@ const TASK_TONE: Record<AgentPlanTask['status'], string> = {
 const STATUS_LABEL: Record<AgentRunStatus, string> = {
   running: '运行中',
   waiting_review: '等待审阅',
+  paused: '已暂停',
   done: '已完成',
   failed: '失败',
   stopped: '已停止',
@@ -86,6 +87,7 @@ const STATUS_LABEL: Record<AgentRunStatus, string> = {
 const STATUS_TONE: Record<AgentRunStatus, string> = {
   running: 'bg-amber-50 text-amber-800 border-amber-200',
   waiting_review: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+  paused: 'bg-yellow-50 text-yellow-800 border-yellow-200',
   done: 'bg-emerald-50 text-emerald-800 border-emerald-200',
   failed: 'bg-rose-50 text-rose-800 border-rose-200',
   stopped: 'bg-neutral-100 text-neutral-600 border-neutral-200',
@@ -222,6 +224,11 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
       next.push({ kind: 'status', id: `s${ev.seq}`, text, tone: 'info' })
       return next
     }
+    case 'run.paused':
+      return [
+        ...settleRunningTools(blocks),
+        { kind: 'status', id: `s${ev.seq}`, text: ev.reason, tone: 'info' },
+      ]
     case 'run.failed':
       return [
         ...settleRunningTools(blocks),
@@ -266,6 +273,7 @@ function currentHint(run: AgentRun | null, plan: AgentPlan | null): string {
       ? `等你批准计划「${run.gate.title}」：通过后我会按任务自动推进`
       : `等你审阅任务「${run.gate.title}」：可以在卡上通过，或直接发消息让它改`
   }
+  if (run.status === 'paused') return '步数用完了：点「继续执行」接着跑，任务进度不会丢'
   if (run.status === 'running') {
     if (plan === null) return '正在读全书、制定计划'
     const doing = plan.tasks.find((t) => t.status === 'doing')
@@ -595,9 +603,13 @@ export function AgentPage() {
   const live = run?.status === 'running' || run?.status === 'waiting_review'
   const plan = latestPlan(blocks) ?? diskPlan
   const hint = currentHint(run, plan)
-  const canSend = run !== null && run.status !== 'failed'
+  const canSend = run !== null && run.status !== 'failed' && run.status !== 'paused'
   const ended =
-    run !== null && (run.status === 'done' || run.status === 'stopped' || run.status === 'failed')
+    run !== null &&
+    (run.status === 'done' ||
+      run.status === 'stopped' ||
+      run.status === 'failed' ||
+      run.status === 'paused')
   const openTaskCount =
     plan?.tasks.filter((t) => t.status !== 'done' && t.status !== 'skipped').length ?? 0
   // 没有内存 run 也算可恢复：run 被回收后计划还在磁盘上
@@ -664,13 +676,13 @@ export function AgentPage() {
           {run !== null ? (
             <>
               <p>
-                预算 {run.budget.steps}/{run.budget.maxSteps} 步 · 章节 {run.budget.chapterCalls}/
-                {run.budget.maxChapters} · 图 {run.budget.portraitCalls}/{run.budget.maxPortraits}
+                步数 {run.budget.steps}/{run.budget.maxSteps} · 章节 {run.budget.chapterCalls} · 图{' '}
+                {run.budget.portraitCalls}
               </p>
               <p className="mt-0.5">{run.tokens.toLocaleString()} tokens</p>
             </>
           ) : (
-            <p>预算：按任务数放宽（≥40 步） · 1 章正文 · 1 张形象图</p>
+            <p>步数按任务数放宽（≥80 步） · 章节与形象图不设上限</p>
           )}
         </div>
       </aside>

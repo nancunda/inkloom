@@ -359,7 +359,7 @@ export interface HealthReport {
 // Agent（共创循环）
 // ---------------------------------------------------------------------------
 
-export type AgentRunStatus = 'running' | 'waiting_review' | 'done' | 'failed' | 'stopped'
+export type AgentRunStatus = 'running' | 'waiting_review' | 'paused' | 'done' | 'failed' | 'stopped'
 
 export type AgentGate =
   | {
@@ -412,9 +412,7 @@ export interface AgentRunBudget {
   steps: number
   maxSteps: number
   chapterCalls: number
-  maxChapters: number
   portraitCalls: number
-  maxPortraits: number
 }
 
 export type AgentEvent =
@@ -450,6 +448,7 @@ export type AgentEvent =
     }
   | { seq: number; at: string; type: 'plan.updated'; plan: AgentPlan }
   | { seq: number; at: string; type: 'run.finished' }
+  | { seq: number; at: string; type: 'run.paused'; reason: string }
   | { seq: number; at: string; type: 'run.failed'; error: string }
   | { seq: number; at: string; type: 'run.stopped' }
   | { seq: number; at: string; type: 'ping' }

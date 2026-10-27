@@ -404,11 +404,10 @@ describe('中止终态', () => {
     expect(plan?.tasks.find((t) => t.id === 't1')?.status).toBe('blocked')
   })
 
-  it('budget 耗尽且还有任务 → failed，不把任务钉在 doing', async () => {
+  it('★ 步数耗尽且还有任务 → paused，任务保持 doing 可继续', async () => {
     const planId = await seedPlan('approved', [{ id: 't1', status: 'doing' }])
     const started = await startAgentRun('继续')
     const agent = lastAgent()
-    // 直接耗尽步数预算，然后让本轮正常结束
     const run = getAgentRun(started.id)
     if (run !== null) run.budget.steps = run.budget.maxSteps
     agent.emit({ type: 'agent_end' })
@@ -416,9 +415,27 @@ describe('中止终态', () => {
     await new Promise((r) => setTimeout(r, 80))
 
     const after = getAgentRun(started.id)
-    expect(after?.status).toBe('failed')
-    expect(after?.error).toContain('步数预算')
-    expect((await loadPlan(h.root, planId))?.tasks[0]?.status).toBe('blocked')
+    expect(after?.status).toBe('paused')
+    expect(after?.error).toBeNull()
+    expect((await loadPlan(h.root, planId))?.status).toBe('approved')
+    expect((await loadPlan(h.root, planId))?.tasks[0]?.status).toBe('doing')
+  })
+
+  it('★ 暂停后可以继续：步数清零，任务从 doing 接着做', async () => {
+    const planId = await seedPlan('approved', [{ id: 't1', status: 'doing' }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    const run = getAgentRun(started.id)
+    if (run !== null) run.budget.steps = run.budget.maxSteps
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await new Promise((r) => setTimeout(r, 80))
+
+    const resumed = resumeAgentRun(started.id)
+    expect(resumed.status).toBe('running')
+    expect(resumed.budget.steps).toBe(0)
+    expect(resumed.planId).toBe(planId)
+    stopAgentRun(started.id)
   })
 })
 
