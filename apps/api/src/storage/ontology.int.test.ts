@@ -52,6 +52,40 @@ describe('readOntologyFiles', () => {
     expect(f.warnings[0]).toContain('classes.json')
   })
 
+  it('classes.json 带 BOM 仍能解析（Windows 编辑器）', async () => {
+    const body = JSON.stringify({ version: 1, classes: [], predicates: [] })
+    await write('world/ontology/classes.json', `\uFEFF${body}`)
+    const f = await readOntologyFiles(root)
+    expect(f.classesFile).not.toBeNull()
+    expect(f.warnings).toEqual([])
+  })
+
+  it('CRLF 与末尾空行不产生假坏行；不合 schema 的行单独报', async () => {
+    await write(
+      'world/ontology/nodes.jsonl',
+      [
+        '{"id":"grp-a","type":"group","name":"甲","createdAt":"2026-10-27T00:00:00.000Z"}',
+        '{"id":"没有前缀","type":"group","name":"乙","createdAt":"2026-10-27T00:00:00.000Z"}',
+        '',
+      ].join('\r\n'),
+    )
+    const f = await readOntologyFiles(root)
+    expect(f.nodes.map((n) => n.id)).toEqual(['grp-a'])
+    expect(f.warnings).toHaveLength(1)
+    expect(f.warnings[0]).toContain('nodes.jsonl 第 2 行')
+  })
+
+  it('watchFiles 指向不存在的文件时不抛，且不影响已有的 mtimeMax', async () => {
+    await write(
+      'world/ontology/edges.jsonl',
+      '{"id":"ed-aaaaaa","from":"c1","predicate":"instanceOf","to":"cls-character","source":{"kind":"author"},"createdAt":"2026-10-27T00:00:00.000Z"}',
+    )
+    const f = await readOntologyFiles(root, [join(root, 'characters/ghost.json')])
+    expect(f.edges).toHaveLength(1)
+    expect(f.mtimeMax).toBeGreaterThan(0)
+    expect(f.files).toContain('characters/ghost.json')
+  })
+
   it('watchFiles 的 mtime 参与 mtimeMax（实体文件变了缓存要失效）', async () => {
     await write('characters/index.json', '[]')
     const file = join(root, 'characters/index.json')

@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import {
   type ClassesFile,
   classesFileSchema,
@@ -9,13 +9,14 @@ import {
   ontologyNodeSchema,
 } from '@inkloom/shared'
 import { readIfExists } from './atomic-write.js'
-import { bookPaths } from './paths.js'
+import { bookPaths, relativeToBook } from './paths.js'
 
 export interface OntologyFiles {
   classesFile: ClassesFile | null
   nodes: OntologyNode[]
   edges: GraphEdge[]
   warnings: string[]
+  /** 全部输入（含 watchFiles）的 POSIX 相对路径；不存在的文件也会列出 */
   files: string[]
   mtimeMax: number
 }
@@ -34,7 +35,7 @@ async function mtimeOf(file: string): Promise<number> {
 }
 
 interface Parser<T> {
-  safeParse: (v: unknown) => { success: boolean; data?: T }
+  safeParse: (v: unknown) => { success: true; data: T } | { success: false }
 }
 
 async function readJsonl<T>(
@@ -58,7 +59,7 @@ async function readJsonl<T>(
       continue
     }
     const parsed = schema.safeParse(json)
-    if (!parsed.success || parsed.data === undefined) {
+    if (!parsed.success) {
       warnings.push(`${rel} 第 ${i + 1} 行不符合 schema，已跳过`)
       continue
     }
@@ -82,15 +83,24 @@ export async function readOntologyFiles(
   const edgesPath = join(dir, 'edges.jsonl')
   const warnings: string[] = []
 
+  // ★ 先取 mtime 再读内容：反过来会出现「旧内容 + 新 mtime」的缓存键，
+  //   之后一直命中缓存，图永远陈旧
+  const paths = [classesPath, nodesPath, edgesPath, ...watchFiles]
+  const mtimes = await Promise.all(paths.map(mtimeOf))
+
   let classesFile: ClassesFile | null = null
   const rawClasses = await readIfExists(classesPath)
   if (rawClasses !== null) {
-    try {
-      const parsed = classesFileSchema.safeParse(JSON.parse(rawClasses))
-      if (parsed.success) classesFile = parsed.data
-      else warnings.push('world/ontology/classes.json 不符合 schema，已忽略')
-    } catch {
-      warnings.push('world/ontology/classes.json 不是合法 JSON，已忽略')
+    // BOM 不是 JSON 空白，Windows 编辑器很常见；纯空白文件当缺失，不报假 warning
+    const text = rawClasses.replace(/^\uFEFF/, '')
+    if (text.trim().length > 0) {
+      try {
+        const parsed = classesFileSchema.safeParse(JSON.parse(text))
+        if (parsed.success) classesFile = parsed.data
+        else warnings.push('world/ontology/classes.json 不符合 schema，已忽略')
+      } catch {
+        warnings.push('world/ontology/classes.json 不是合法 JSON，已忽略')
+      }
     }
   }
 
@@ -102,16 +112,12 @@ export async function readOntologyFiles(
   )
   const edges = await readJsonl(edgesPath, 'world/ontology/edges.jsonl', graphEdgeSchema, warnings)
 
-  const paths = [classesPath, nodesPath, edgesPath, ...watchFiles]
-  const mtimes = await Promise.all(paths.map(mtimeOf))
-  const toRel = (p: string): string => relative(root, p).split('\\').join('/')
-
   return {
     classesFile,
     nodes,
     edges,
     warnings,
-    files: paths.map(toRel),
+    files: paths.map((p) => relativeToBook(root, p)),
     mtimeMax: Math.max(0, ...mtimes),
   }
 }
