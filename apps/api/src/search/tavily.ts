@@ -1,20 +1,9 @@
 import type { FetchLike } from '../llm/types.js'
+import type { ProviderOptions, SearchHit, SearchProvider } from './types.js'
 
-export interface SearchHit {
-  title: string
-  url: string
-  content: string
-}
-
-export interface SearchProvider {
-  readonly id: string
-  search(query: string, maxResults?: number): Promise<SearchHit[]>
-}
-
-export interface TavilySearchOptions {
+export interface TavilySearchOptions extends ProviderOptions {
   apiKey: string
   baseUrl?: string
-  fetchImpl?: FetchLike
 }
 
 /**
@@ -35,6 +24,7 @@ export function createTavilySearch(opts: TavilySearchOptions): SearchProvider {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ api_key: opts.apiKey, query, max_results: maxResults }),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 8000),
       })
       if (!res.ok) throw new Error(`tavily ${res.status}: ${await res.text()}`)
 
@@ -43,11 +33,14 @@ export function createTavilySearch(opts: TavilySearchOptions): SearchProvider {
       }
       return (body.results ?? [])
         .filter((r) => typeof r.url === 'string')
-        .map((r) => ({
-          title: r.title ?? r.url ?? '',
-          url: r.url ?? '',
-          content: r.content ?? '',
-        }))
+        .map(
+          (r): SearchHit => ({
+            title: r.title ?? r.url ?? '',
+            url: r.url ?? '',
+            snippet: r.content ?? '',
+            provider: 'tavily',
+          }),
+        )
     },
   }
 }

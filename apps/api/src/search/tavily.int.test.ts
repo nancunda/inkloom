@@ -23,7 +23,9 @@ describe('Tavily 搜索', () => {
     expect(sent['api_key']).toBe('tvly-test')
     expect(sent['query']).toBe('剑冢 设定')
     expect(sent['max_results']).toBe(3)
-    expect(hits).toEqual([{ title: 'T', url: 'https://e.com', content: '摘要' }])
+    expect(hits).toEqual([
+      { title: 'T', url: 'https://e.com', snippet: '摘要', provider: 'tavily' },
+    ])
   })
 
   it('默认返回 5 条上限', async () => {
