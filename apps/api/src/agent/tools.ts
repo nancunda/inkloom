@@ -21,9 +21,12 @@ import {
 } from '@inkloom/shared'
 import { Type } from 'typebox'
 import { commitAll } from '../git/runner.js'
+import { fetchReadable } from '../search/extract.js'
+import { createSearchService } from '../search/service.js'
 import { getContext } from '../services/context.js'
 import { readElement, upsertElement } from '../services/element-service.js'
 import { generateChapter } from '../services/generate-service.js'
+import { getLoreForRun, savePage, saveSearchHits } from '../services/lore-service.js'
 import { generatePortrait } from '../services/portrait-service.js'
 import { hashContent, readIfExists } from '../storage/atomic-write.js'
 import {
@@ -62,6 +65,8 @@ export interface AgentToolDeps {
   budget: RunBudget
   plan: PlanBridge
   onGate: (gate: AgentGate) => void
+  /** 当前 run id：资料卡用它判断「本 run 可读」 */
+  getRunId: () => string
 }
 
 interface Parser {
@@ -371,6 +376,22 @@ const GENERATE_CHAPTER = Type.Object({
   guidance: Type.Optional(Type.String({ description: '本章额外要求，例如"让林岚少说话"' })),
 })
 
+const WEB_SEARCH = Type.Object({
+  query: Type.String({ minLength: 1, description: '搜索词，尽量具体' }),
+  maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 8, description: '默认 5' })),
+})
+
+const READ_URL = Type.Object({
+  url: Type.String({ minLength: 8, description: 'http/https 公网地址' }),
+  maxChars: Type.Optional(
+    Type.Integer({ minimum: 1000, maximum: 12000, description: '默认 6000' }),
+  ),
+})
+
+const READ_LORE = Type.Object({
+  id: Type.String({ minLength: 4, description: '资料卡 id，形如 lr-a1b2c3d4' }),
+})
+
 const GENERATE_PORTRAIT = Type.Object({
   characterId: Type.String(),
   style: Type.Optional(Type.String({ description: '风格后缀，默认国风插画' })),
@@ -410,6 +431,81 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       return ok(text.length > 30_000 ? `${text.slice(0, 30_000)}\n…（已截断）` : text, {
         path: rel,
         hash: hashContent(raw),
+      })
+    },
+  }
+
+  const webSearchTool: AgentTool<typeof WEB_SEARCH> = {
+    name: 'web_search',
+    label: '联网搜索',
+    description:
+      '搜索公开网页，返回标题/链接/摘要，并把每条结果落成资料卡（默认未批准）。需要外部考据时用；一次一个问题，不要连续搜同一主题。',
+    parameters: WEB_SEARCH,
+    execute: async (_id, params) => {
+      const ctx = getContext()
+      try {
+        const r = await createSearchService().search(params.query, params.maxResults ?? 5)
+        if (r.hits.length === 0) {
+          return fail(
+            `没有搜到结果${r.warnings.length > 0 ? `（${r.warnings.join('；')}）` : ''}。可以换个说法，或让作者在设置里配搜索 key。`,
+          )
+        }
+        const saved = await saveSearchHits(
+          ctx.db,
+          ctx.project.id,
+          deps.getRunId(),
+          params.query,
+          r.hits,
+        )
+        const lines = saved.map((s, i) => `${i + 1}. ${s.title} — ${s.url}（资料卡 ${s.id}）`)
+        return ok(
+          `找到 ${saved.length} 条（provider=${r.provider ?? 'none'}${r.degraded ? '，已降级' : ''}）\n${lines.join('\n')}`,
+          { provider: r.provider, degraded: r.degraded, ids: saved.map((s) => s.id) },
+        )
+      } catch (e) {
+        return fail(`搜索失败：${(e as Error).message}`)
+      }
+    },
+  }
+
+  const readUrlTool: AgentTool<typeof READ_URL> = {
+    name: 'read_url',
+    label: '读取网页正文',
+    description:
+      '抓取一个公网网页并提取正文（最长 1.2 万字），落成资料卡后返回摘要。一次只读一个链接。',
+    parameters: READ_URL,
+    execute: async (_id, params) => {
+      try {
+        const ctx = getContext()
+        const page = await fetchReadable(params.url, {
+          ...(params.maxChars === undefined ? {} : { maxChars: params.maxChars }),
+        })
+        const { id } = await savePage(ctx.db, ctx.project.id, deps.getRunId(), page)
+        return ok(
+          `已读取「${page.title || page.url}」（${page.text.length} 字，extracted=${page.extracted}，资料卡 ${id}）\n\n${page.text.slice(0, 2000)}`,
+          { id, url: page.url, extracted: page.extracted },
+        )
+      } catch (e) {
+        return fail(`读取失败：${(e as Error).message}`)
+      }
+    },
+  }
+
+  const readLoreTool: AgentTool<typeof READ_LORE> = {
+    name: 'read_lore',
+    label: '读取资料卡',
+    description: '读取本次会话搜到/抓到的资料卡正文；跨会话的卡必须作者批准过才可读。',
+    parameters: READ_LORE,
+    execute: async (_id, params) => {
+      const ctx = getContext()
+      const row = await getLoreForRun(ctx.db, params.id, deps.getRunId())
+      if (row === null) {
+        return fail(`资料卡 ${params.id} 不存在，或未获作者批准（跨会话资料需要先在资料页批准）`)
+      }
+      const body = row.content ?? row.snippet
+      return ok(`${row.title} — ${row.url}\n\n${body.slice(0, 4000)}`, {
+        id: row.id,
+        provider: row.provider,
       })
     },
   }
@@ -851,6 +947,9 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
   return [
     readBook,
     readElementTool,
+    webSearchTool,
+    readUrlTool,
+    readLoreTool,
     writeElementTool,
     writeBlueprintTool,
     writePlanTool,

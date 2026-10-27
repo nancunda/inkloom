@@ -106,6 +106,7 @@ beforeEach(async () => {
       notify: () => undefined,
     },
     onGate: (g) => gates.push(g),
+    getRunId: () => 'ar_test',
   })
 })
 

@@ -561,6 +561,8 @@ export async function startAgentRun(
     onGate: (gate) => {
       gateBox.current = gate
     },
+    // ★ run 在下面才赋值，工具执行时一定已赋值（同 getPlanId 的闭包写法）
+    getRunId: () => run.id,
   })
 
   const agent = new Agent({
