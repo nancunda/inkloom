@@ -2,8 +2,8 @@ import type { GraphIssue, GraphSnapshot } from './types.js'
 
 /**
  * 结构校验（切片 1）。
- * ★ 只检查 canon 边的谓词：虚拟边用 `rel:*`，不在注册表里；端点是实体投影出来的。
- * ★ 切片 3 再补 domain/range、规则校验、虚拟边悬空检查。
+ * ★ 只检查 canon 边的谓词与重复：虚拟边用 `rel:*`（不在注册表），且 relations/routes 允许同对节点多条（不同 mode/时段）。
+ * ★ 切片 3 再补 domain/range、规则校验。
  */
 export function validateGraph(snap: GraphSnapshot): GraphIssue[] {
   const issues: GraphIssue[] = []
@@ -38,6 +38,8 @@ export function validateGraph(snap: GraphSnapshot): GraphIssue[] {
           severity: 'error',
           code: 'CLASS_CYCLE',
           subject: id,
+          // 环上全部成员（UI 据此标红整条分支）
+          evidence: path.join(','),
           message: `类继承出现环：${path.map((x) => label(x)).join(' → ')}`,
         })
       }
@@ -77,8 +79,9 @@ export function validateGraph(snap: GraphSnapshot): GraphIssue[] {
         message: `边 ${e.id} 使用了未注册的谓词 ${e.predicate}（${label(e.from)} → ${label(e.to)}）`,
       })
     }
-    // 被吊销的边不算重复：吊销后再断言是合法的重新主张
-    if (e.retracted === true) continue
+    // 被吊销的边不算重复：吊销后再断言是合法的重新主张；
+    // 虚拟边不进重复判定：它们归 relations/routes 各自模块管，同一对节点允许多条
+    if (e.virtual || e.retracted === true) continue
     const key = `${e.from}|${e.predicate}|${e.to}|${e.sinceChapter ?? ''}`
     const prev = firstSeenAt.get(key)
     if (prev === undefined) {
