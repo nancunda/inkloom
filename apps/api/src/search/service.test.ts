@@ -93,4 +93,51 @@ describe('search service', () => {
     expect(r.degraded).toBe(true)
     expect(r.warnings.length).toBeGreaterThanOrEqual(2)
   })
+
+  it('★ 一个 SearXNG 实例失败不会挡住后面的健康实例', async () => {
+    const seen: string[] = []
+    const fetchImpl: FetchLike = async (url) => {
+      seen.push(String(url))
+      if (String(url).startsWith('https://bad')) return json({ detail: 'x' }, 500)
+      return json({ results: [{ title: 'S', url: 'https://ok.example', content: 'X' }] })
+    }
+    const svc = createSearchService({
+      env: {
+        SEARXNG_BASE_URLS: 'https://bad1.example,https://bad2.example,https://good.example',
+      } as NodeJS.ProcessEnv,
+      fetchImpl,
+    })
+    const r = await svc.search('q')
+    expect(r.provider).toBe('searxng')
+    expect(seen.some((u) => u.startsWith('https://good'))).toBe(true)
+  })
+
+  it('★ provider 永不返回时按超时失败并降级', async () => {
+    const fetchImpl: FetchLike = async (url) => {
+      if (String(url).includes('api.tavily.com')) return new Promise<Response>(() => undefined)
+      return ddgPage()
+    }
+    const svc = createSearchService({
+      env: { TAVILY_API_KEY: 'k' } as NodeJS.ProcessEnv,
+      fetchImpl,
+      timeoutMs: 20,
+    })
+    const r = await svc.search('q')
+    expect(r.provider).toBe('duckduckgo')
+    expect(r.warnings.join(' ')).toContain('未返回')
+  })
+
+  it('★ provider 抛字符串也能降级，不会让整条链崩掉', async () => {
+    const fetchImpl: FetchLike = async (url) => {
+      if (String(url).includes('api.tavily.com')) return Promise.reject('boom')
+      return ddgPage()
+    }
+    const svc = createSearchService({
+      env: { TAVILY_API_KEY: 'k' } as NodeJS.ProcessEnv,
+      fetchImpl,
+    })
+    const r = await svc.search('q')
+    expect(r.provider).toBe('duckduckgo')
+    expect(r.warnings.join(' ')).toContain('boom')
+  })
 })

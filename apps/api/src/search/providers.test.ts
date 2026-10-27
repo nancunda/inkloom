@@ -80,6 +80,13 @@ describe('duckduckgo lite', () => {
     const fetchImpl: FetchLike = async () => html('<html><body>challenge</body></html>')
     await expect(createDuckDuckGoSearch({ fetchImpl }).search('q', 3)).resolves.toEqual([])
   })
+
+  it('★ HTTP 失败抛状态码', async () => {
+    const fetchImpl: FetchLike = async () => html('bad', 403)
+    await expect(createDuckDuckGoSearch({ fetchImpl }).search('q', 3)).rejects.toThrow(
+      'duckduckgo 403',
+    )
+  })
 })
 
 describe('tavily', () => {

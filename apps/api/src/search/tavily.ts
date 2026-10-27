@@ -19,6 +19,7 @@ export function createTavilySearch(opts: TavilySearchOptions): SearchProvider {
 
   return {
     id: 'tavily',
+    key: `tavily:${base}`,
     async search(query, maxResults = 5) {
       const res = await fetchImpl(`${base}/search`, {
         method: 'POST',

@@ -14,6 +14,7 @@ export function createSearxngSearch(baseUrl: string, opts: ProviderOptions = {})
 
   return {
     id: 'searxng',
+    key: `searxng:${base}`,
     async search(query, maxResults = 5) {
       const url = `${base}/search?q=${encodeURIComponent(query)}&format=json&language=zh-CN&safesearch=1`
       const res = await fetchImpl(url, {

@@ -12,6 +12,8 @@ export interface SearchHit {
 
 export interface SearchProvider {
   readonly id: SearchProviderId
+  /** 熔断/日志用的稳定标识：同一 id 的多个实例必须不同 */
+  readonly key: string
   search(query: string, maxResults?: number): Promise<SearchHit[]>
 }
 

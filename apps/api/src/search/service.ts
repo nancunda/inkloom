@@ -45,26 +45,45 @@ function buildProviders(env: NodeJS.ProcessEnv, fetchImpl?: FetchLike): SearchPr
   return out
 }
 
-export function createSearchService(
-  opts: { env?: NodeJS.ProcessEnv; fetchImpl?: FetchLike; now?: () => number } = {},
-): SearchService {
+export interface SearchServiceOptions {
+  env?: NodeJS.ProcessEnv
+  fetchImpl?: FetchLike
+  now?: () => number
+  /** 兜底超时：与 fetch 实现无关，默认 8s */
+  timeoutMs?: number
+}
+
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const guarded = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} 超过 ${ms}ms 未返回`)), ms)
+  })
+  try {
+    return await Promise.race([p, guarded])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+export function createSearchService(opts: SearchServiceOptions = {}): SearchService {
   const env = opts.env ?? process.env
   const now = opts.now ?? (() => Date.now())
+  const timeoutMs = opts.timeoutMs ?? 8000
   const providers = buildProviders(env, opts.fetchImpl)
 
-  function isOpen(id: string): boolean {
-    const b = breakers.get(id)
+  function isOpen(key: string): boolean {
+    const b = breakers.get(key)
     return b !== undefined && b.until > now()
   }
 
-  function fail(id: string): void {
-    const b = breakers.get(id) ?? { count: 0, until: 0 }
+  function fail(key: string): void {
+    const b = breakers.get(key) ?? { count: 0, until: 0 }
     b.count += 1
     if (b.count >= MAX_FAILURES) {
       b.until = now() + OPEN_MS
       b.count = 0
     }
-    breakers.set(id, b)
+    breakers.set(key, b)
   }
 
   return {
@@ -73,22 +92,28 @@ export function createSearchService(
     async search(query, maxResults = 5) {
       const warnings: string[] = []
       for (const provider of providers) {
-        if (isOpen(provider.id)) {
-          warnings.push(`${provider.id}：熔断中，跳过`)
+        if (isOpen(provider.key)) {
+          warnings.push(`${provider.key}：熔断中，跳过`)
           continue
         }
         try {
-          const hits = await provider.search(query, maxResults)
-          breakers.delete(provider.id)
+          const hits = await withTimeout(
+            provider.search(query, maxResults),
+            timeoutMs,
+            provider.key,
+          )
+          breakers.delete(provider.key)
           return {
             hits,
             provider: provider.id,
+            // spec 口径：非 Tavily 都算降级（零 key 时也会提示用兜底源）
             degraded: provider.id !== 'tavily',
             warnings,
           }
         } catch (e) {
-          fail(provider.id)
-          warnings.push(`${provider.id}：${(e as Error).message.slice(0, 120)}`)
+          fail(provider.key)
+          const msg = e instanceof Error ? e.message : String(e)
+          warnings.push(`${provider.key}：${msg.slice(0, 120)}`)
         }
       }
       return { hits: [], provider: null, degraded: true, warnings }

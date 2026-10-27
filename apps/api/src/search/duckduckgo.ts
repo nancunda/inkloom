@@ -14,6 +14,7 @@ export function createDuckDuckGoSearch(opts: ProviderOptions = {}): SearchProvid
 
   return {
     id: 'duckduckgo',
+    key: 'duckduckgo',
     async search(query, maxResults = 5) {
       const res = await fetchImpl(
         `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
@@ -25,19 +26,26 @@ export function createDuckDuckGoSearch(opts: ProviderOptions = {}): SearchProvid
       if (!res.ok) throw new Error(`duckduckgo ${res.status}`)
 
       const { document } = parseHTML(await res.text())
-      const links = [...document.querySelectorAll('a.result-link')].slice(0, maxResults)
-      const snippets = [...document.querySelectorAll('td.result-snippet')]
+      const hits: SearchHit[] = []
+      for (const row of [...document.querySelectorAll('tr')]) {
+        const a = row.querySelector('a.result-link')
+        if (a === null) continue
+        const href = a.getAttribute('href') ?? ''
+        if (href.length === 0) continue
 
-      return links
-        .map(
-          (a, i): SearchHit => ({
-            title: (a.textContent ?? '').trim(),
-            url: a.getAttribute('href') ?? '',
-            snippet: (snippets[i]?.textContent ?? '').trim(),
-            provider: 'duckduckgo',
-          }),
-        )
-        .filter((h) => h.url.length > 0)
+        // ★ snippet 常在下一行，按行配对而不是按全局下标，避免缺一条就整体错位
+        const cell =
+          row.querySelector('td.result-snippet') ??
+          row.nextElementSibling?.querySelector('td.result-snippet')
+        hits.push({
+          title: (a.textContent ?? '').trim() || href,
+          url: href,
+          snippet: (cell?.textContent ?? '').trim(),
+          provider: 'duckduckgo',
+        })
+        if (hits.length >= maxResults) break
+      }
+      return hits
     },
   }
 }
