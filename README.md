@@ -23,6 +23,7 @@
 | **世界** | 规则、力量体系、地点与路线（地图上拖拽） |
 | **角色** | 角色卡、关系网络（拖两个节点连线建关系）、形象图 |
 | **故事** | 卷、故事弧、逐章蓝图、线索轨迹 |
+| **图谱** | 类—实例—边：人物/地点/规则自动入图；点节点看属性、来源与关系 |
 | **写作** | 场景候选、diff、接受/拒绝、整场重写、定稿、专注模式 |
 | **素材** | 形象图与参考资产（prompt / provider / params 可复现） |
 | **设置** | 模型、密钥、判断层开关 |
@@ -41,6 +42,18 @@
 - 顶栏点书名切换书；切书会整页重载，并清掉上一本的查询缓存与 Agent runId
 - 空书库是正常状态：直接在浏览器里「新建一本书」
 - 切书前要求没有进行中的共创会话 / 生成任务——避免把进度写进另一本书
+
+---
+
+## 图谱：看得见的世界模型
+
+![图谱](docs/screenshots/accept-ontology.png)
+
+- 人物、地点、规则、线索、卷是**虚拟节点**：来自各自文件，改要去原模块改
+- 势力、物品、概念可以写进 `world/ontology/nodes.jsonl`；类与谓词在 `world/ontology/classes.json`
+- 跨类型边在 `world/ontology/edges.jsonl`（append-only，带章节区间与来源）
+- 坏行不会整页报错：跳过该行并在页面底部列出「第几行坏了」
+- 图谱只读：切片 1 不做提案与事件；Agent 提议、事件链沙盘在后续切片
 
 ---
 
@@ -201,7 +214,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 303 单元 + 304 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 332 单元 + 322 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
