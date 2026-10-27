@@ -30,15 +30,36 @@ export type GraphEdgeView = Omit<GraphEdge, 'createdAt'> & {
   virtual: boolean
   /** 虚拟路线：双向时匹配忽略方向 */
   undirected?: boolean
+  /** 被别的边 retracts 指向 */
   retracted?: boolean
+  /** 废止记录行本身（带 retracts）：只用于吊销，不参与推导与展示 */
+  tombstone?: boolean
   sourceFile?: string
 }
 
+/** spec §6 的 12 个问题码 */
+export const GRAPH_ISSUE_CODES = [
+  'DUP_NODE',
+  'DUP_EDGE',
+  'EDGE_ENDPOINT_MISSING',
+  'EDGE_BAD_PREDICATE',
+  'EDGE_DOMAIN_RANGE',
+  'CLASS_CYCLE',
+  'CLASS_PARENT_MISSING',
+  'EVENT_CAUSE_MISSING',
+  'EVENT_PARTICIPANT_MISSING',
+  'EVENT_LOCATION_MISSING',
+  'PROPOSAL_EVIDENCE_MISSING',
+  'PROPOSAL_CAP_EXCEEDED',
+] as const
+export type GraphIssueCode = (typeof GRAPH_ISSUE_CODES)[number]
+
 export interface GraphIssue {
   severity: 'error' | 'warning'
-  code: string
+  code: GraphIssueCode
   subject: string
   message: string
+  evidence?: string
 }
 
 export interface GraphSource {
@@ -56,10 +77,10 @@ export interface GraphSource {
 }
 
 export interface GraphSnapshot {
-  nodes: Map<string, GraphNode>
+  nodes: ReadonlyMap<string, GraphNode>
   edges: GraphEdgeView[]
-  classOf: Map<string, string[]>
-  subclasses: Map<string, string[]>
+  classOf: ReadonlyMap<string, string[]>
+  subclasses: ReadonlyMap<string, string[]>
   classes: ClassDef[]
   predicates: PredicateDef[]
   issues: GraphIssue[]

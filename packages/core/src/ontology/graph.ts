@@ -56,13 +56,12 @@ function characterNode(c: Character): GraphNode {
     id: c.id,
     type: 'character',
     name: c.name,
+    // 只取静态设定：curLocation/curMental/stateChapter 是按章演进的状态，
+    // 进图会变成没有章节维度的第二份真相（spec §5.2 / §11.1-3）
     attrs: compact({
       role: c.role,
       personality: c.personality,
       motivation: c.motivation,
-      curLocation: c.curLocation,
-      curMental: c.curMental,
-      stateChapter: c.stateChapter === undefined ? undefined : String(c.stateChapter),
     }),
     virtual: true,
     sourceFile: 'characters/index.json',
@@ -156,7 +155,7 @@ export function buildGraph(src: GraphSource): GraphSnapshot {
       type: n.type,
       name: n.name,
       aliases: n.aliases,
-      attrs: n.attrs,
+      attrs: compact(n.attrs),
       virtual: false,
       sourceFile: 'world/ontology/nodes.jsonl',
     })
@@ -186,18 +185,29 @@ export function buildGraph(src: GraphSource): GraphSnapshot {
       ...e,
       virtual: false,
       retracted: retracted.has(e.id),
+      // 废止行只用于吊销：它自己的 from/predicate/to 与被吊销边相同，
+      // 若当活边参与推导，会把刚删掉的事实又加回去
+      ...(e.retracts === undefined ? {} : { tombstone: true }),
       sourceFile: 'world/ontology/edges.jsonl',
     })
   }
-  edges.sort((a, b) => a.id.localeCompare(b.id))
+  edges.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  // instanceOf 边先按 from 聚合，避免每个节点都扫一遍全部边
+  const instanceOfByFrom = new Map<string, GraphEdgeView[]>()
+  for (const e of edges) {
+    if (e.retracted === true || e.tombstone === true || e.predicate !== 'instanceOf') continue
+    const list = instanceOfByFrom.get(e.from) ?? []
+    list.push(e)
+    instanceOfByFrom.set(e.from, list)
+  }
 
   const classOf = new Map<string, string[]>()
   for (const node of nodes.values()) {
     const direct = new Set<string>()
     const base = DEFAULT_CLASS_BY_TYPE[node.type]
     if (base !== undefined) direct.add(base)
-    for (const e of edges) {
-      if (e.retracted === true || e.predicate !== 'instanceOf' || e.from !== node.id) continue
+    for (const e of instanceOfByFrom.get(node.id) ?? []) {
       if (classById.has(e.to)) direct.add(e.to)
     }
     const all = new Set<string>()
@@ -229,8 +239,9 @@ export function buildGraph(src: GraphSource): GraphSnapshot {
     edges,
     classOf,
     subclasses,
-    classes: classesFile.classes,
-    predicates: classesFile.predicates,
+    // 默认本体是模块级常量，拷贝一份防止调用方改写污染后续请求
+    classes: [...classesFile.classes],
+    predicates: [...classesFile.predicates],
     issues,
     builtFrom: src.builtFrom,
   }

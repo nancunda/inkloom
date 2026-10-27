@@ -127,15 +127,38 @@ describe('buildGraph', () => {
     const g = buildGraph(source({ nodes: [node], edges: [edge], classesFile: classes }))
     expect(g.nodes.get('grp-qingyun')?.virtual).toBe(false)
     expect(g.classOf.get('grp-qingyun')).toEqual(['cls-group', 'cls-sect'])
+    expect(g.subclasses.get('cls-group')).toEqual(['cls-sect'])
   })
 
-  it('被 retracts 指向的边标 retracted', () => {
+  it('被 retracts 指向的边不再参与类闭包，废止行自己也不参与', () => {
+    const classes: ClassesFile = {
+      version: 1,
+      classes: [
+        {
+          id: 'cls-character',
+          name: '人物',
+          parentId: null,
+          kind: 'character',
+          properties: [],
+          rules: [],
+        },
+        {
+          id: 'cls-sect',
+          name: '宗门',
+          parentId: 'cls-character',
+          kind: 'group',
+          properties: [],
+          rules: [],
+        },
+      ],
+      predicates: [],
+    }
     const edges: GraphEdge[] = [
       {
         id: 'ed-aaaaaa',
         from: 'c1',
         predicate: 'instanceOf',
-        to: 'cls-character',
+        to: 'cls-sect',
         source: { kind: 'author' },
         createdAt: '2026-10-27T00:00:00.000Z',
       },
@@ -143,31 +166,34 @@ describe('buildGraph', () => {
         id: 'ed-bbbbbb',
         from: 'c1',
         predicate: 'instanceOf',
-        to: 'cls-character',
+        to: 'cls-sect',
         retracts: 'ed-aaaaaa',
         source: { kind: 'author' },
         createdAt: '2026-10-27T00:00:00.000Z',
       },
     ]
-    const g = buildGraph(source({ edges }))
+    const g = buildGraph(source({ edges, classesFile: classes }))
     expect(g.edges.find((e) => e.id === 'ed-aaaaaa')?.retracted).toBe(true)
-    expect(g.edges.find((e) => e.id === 'ed-bbbbbb')?.retracted).toBe(false)
+    expect(g.edges.find((e) => e.id === 'ed-bbbbbb')?.tombstone).toBe(true)
+    // 只有按 type 推出的基类：被吊销的 cls-sect 不留在闭包里
+    expect(g.classOf.get('c1')).toEqual(['cls-character'])
   })
 
   it('重复节点记 warning，不中断构建', () => {
-    const node: OntologyNode = {
-      id: 'c1',
+    const dup = (name: string): OntologyNode => ({
+      id: 'grp-dup',
       type: 'group',
-      name: '撞车',
+      name,
       aliases: [],
       summary: '',
       attrs: {},
       createdAt: '2026-10-27T00:00:00.000Z',
-    }
-    const g = buildGraph(source({ nodes: [node] }))
+    })
+    const g = buildGraph(source({ nodes: [dup('先到'), dup('后到')] }))
     expect(g.issues).toContainEqual(
-      expect.objectContaining({ code: 'DUP_NODE', subject: 'c1', severity: 'warning' }),
+      expect.objectContaining({ code: 'DUP_NODE', subject: 'grp-dup', severity: 'warning' }),
     )
-    expect(g.nodes.get('c1')?.name).toBe('林岚')
+    // 保留第一次出现的节点
+    expect(g.nodes.get('grp-dup')?.name).toBe('先到')
   })
 })

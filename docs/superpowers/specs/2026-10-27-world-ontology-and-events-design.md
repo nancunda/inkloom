@@ -305,11 +305,23 @@ interface GraphNode {
 
 interface GraphSnapshot {
   nodes: ReadonlyMap<string, GraphNode>
-  edges: GraphEdge[]          // canon，含虚拟边
+  edges: GraphEdgeView[]     // canon + 虚拟边；虚拟边没有 createdAt
   classOf: ReadonlyMap<string, string[]>   // 节点 → 类闭包（含 instanceOf 推导）
   subclasses: ReadonlyMap<string, string[]>
+  classes: ClassDef[]        // 类定义（GET /classes 直接用）
+  predicates: PredicateDef[]
   issues: GraphIssue[]
   builtFrom: { files: string[]; mtimeMax: number }
+}
+
+/** 虚拟边来自实体投影，没有作者写入时间 */
+type GraphEdgeView = Omit<GraphEdge, 'createdAt'> & {
+  createdAt?: string
+  virtual: boolean
+  undirected?: boolean     // 双向路线：匹配忽略方向
+  retracted?: boolean      // 被别的边 retracts 指向，不参与推导
+  tombstone?: boolean      // 废止记录行本身（带 retracts）：只用于吊销
+  sourceFile?: string
 }
 
 interface GraphMatch {
