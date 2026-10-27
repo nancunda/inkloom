@@ -440,3 +440,117 @@ describe('局部重写接口', () => {
     expect(j.scene.version).toBe(2)
   })
 })
+
+describe('资料卡接口', () => {
+  async function seedLore(id = 'lr-test0001'): Promise<string> {
+    await db.loreReference.create({
+      data: {
+        id,
+        projectId: pid,
+        query: '剑冢',
+        provider: 'tavily',
+        title: '剑冢考据',
+        url: 'https://a.example',
+        snippet: '摘要',
+        content: null,
+        usedInRunIds: JSON.stringify(['ar_1']),
+        approved: false,
+      },
+    })
+    return id
+  }
+
+  it('★ 列表 → 批准 → approved=true', async () => {
+    const id = await seedLore()
+    const before = await createApp().request('/api/lore?limit=5')
+    expect(before.status).toBe(200)
+    const b1 = (await before.json()) as { items: { id: string }[] }
+    expect(b1.items.map((x) => x.id)).toContain(id)
+
+    const okRes = await createApp().request(`/api/lore/${id}/approve`, { method: 'POST' })
+    expect(okRes.status).toBe(200)
+
+    const after = await createApp().request('/api/lore?approved=1&limit=5')
+    const b2 = (await after.json()) as { items: { id: string }[] }
+    expect(b2.items.map((x) => x.id)).toContain(id)
+  })
+
+  it('★ 批准不存在的卡片返回 404', async () => {
+    const res = await createApp().request('/api/lore/lr-nope/approve', { method: 'POST' })
+    expect(res.status).toBe(404)
+  })
+
+  it('★ 未批准的可以删；已批准的拒绝删（400，不是 404）', async () => {
+    const draft = await seedLore('lr-draft001')
+    const delDraft = await createApp().request(`/api/lore/${draft}`, { method: 'DELETE' })
+    expect(delDraft.status).toBe(200)
+
+    const approved = await seedLore('lr-fixed001')
+    await createApp().request(`/api/lore/${approved}/approve`, { method: 'POST' })
+    const delApproved = await createApp().request(`/api/lore/${approved}`, { method: 'DELETE' })
+    expect(delApproved.status).toBe(400)
+    const body = (await delApproved.json()) as { error: { code: string } }
+    expect(body.error.code).toBe('INVALID_INPUT')
+
+    const missing = await createApp().request('/api/lore/lr-nope', { method: 'DELETE' })
+    expect(missing.status).toBe(404)
+  })
+
+  it('★ q 过滤标题', async () => {
+    await seedLore()
+    const res = await createApp().request('/api/lore?q=剑冢')
+    const body = (await res.json()) as { items: { title: string }[] }
+    expect(body.items).toHaveLength(1)
+  })
+})
+
+describe('搜索接口', () => {
+  const DDG_HTML = `<table>
+    <tr><td><a class="result-link" href="https://a.example">剑冢</a></td></tr>
+    <tr><td class="result-snippet">古剑埋骨之地</td></tr>
+  </table>`
+
+  it('★ 没 key 时降级到 DuckDuckGo，并返回 provider/degraded', async () => {
+    // ★ 本机 .env 里的 key 会改变降级起点，测试里先清空再还原
+    const tavily = process.env['TAVILY_API_KEY']
+    const searx = process.env['SEARXNG_BASE_URLS']
+    delete process.env['TAVILY_API_KEY']
+    delete process.env['SEARXNG_BASE_URLS']
+    try {
+      const searchFetch: FetchLike = async (url) => {
+        if (String(url).includes('lite.duckduckgo.com')) {
+          return new Response(DDG_HTML, { status: 200, headers: { 'content-type': 'text/html' } })
+        }
+        return new Response('nope', { status: 500 })
+      }
+      const app = createApp({ searchFetch })
+      const r = await app.request('/api/search', {
+        method: 'POST',
+        body: JSON.stringify({ query: '剑冢' }),
+      })
+      expect(r.status).toBe(200)
+      const j = (await r.json()) as {
+        query: string
+        provider: string | null
+        degraded: boolean
+        hits: { title: string; url: string; snippet: string }[]
+      }
+      expect(j.query).toBe('剑冢')
+      expect(j.provider).toBe('duckduckgo')
+      expect(j.degraded).toBe(true)
+      expect(j.hits[0]?.url).toBe('https://a.example')
+      expect(j.hits[0]?.snippet).toBe('古剑埋骨之地')
+    } finally {
+      if (tavily !== undefined) process.env['TAVILY_API_KEY'] = tavily
+      if (searx !== undefined) process.env['SEARXNG_BASE_URLS'] = searx
+    }
+  })
+
+  it('缺少 query → 400', async () => {
+    const r = await createApp().request('/api/search', {
+      method: 'POST',
+      body: JSON.stringify({ query: '  ' }),
+    })
+    expect(r.status).toBe(400)
+  })
+})

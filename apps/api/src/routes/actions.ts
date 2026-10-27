@@ -5,7 +5,7 @@ import type { ImageProvider } from '../assets/image-provider.js'
 import { checkChapter } from '../judge/health-check.js'
 import { resolveJudgeProvider } from '../judge/registry.js'
 import type { FetchLike } from '../llm/types.js'
-import { createTavilySearch } from '../search/tavily.js'
+import { createSearchService } from '../search/service.js'
 import { getContext } from '../services/context.js'
 import { finalizeChapter, unfinalizeChapter } from '../services/finalize-service.js'
 import { generateChapter, rewriteScene } from '../services/generate-service.js'
@@ -30,6 +30,8 @@ import {
  */
 export interface ActionDeps {
   fetchImpl?: FetchLike
+  /** 搜索链路专用 fetch（测试注入；不传 = 全局 fetch） */
+  searchFetch?: FetchLike
   /** 覆盖环境变量里的 key（测试用） */
   apiKey?: string
   /** 判断层 provider；传 null = 关闭，不传 = 按 INKLOOM_JUDGE 解析 */
@@ -141,15 +143,13 @@ export function createActions(deps: ActionDeps = {}): Hono {
     const query = body.query?.trim() ?? ''
     if (query.length === 0) throw new InkloomError('INVALID_INPUT', '缺少 query')
 
-    const key = (process.env['TAVILY_API_KEY'] ?? '').trim()
-    if (key.length === 0) throw new InkloomError('AUTH', '缺少 TAVILY_API_KEY（见 .env.example）')
-
-    const provider = createTavilySearch({ apiKey: key })
-    return c.json({
-      provider: provider.id,
-      query,
-      hits: await provider.search(query, body.maxResults ?? 5),
-    })
+    // ★ 不再要求 Tavily key：降级链末端是免 key 的 DuckDuckGo，没 key 也能用
+    const max = Math.min(Math.max(Math.trunc(body.maxResults ?? 5), 1), 8)
+    const service = createSearchService(
+      deps.searchFetch === undefined ? {} : { fetchImpl: deps.searchFetch },
+    )
+    const r = await service.search(query, max)
+    return c.json({ query, ...r })
   })
 
   actions.post('/chapters/:n/generate-async', (c) => {
