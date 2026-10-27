@@ -509,6 +509,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         }
         return ok(
           `已读取「${page.title || page.url}」（${page.text.length} 字，extracted=${page.extracted}${savedId === '' ? '' : `，资料卡 ${savedId}`}）\n\n${page.text.slice(0, 2000)}${saveWarning}`,
+          // 落卡失败时 id 为 null（与 web_search 的 ids: [] 同义）
           { id: savedId === '' ? null : savedId, url: page.url, extracted: page.extracted },
         )
       } catch (e) {

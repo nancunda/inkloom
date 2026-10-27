@@ -128,4 +128,19 @@ describe('fetchReadable', () => {
       })
     await expect(fetchReadable('https://example.com/big', { fetchImpl })).rejects.toThrow('太大')
   })
+
+  it('★ 没有 content-length 时按流累加也停在 5MB', async () => {
+    const chunk = new Uint8Array(1024 * 1024)
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let i = 0; i < 6; i += 1) controller.enqueue(chunk)
+            controller.close()
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'text/html' } },
+      )
+    await expect(fetchReadable('https://example.com/huge', { fetchImpl })).rejects.toThrow('太大')
+  })
 })

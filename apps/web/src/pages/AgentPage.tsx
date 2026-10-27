@@ -276,7 +276,7 @@ function currentHint(run: AgentRun | null, plan: AgentPlan | null): string {
       ? `等你批准计划「${run.gate.title}」：通过后我会按任务自动推进`
       : `等你审阅任务「${run.gate.title}」：可以在卡上通过，或直接发消息让它改`
   }
-  if (run.status === 'paused') return '步数用完了：点「继续执行」接着跑，任务进度不会丢'
+  if (run.status === 'paused') return '已暂停：点「继续执行」接着跑，任务进度不会丢'
   if (run.status === 'running') {
     if (plan === null) return '正在读全书、制定计划'
     const doing = plan.tasks.find((t) => t.status === 'doing')
@@ -619,7 +619,8 @@ export function AgentPage() {
   const openTaskCount =
     plan?.tasks.filter((t) => t.status !== 'done' && t.status !== 'skipped').length ?? 0
   // 没有内存 run 也算可恢复：run 被回收后计划还在磁盘上
-  const canResume = (run === null || ended) && openTaskCount > 0
+  // ★ paused 一律给出口：任务全做完时步数/跑圈保护也会暂停，此时 openTaskCount 为 0。
+  const canResume = (run === null || ended) && (openTaskCount > 0 || run?.status === 'paused')
   const canReplan = (run === null || ended) && plan?.status === 'aborted'
   const placeholder =
     run === null

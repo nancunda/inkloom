@@ -81,7 +81,9 @@ interface AgentRun {
   journalTail: Promise<void>
   /** 上一轮结束时的步数：没涨 = 模型只说话没动手 */
   lastSteps: number
-  /** 连续“只说话不动手”的轮数；推两推还不动就停给作者 */
+  /** 上一轮计划状态的指纹：与步数一起判断这一轮有没有真的推进 */
+  lastPlanSignature: string
+  /** 连续“没推进”的轮数；推两推还不动就停给作者 */
   stallTurns: number
 }
 
@@ -100,6 +102,13 @@ function requireOwnedRun(id: string): AgentRun {
     throw new InkloomError('NOT_FOUND', `agent run ${id} 不存在（当前书里没有这个会话）`)
   }
   return run
+}
+
+/** 计划指纹：任务状态 + 计划状态，用来判断一轮有没有真的推进（只看步数会误判只读轮） */
+function planSignature(plan: Plan | null): string {
+  if (plan === null) return 'none'
+  const tasks = plan.tasks.map((t) => `${t.id}:${t.status}:${t.reviewed ? 1 : 0}`).join(',')
+  return `${plan.status}|${tasks}`
 }
 
 /** 是否还有占用中的 run：切书前必须拒绝，避免把进度留在一个已关闭的 context 里 */
@@ -276,14 +285,6 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
   }
   if (run.stopped) return
 
-  // ★ 跑圈保护：步数没涨说明模型这一轮没调工具，推它也没用
-  if (run.budget.steps > run.lastSteps) {
-    run.lastSteps = run.budget.steps
-    run.stallTurns = 0
-  } else {
-    run.stallTurns += 1
-  }
-
   // 1. 本轮显式设了门禁（agent_end 已写入 run.gate）→ 等作者
   if (run.gate !== null) {
     run.status = 'waiting_review'
@@ -292,6 +293,18 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
 
   // 2. 与 plan 对账：门禁是 plan 的投影，不是工具的副产物
   const plan = run.planId === null ? null : await loadPlan(run.root, run.planId).catch(() => null)
+
+  // ★ 跑圈保护：这一轮既没调工具（步数没涨）也没改计划，推它也没用。
+  //   两者任一有变化都算推进：只做研究不写计划的轮次不应被当成空转。
+  const signature = planSignature(plan)
+  if (run.budget.steps > run.lastSteps || signature !== run.lastPlanSignature) {
+    run.stallTurns = 0
+  } else {
+    run.stallTurns += 1
+  }
+  run.lastSteps = run.budget.steps
+  run.lastPlanSignature = signature
+
   if (plan !== null) {
     const gate = deriveGate(plan)
     if (gate !== null) {
@@ -314,17 +327,17 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
         )
         return
       }
-      if (next !== null) {
-        const { project } = getContext()
-        void drive(run, buildTaskPrompt(project, plan, next))
-        return
-      }
-      // ★ 全部任务完成但模型连续两轮不调工具：再推也是空转，停给作者
+      // ★ 连续两轮不调工具（步数没涨）→ 再推也是空转：不管还有没有任务都停
       if (run.stallTurns >= 2) {
         pauseRun(
           run,
           '模型连续两轮没有调用工具，没法推进计划。点「继续执行」，或直接告诉它下一步做什么。',
         )
+        return
+      }
+      if (next !== null) {
+        const { project } = getContext()
+        void drive(run, buildTaskPrompt(project, plan, next))
         return
       }
       // 全部任务完成，但还没请作者验收：推它一把
@@ -631,6 +644,7 @@ export async function startAgentRun(
     journal,
     journalTail: Promise.resolve(),
     lastSteps: 0,
+    lastPlanSignature: '',
     stallTurns: 0,
   }
 
@@ -697,6 +711,7 @@ export function resumeAgentRun(id: string): AgentRunSnapshot {
   run.error = null
   run.budget.steps = 0
   run.lastSteps = 0
+  run.lastPlanSignature = ''
   run.stallTurns = 0
   activeRunId = run.id
   emit(run, { type: 'user.message', text: '继续执行计划里还没完成的任务' })
@@ -875,6 +890,7 @@ export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
   // 续聊重置步数（章节与形象图已无额度）与跑圈计数
   run.budget.steps = 0
   run.lastSteps = 0
+  run.lastPlanSignature = ''
   run.stallTurns = 0
   void drive(run, text)
   return snapshot(run)

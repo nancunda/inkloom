@@ -474,24 +474,49 @@ describe('中止终态', () => {
     expect(() => sendAgentMessage(started.id, '再改一下')).toThrow(/已暂停/)
   })
 
-  it('★ 模型连续两轮不调工具 → paused，不再无限推它验收', async () => {
+  it('★ 模型连续多轮不调工具也不改计划 → paused，不再无限空转', async () => {
     await seedPlan('approved', [{ id: 't1', status: 'done', reviewed: true }])
     const started = await startAgentRun('继续')
     const agent = lastAgent()
     expect(agent.promptCalls).toBe(1)
 
-    // 第一轮：没调任何工具，推它一把
-    agent.emit({ type: 'agent_end' })
-    agent.done()
-    await new Promise((r) => setTimeout(r, 80))
-    expect(agent.promptCalls).toBe(2)
+    const endOnce = async (): Promise<void> => {
+      agent.emit({ type: 'agent_end' })
+      agent.done()
+      await new Promise((r) => setTimeout(r, 80))
+    }
 
-    // 第二轮还是不动 → 停给作者
-    agent.emit({ type: 'agent_end' })
-    agent.done()
-    await new Promise((r) => setTimeout(r, 80))
-    expect(getAgentRun(started.id)?.status).toBe('paused')
+    // 第一轮：没调工具、计划也没变 → 推一把；再推一次仍不动 → 停给作者
+    await endOnce()
     expect(agent.promptCalls).toBe(2)
+    await endOnce()
+    expect(agent.promptCalls).toBe(3)
+    await endOnce()
+
+    expect(getAgentRun(started.id)?.status).toBe('paused')
+    expect(agent.promptCalls).toBe(3)
+  })
+
+  it('★ 还有任务但多轮不调工具 → 也 paused（不只管任务全完成）', async () => {
+    await seedPlan('approved', [{ id: 't1', status: 'todo' }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    expect(agent.promptCalls).toBe(1)
+
+    const endOnce = async (): Promise<void> => {
+      agent.emit({ type: 'agent_end' })
+      agent.done()
+      await new Promise((r) => setTimeout(r, 80))
+    }
+
+    await endOnce()
+    expect(agent.promptCalls).toBe(2)
+    await endOnce()
+    expect(agent.promptCalls).toBe(3)
+    await endOnce()
+
+    expect(getAgentRun(started.id)?.status).toBe('paused')
+    expect(agent.promptCalls).toBe(3)
   })
 })
 

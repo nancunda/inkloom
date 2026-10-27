@@ -38,7 +38,11 @@ export function decodeHtml(buf: ArrayBuffer, contentType: string | null): string
 /** 按流读，超 5MB 立即停：先 arrayBuffer 再判体积等于白防 */
 async function readCapped(res: Response): Promise<ArrayBuffer> {
   const declared = Number(res.headers.get('content-length') ?? '0')
-  if (Number.isFinite(declared) && declared > MAX_BYTES) throw new Error('网页太大（超过 5MB）')
+  if (Number.isFinite(declared) && declared > MAX_BYTES) {
+    // ★ 不消费就丢会占住连接
+    await res.body?.cancel().catch(() => undefined)
+    throw new Error('网页太大（超过 5MB）')
+  }
   if (res.body === null) return res.arrayBuffer()
 
   const reader = res.body.getReader()
@@ -81,6 +85,7 @@ async function fetchFollowing(
 
   if (res.status >= 300 && res.status < 400) {
     const loc = res.headers.get('location')
+    await res.body?.cancel().catch(() => undefined)
     if (loc === null) throw new Error('重定向缺少 Location')
     if (redirects >= MAX_REDIRECTS) throw new Error('重定向次数太多')
     return fetchFollowing(new URL(loc, target).toString(), opts, redirects + 1)
