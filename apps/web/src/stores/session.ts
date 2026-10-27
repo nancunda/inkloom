@@ -7,6 +7,7 @@ export const MODULES = [
   'world',
   'cast',
   'story',
+  'ontology',
   'write',
   'assets',
   'settings',

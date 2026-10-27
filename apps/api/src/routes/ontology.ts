@@ -10,6 +10,15 @@ function limitOf(raw: string | undefined, def: number, max: number): number {
   return Math.min(n, max)
 }
 
+/** 类闭包计数：父类把子孙实例也算进去（与 /classes 同源） */
+function countInstances(classOf: ReadonlyMap<string, string[]>): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const ids of classOf.values()) {
+    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1)
+  }
+  return counts
+}
+
 ontologyRoutes.get('/ontology/graph', async (c) => {
   const { snapshot: snap, warnings } = await getGraphData()
   const classId = c.req.query('class')
@@ -49,11 +58,12 @@ ontologyRoutes.get('/ontology/graph', async (c) => {
     (e) => e.tombstone !== true && visible.has(e.from) && visible.has(e.to),
   )
   const builtAt = new Date(snap.builtFrom.mtimeMax || Date.now()).toISOString()
+  const counts = countInstances(snap.classOf)
 
   return c.json({
     nodes: nodes.map((n) => ({ ...n, classIds: snap.classOf.get(n.id) ?? [] })),
     edges,
-    classes: snap.classes,
+    classes: snap.classes.map((cl) => ({ ...cl, instanceCount: counts.get(cl.id) ?? 0 })),
     predicates: snap.predicates,
     issues: snap.issues,
     warnings,
@@ -93,10 +103,7 @@ ontologyRoutes.get('/ontology/nodes/:id', async (c) => {
 
 ontologyRoutes.get('/ontology/classes', async (c) => {
   const { snapshot: snap } = await getGraphData()
-  const counts = new Map<string, number>()
-  for (const ids of snap.classOf.values()) {
-    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1)
-  }
+  const counts = countInstances(snap.classOf)
   return c.json({
     classes: snap.classes.map((cl) => ({ ...cl, instanceCount: counts.get(cl.id) ?? 0 })),
     predicates: snap.predicates,

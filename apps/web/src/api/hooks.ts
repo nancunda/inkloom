@@ -15,6 +15,9 @@ import type {
   LibraryCurrent,
   LibraryData,
   LocationRow,
+  OntologyClassesData,
+  OntologyDetailData,
+  OntologyGraphData,
   OverviewData,
   PowerSystem,
   ProposeResult,
@@ -543,5 +546,40 @@ export function useCloseLibraryBook() {
   return useMutation({
     mutationFn: () => post<{ current: null }>('/library/close'),
     onSuccess: reloadAfterBookChange,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 图谱
+// ---------------------------------------------------------------------------
+
+export function useOntologyGraph(params: {
+  classId?: string | undefined
+  q?: string
+  issuesOnly?: boolean
+}) {
+  const search = new URLSearchParams()
+  if (params.classId !== undefined) search.set('class', params.classId)
+  if (params.q !== undefined && params.q.length > 0) search.set('q', params.q)
+  if (params.issuesOnly === true) search.set('issues', '1')
+  const qs = search.toString()
+  return useQuery({
+    queryKey: ['ontology', 'graph', qs],
+    queryFn: () => api<OntologyGraphData>(`/ontology/graph${qs.length > 0 ? `?${qs}` : ''}`),
+  })
+}
+
+export function useOntologyNode(id: string | null) {
+  return useQuery({
+    queryKey: ['ontology', 'node', id],
+    queryFn: () => api<OntologyDetailData>(`/ontology/nodes/${id}`),
+    enabled: id !== null,
+  })
+}
+
+export function useOntologyClasses() {
+  return useQuery({
+    queryKey: ['ontology', 'classes'],
+    queryFn: () => api<OntologyClassesData>('/ontology/classes'),
   })
 }

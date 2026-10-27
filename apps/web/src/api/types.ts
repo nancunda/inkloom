@@ -491,3 +491,94 @@ export interface LibraryData {
   current: LibraryCurrent | null
   books: LibraryBook[]
 }
+
+// ---------------------------------------------------------------------------
+// 图谱（世界模型）
+// ---------------------------------------------------------------------------
+export interface OntologyNodeRow {
+  id: string
+  type: string
+  name: string
+  aliases?: string[]
+  attrs: Record<string, string>
+  virtual: boolean
+  sourceFile?: string
+  classIds: string[]
+}
+
+export interface OntologyEdgeRow {
+  id: string
+  from: string
+  predicate: string
+  to: string
+  sinceChapter?: number
+  untilChapter?: number
+  confidence?: number
+  retracted?: boolean
+  tombstone?: boolean
+  virtual: boolean
+  undirected?: boolean
+  sourceFile?: string
+}
+
+export interface OntologyClassRow {
+  id: string
+  name: string
+  parentId: string | null
+  kind: string
+  properties: unknown[]
+  rules: unknown[]
+  instanceCount?: number
+}
+
+export interface OntologyPredicateRow {
+  id: string
+  label: string
+  domain: unknown
+  range: unknown
+  directed: boolean
+  transitive?: boolean
+  inverseOf?: string
+}
+
+export interface OntologyIssueRow {
+  severity: 'error' | 'warning'
+  code: string
+  subject: string
+  message: string
+  evidence?: string
+}
+
+export interface OntologyGraphData {
+  nodes: OntologyNodeRow[]
+  edges: OntologyEdgeRow[]
+  classes: OntologyClassRow[]
+  predicates: OntologyPredicateRow[]
+  issues: OntologyIssueRow[]
+  warnings: string[]
+  total: number
+  truncated: boolean
+  builtAt: string
+}
+
+/** 点开类 id（instanceOf 的端点）时返回的是类详情，不是节点 */
+export interface OntologyClassDetail {
+  node: null
+  class: OntologyClassRow & { instanceCount: number }
+  instances: string[]
+  edges: OntologyEdgeRow[]
+  issues: OntologyIssueRow[]
+}
+
+export interface OntologyNodeDetail {
+  node: OntologyNodeRow
+  edges: OntologyEdgeRow[]
+  issues: OntologyIssueRow[]
+}
+
+export type OntologyDetailData = OntologyNodeDetail | OntologyClassDetail
+
+export interface OntologyClassesData {
+  classes: OntologyClassRow[]
+  predicates: OntologyPredicateRow[]
+}

@@ -7,6 +7,7 @@ import { AgentPage } from '../pages/AgentPage'
 import { AssetsPage } from '../pages/AssetsPage'
 import { CastPage } from '../pages/CastPage'
 import { LibraryDialog } from '../pages/LibraryDialog'
+import { OntologyPage } from '../pages/OntologyPage'
 import { OverviewPage } from '../pages/OverviewPage'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StoryPage } from '../pages/StoryPage'
@@ -20,6 +21,7 @@ const MODULES: { id: ModuleId; label: string; icon: string }[] = [
   { id: 'world', label: '世界', icon: '◈' },
   { id: 'cast', label: '角色', icon: '◆' },
   { id: 'story', label: '故事', icon: '❖' },
+  { id: 'ontology', label: '图谱', icon: '⊞' },
   { id: 'write', label: '写作', icon: '✎' },
   { id: 'assets', label: '素材', icon: '▧' },
   { id: 'settings', label: '设置', icon: '⚙' },
@@ -179,6 +181,7 @@ export function AppShell() {
           {module === 'world' && <WorldPage />}
           {module === 'cast' && <CastPage />}
           {module === 'story' && <StoryPage />}
+          {module === 'ontology' && <OntologyPage />}
           {module === 'write' && <WritingPage />}
           {module === 'assets' && <AssetsPage />}
           {module === 'settings' && <SettingsPage />}
