@@ -366,14 +366,15 @@ async function persistPlan(run: AgentRun, plan: Plan): Promise<void> {
   emit(run, { type: 'plan.updated', plan })
 }
 
-/** 固定 40 步装不下「计划 + 每任务多轮」；按任务数放宽 */
+/** 按任务数放宽步数上限；章节与形象图已无额度 */
 function refreshPlanBudget(run: AgentRun, plan: Plan): void {
   run.budget.maxSteps = Math.max(80, 80 + 2 * plan.tasks.length)
 }
 
 /**
- * 中止终态：stop / 预算耗尽 / 异常时，不能把任务永久钉在 doing。
+ * 中止终态：stop / 异常时，不能把任务永久钉在 doing。
  *   doing → blocked（可恢复），未完成的计划 → aborted。
+ * ★ 步数耗尽不走这里（走 pauseRun，任务保持 doing）。
  */
 async function finalizePlanOnRunEnd(run: AgentRun, known?: Plan): Promise<void> {
   const plan =
@@ -572,7 +573,10 @@ export async function startAgentRun(
     toolExecution: 'sequential',
     beforeToolCall: async () => {
       if (budget.steps >= budget.maxSteps) {
-        return { block: true, reason: `步数预算已用完（${budget.maxSteps} 步），请作者开新一轮` }
+        return {
+          block: true,
+          reason: `步数预算已用完（${budget.maxSteps} 步），请作者点「继续执行」`,
+        }
       }
       budget.steps += 1
       return undefined
@@ -816,6 +820,9 @@ export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
   if (run.status === 'failed') {
     throw new InkloomError('INVALID_INPUT', '这个 run 失败了，请开新会话')
   }
+  if (run.status === 'paused') {
+    throw new InkloomError('INVALID_INPUT', '这个 run 已暂停：点「继续执行」接着跑')
+  }
   emit(run, { type: 'user.message', text })
 
   if (run.status === 'running') {
@@ -835,7 +842,7 @@ export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
   run.stopped = false
   run.finishedAt = null
   activeRunId = run.id
-  // 续聊重置步数预算，但保留章节/生图上限（避免一句话又生成一章）
+  // 续聊重置步数（章节与形象图已无额度）
   run.budget.steps = 0
   void drive(run, text)
   return snapshot(run)

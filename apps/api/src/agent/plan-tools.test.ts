@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initRepo } from '../git/runner.js'
 import type { IndexDb } from '../index-db/client.js'
 import { closeContext, setContext } from '../services/context.js'
@@ -16,6 +16,15 @@ import {
 import { createProject } from '../storage/project.js'
 import { freshIndexDb } from '../test-utils/index-db-fixture.js'
 import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
+
+vi.mock('../services/generate-service.js', () => ({
+  generateChapter: async ({ chapterNo }: { chapterNo: number }) => ({
+    runId: `run_${chapterNo}`,
+    chapterNo,
+    scenes: [],
+    warnings: [],
+  }),
+}))
 
 let root: string
 let indexDir: string
@@ -225,5 +234,19 @@ describe('批准后的执行', () => {
     })
     expect(r.isError).toBe(true)
     expect(textOf(r)).toContain('不能删掉已完成的任务')
+  })
+})
+
+describe('章节与形象图额度', () => {
+  it('★ 一次会话可以连续生成 3 章，不再有硬上限', async () => {
+    await submitPlan()
+    await approvePlan()
+    budget.chapterCalls = 0
+
+    for (let n = 1; n <= 3; n += 1) {
+      const r = await tool('generate_chapter').execute(`c-${n}`, { chapterNo: n })
+      expect(r.isError).toBeFalsy()
+    }
+    expect(budget.chapterCalls).toBe(3)
   })
 })

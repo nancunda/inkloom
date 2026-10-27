@@ -9,7 +9,7 @@ import { getSkill, skillsIndex } from './skills.js'
  * ★ 三条硬约束仍然成立：
  *   1. 先读后写；数组文件写整张表；
  *   2. 计划未经作者批准，不许写设定/正文（工具层会真的拒绝）；
- *   3. 本次 run 最多 1 章正文 + 1 张形象图。
+ *   3. 章节与形象图不设额度，只有步数保护。
  */
 export function buildAgentPrompt(project: Project, goal?: string): string {
   const total = project.totalChapters ?? 5

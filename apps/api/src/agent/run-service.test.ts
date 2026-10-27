@@ -435,6 +435,10 @@ describe('中止终态', () => {
     expect(resumed.status).toBe('running')
     expect(resumed.budget.steps).toBe(0)
     expect(resumed.planId).toBe(planId)
+
+    await new Promise((r) => setTimeout(r, 80))
+    expect(agent.promptCalls).toBeGreaterThanOrEqual(2)
+    expect(agent.prompts.at(-1)).toContain('t1')
     stopAgentRun(started.id)
   })
 })

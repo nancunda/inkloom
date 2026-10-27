@@ -457,7 +457,10 @@ export function AgentPage() {
         ev.type === 'gate.waiting' ||
         ev.type === 'gate.resolved' ||
         ev.type === 'plan.updated' ||
-        ev.type === 'run.finished'
+        ev.type === 'run.finished' ||
+        ev.type === 'run.paused' ||
+        ev.type === 'run.failed' ||
+        ev.type === 'run.stopped'
       ) {
         void api<{ run: AgentRun }>(`/agent/runs/${run.id}`)
           .then(({ run: next }) => setRun(next))
@@ -748,7 +751,7 @@ export function AgentPage() {
                     开始共创
                   </button>
                   <span className="text-[11px] text-neutral-500">
-                    预算：按任务数放宽（≥40 步） · 1 章正文 · 1 张形象图
+                    步数按任务数放宽（≥80 步） · 章节与形象图不设上限
                   </span>
                 </div>
               </div>
