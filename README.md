@@ -69,12 +69,13 @@
 - **连续会话**：本轮完成后可以接着聊（"第 5 场扩一下""下一章蓝图改狠一点"），不重开任务
 - **可恢复**：计划从书里读取（刷新 / 服务重启后仍在）；停止、预算耗尽后「继续执行」从没做完的任务接着做，计划作废了可「重新规划」
 - **全程可见**：思考折叠、工具卡片与结果、产物一键跳到对应模块
-- **预算**：`80 + 2 × 任务数` 步工具调用保护；章节与形象图不设额度，用完显示「已暂停」，点「继续执行」接着跑
+- **预算**：`80 + 2 × 任务数` 步工具调用保护；章节与形象图不设额度，一个会话可连写多章；用完显示「已暂停」，点「继续执行」接着跑
+- **可联网**：Agent 有 `web_search` / `read_url` / `read_lore`；结果落资料卡，默认未批准，作者批准后才进 prompt。
 - **技能**：`world` 世界、`characters` 人物、`story` 故事、`chapter` 正文、`review` 审阅、`free` 自由
 
-Agent 侧工具：`read_book`、`read_element`、`write_element`、`write_blueprint`、
-`write_plan`、`update_plan`、`update_task`、`request_review`、
-`generate_chapter`、`generate_portrait`。
+Agent 侧工具：`read_book`、`read_element`、`web_search`、`read_url`、`read_lore`、
+`write_element`、`write_blueprint`、`write_plan`、`update_plan`、`update_task`、
+`request_review`、`generate_chapter`、`generate_portrait`。
 
 计划定义存 `story/plans/<id>.json`（进 Git，可审阅 / 回滚）；执行状态存
 `.inkloom/agent/plans/<id>.state.json`（不进 Git，随运行更新）。
@@ -118,6 +119,7 @@ pnpm web                # → http://localhost:5173
 | `DEEPSEEK_API_KEY` | 生成正文、共创 Agent |
 | `SILICONFLOW_API_KEY` | 人物形象图（Kolors） |
 | `TAVILY_API_KEY` | 联网搜索（可选） |
+| `SEARXNG_BASE_URLS` | 可选：SearXNG 实例，逗号分隔（无 key 时仍可用 DuckDuckGo 兜底） |
 | `INKLOOM_LIBRARY` | 书库根目录，默认 `~/inkloom` |
 | `INKLOOM_BOOK` | 可选：启动时直接打开某本书（路径） |
 
@@ -214,7 +216,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 332 单元 + 322 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 365 单元 + 332 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
@@ -222,6 +224,12 @@ pnpm verify:p1c  # HTTP 接口 + 启动自愈             18 条
 pnpm verify:p2a  # 局部重写                          7 条
 pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 ```
+
+**切片 1（共创急救包）真机验收**（2026-10-27，书《七霞》）：
+
+- `POST /api/search`（真实 Tavily key）→ `provider=tavily`、`degraded=false`、3 条命中都带 `snippet` 与 `provider`
+- `read_url` 抓 `https://example.com` → `extracted=true`、156 字，落成资料卡；`GET /api/lore` 能看到同一条且 `content` 非空
+- `generate_chapter` 连写 3 章不再被额度拦住（`plan-tools.test.ts` 等价证据）
 
 **已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent**。
 
