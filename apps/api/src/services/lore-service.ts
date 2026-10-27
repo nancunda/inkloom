@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { InkloomError } from '@inkloom/shared'
 import type { IndexDb } from '../index-db/client.js'
 import type { ExtractResult } from '../search/extract.js'
 import type { SearchHit } from '../search/types.js'
@@ -135,7 +136,8 @@ export async function approveLore(db: IndexDb, id: string): Promise<LoreView | n
 
 export async function deleteLore(db: IndexDb, id: string): Promise<void> {
   const row = await db.loreReference.findUnique({ where: { id } })
-  if (row === null) throw new Error('NOT_FOUND')
-  if (row.approved) throw new Error('已批准的资料卡不能删除')
+  // ★ 用领域错误而不是裸 Error + 字符串比对：路由不用 catch，DB 故障自然落 500
+  if (row === null) throw new InkloomError('NOT_FOUND', '资料卡不存在')
+  if (row.approved) throw new InkloomError('INVALID_INPUT', '已批准的资料卡不能删除')
   await db.loreReference.delete({ where: { id } })
 }

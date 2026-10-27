@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import type { IndexDb } from '../index-db/client.js'
 import type { FetchLike } from '../llm/types.js'
+import { resetSearchBreakersForTest } from '../search/service.js'
 import { clearContext, setContext } from '../services/context.js'
 import { writeJsonElement } from '../storage/elements.js'
 import { createProject } from '../storage/project.js'
@@ -442,14 +443,14 @@ describe('局部重写接口', () => {
 })
 
 describe('资料卡接口', () => {
-  async function seedLore(id = 'lr-test0001'): Promise<string> {
+  async function seedLore(id = 'lr-test0001', title = '剑冢考据'): Promise<string> {
     await db.loreReference.create({
       data: {
         id,
         projectId: pid,
         query: '剑冢',
         provider: 'tavily',
-        title: '剑冢考据',
+        title,
         url: 'https://a.example',
         snippet: '摘要',
         content: null,
@@ -465,14 +466,19 @@ describe('资料卡接口', () => {
     const before = await createApp().request('/api/lore?limit=5')
     expect(before.status).toBe(200)
     const b1 = (await before.json()) as { items: { id: string }[] }
-    expect(b1.items.map((x) => x.id)).toContain(id)
+    expect(b1.items.map((x) => x.id)).toEqual([id])
 
     const okRes = await createApp().request(`/api/lore/${id}/approve`, { method: 'POST' })
     expect(okRes.status).toBe(200)
 
     const after = await createApp().request('/api/lore?approved=1&limit=5')
     const b2 = (await after.json()) as { items: { id: string }[] }
-    expect(b2.items.map((x) => x.id)).toContain(id)
+    expect(b2.items.map((x) => x.id)).toEqual([id])
+
+    // ★ 反面也要验：approved=0 不应再包含已批准的卡
+    const drafts = await createApp().request('/api/lore?approved=0&limit=5')
+    const b3 = (await drafts.json()) as { items: { id: string }[] }
+    expect(b3.items.map((x) => x.id)).not.toContain(id)
   })
 
   it('★ 批准不存在的卡片返回 404', async () => {
@@ -496,15 +502,21 @@ describe('资料卡接口', () => {
     expect(missing.status).toBe(404)
   })
 
-  it('★ q 过滤标题', async () => {
-    await seedLore()
+  it('★ q 过滤标题（两张卡里只回匹配的那张）', async () => {
+    await seedLore('lr-hit00001', '剑冢考据')
+    await seedLore('lr-miss0001', '灵气复苏考据')
     const res = await createApp().request('/api/lore?q=剑冢')
-    const body = (await res.json()) as { items: { title: string }[] }
-    expect(body.items).toHaveLength(1)
+    const body = (await res.json()) as { items: { id: string; title: string }[] }
+    expect(body.items.map((x) => x.id)).toEqual(['lr-hit00001'])
   })
 })
 
 describe('搜索接口', () => {
+  // ★ 熔断表是进程级的：不 reset 会让前面的失败影响后面的用例
+  beforeEach(() => {
+    resetSearchBreakersForTest()
+  })
+
   const DDG_HTML = `<table>
     <tr><td><a class="result-link" href="https://a.example">剑冢</a></td></tr>
     <tr><td class="result-snippet">古剑埋骨之地</td></tr>
@@ -533,16 +545,59 @@ describe('搜索接口', () => {
         query: string
         provider: string | null
         degraded: boolean
+        warnings: string[]
         hits: { title: string; url: string; snippet: string }[]
       }
       expect(j.query).toBe('剑冢')
       expect(j.provider).toBe('duckduckgo')
       expect(j.degraded).toBe(true)
+      expect(Array.isArray(j.warnings)).toBe(true)
       expect(j.hits[0]?.url).toBe('https://a.example')
       expect(j.hits[0]?.snippet).toBe('古剑埋骨之地')
     } finally {
       if (tavily !== undefined) process.env['TAVILY_API_KEY'] = tavily
       if (searx !== undefined) process.env['SEARXNG_BASE_URLS'] = searx
+    }
+  })
+
+  it('★ 有 Tavily key 时优先走 Tavily，degraded=false，拉数非数字时回退默认 5', async () => {
+    const tavily = process.env['TAVILY_API_KEY']
+    process.env['TAVILY_API_KEY'] = 'tvly-test'
+    try {
+      let seenBody: Record<string, unknown> = {}
+      const searchFetch: FetchLike = async (url, init) => {
+        if (String(url).includes('api.tavily.com')) {
+          seenBody = JSON.parse(String(init.body)) as Record<string, unknown>
+          return new Response(
+            JSON.stringify({
+              results: [{ title: 'T', url: 'https://t.example', content: 'S' }],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response('nope', { status: 500 })
+      }
+      const app = createApp({ searchFetch })
+      const r = await app.request('/api/search', {
+        method: 'POST',
+        body: JSON.stringify({ query: 'q', maxResults: 'abc' }),
+      })
+      expect(r.status).toBe(200)
+      const j = (await r.json()) as {
+        provider: string | null
+        degraded: boolean
+        warnings: string[]
+        hits: { title: string }[]
+      }
+      expect(j.provider).toBe('tavily')
+      expect(j.degraded).toBe(false)
+      expect(j.warnings).toEqual([])
+      expect(j.hits[0]?.title).toBe('T')
+      // ★ 非数字要回退成 5，不能是 NaN（NaN 会绕过 provider 的截断）
+      expect(seenBody['max_results']).toBe(5)
+    } finally {
+      if (tavily === undefined) delete process.env['TAVILY_API_KEY']
+      else process.env['TAVILY_API_KEY'] = tavily
     }
   })
 

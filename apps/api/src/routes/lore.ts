@@ -1,4 +1,5 @@
 import { InkloomError } from '@inkloom/shared'
+import { Prisma } from '@prisma/client'
 import { Hono } from 'hono'
 import { getContext } from '../services/context.js'
 import { approveLore, deleteLore, listLore } from '../services/lore-service.js'
@@ -28,20 +29,17 @@ loreRoutes.get('/lore', async (c) => {
 
 loreRoutes.post('/lore/:id/approve', async (c) => {
   const { db } = getContext()
-  const row = await approveLore(db, c.req.param('id')).catch(() => null)
+  // ★ 只把「不存在」当 404；数据库故障必须 500，不能伪装成「卡片没了」
+  const row = await approveLore(db, c.req.param('id')).catch((e: unknown) => {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') return null
+    throw e
+  })
   if (row === null) throw new InkloomError('NOT_FOUND', '资料卡不存在')
   return c.json(row)
 })
 
 loreRoutes.delete('/lore/:id', async (c) => {
   const { db } = getContext()
-  try {
-    await deleteLore(db, c.req.param('id'))
-    return c.json({ ok: true })
-  } catch (e) {
-    const msg = (e as Error).message
-    // ★ 404 与 400 必须分开：卡片不存在是 404，已批准不可删是 400（能修的是作者操作）
-    if (msg === 'NOT_FOUND') throw new InkloomError('NOT_FOUND', '资料卡不存在')
-    throw new InkloomError('INVALID_INPUT', msg)
-  }
+  await deleteLore(db, c.req.param('id'))
+  return c.json({ ok: true })
 })

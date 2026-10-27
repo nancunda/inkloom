@@ -93,15 +93,12 @@ export function createSearchService(opts: SearchServiceOptions = {}): SearchServ
       const warnings: string[] = []
       for (const provider of providers) {
         if (isOpen(provider.key)) {
-          warnings.push(`${provider.key}：熔断中，跳过`)
+          // ★ warnings 会原样回给浏览器：只说类型，不拼熔断键（键里含 SearXNG 的内网地址）
+          warnings.push(`${provider.id}：熔断中，跳过`)
           continue
         }
         try {
-          const hits = await withTimeout(
-            provider.search(query, maxResults),
-            timeoutMs,
-            provider.key,
-          )
+          const hits = await withTimeout(provider.search(query, maxResults), timeoutMs, provider.id)
           breakers.delete(provider.key)
           return {
             hits,
@@ -113,7 +110,7 @@ export function createSearchService(opts: SearchServiceOptions = {}): SearchServ
         } catch (e) {
           fail(provider.key)
           const msg = e instanceof Error ? e.message : String(e)
-          warnings.push(`${provider.key}：${msg.slice(0, 120)}`)
+          warnings.push(`${provider.id}：${msg.slice(0, 120)}`)
         }
       }
       return { hits: [], provider: null, degraded: true, warnings }

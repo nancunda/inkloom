@@ -144,7 +144,8 @@ export function createActions(deps: ActionDeps = {}): Hono {
     if (query.length === 0) throw new InkloomError('INVALID_INPUT', '缺少 query')
 
     // ★ 不再要求 Tavily key：降级链末端是免 key 的 DuckDuckGo，没 key 也能用
-    const max = Math.min(Math.max(Math.trunc(body.maxResults ?? 5), 1), 8)
+    const asked = Number(body.maxResults ?? 5)
+    const max = Number.isFinite(asked) ? Math.min(Math.max(Math.trunc(asked), 1), 8) : 5
     const service = createSearchService(
       deps.searchFetch === undefined ? {} : { fetchImpl: deps.searchFetch },
     )
