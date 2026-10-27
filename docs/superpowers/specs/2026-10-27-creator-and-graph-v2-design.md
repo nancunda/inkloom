@@ -63,7 +63,7 @@
 | Cytoscape.js | 3.34.4 / MIT / 137KB gzip / 2026-10-15 | 唯一同时内置 compound 分组、5 类布局、pagerank + 三类中心性 + 连通分量、dijkstra/aStar 且 `.path()` 直接回传元素；官方支持 Node headless | G6 5.1：npm 5.5 个月未发版、算法包 2023 停更、400KB gzip；Sigma：无 compound/无布局/无算法；React Flow：无布局无算法、DOM 节点千级上限 |
 | react-resizable-panels | 4.15.0 / MIT / 2026-10-24 | 支持 `autoSaveId` 持久化、键盘拖拽、min/max | allotment 更重、偏 VS Code 风格 |
 | @mozilla/readability + linkedom | 0.6.0 / 0.18.14 | Firefox 阅读模式同源正文识别；linkedom 只在 Node 侧（75KB），不进前端包 | cheerio 无 DOM 不能驱动 Readability |
-| 搜索降级链 | Tavily / SearXNG / DDG lite / Firecrawl keyless | 有 key 用质量最好的，零 key 也有兜底 | 自托管 SearXNG 需要 Python + Redis，与 Windows 便携版冲突；Brave 需绑卡，本轮不做 |
+| 搜索降级链 | Tavily / SearXNG / DDG lite | 有 key 用质量最好的，零 key 也有兜底 | 自托管 SearXNG 需要 Python + Redis，与 Windows 便携版冲突；Brave 需绑卡、Firecrawl keyless 端点未核实，本轮都不做 |
 | 不引 RDF/OWL | Oxigraph 0.5.13 纯 WASM 4.3MB | 只做内存态、每次变更要重导出；本项目查询是 1–2 跳邻居与路径 | 标准化导出的收益不足以抵消成本 |
 | 不引图数据库 | Kuzu 已归档；LadybugDB 有 win32 预编译 | LadybugDB 运行时仍依赖 cmake-js 回退构建，便携包 +15MB，万级内存查询已毫秒级 | 列 P3 观察，不进本轮 |
 | 不引 Mastra | @mastra/core 1.79.0 | 生态成熟但会重写 run/审批/流式/检查点；2026 年其生态发生过 npm 投毒事件 | 保留 Pi Agent，角色子智能体在工具层实现 |
@@ -132,7 +132,7 @@ export interface SearchHit {
 }
 
 export interface SearchProvider {
-  readonly id: 'tavily' | 'searxng' | 'duckduckgo' | 'firecrawl'
+  readonly id: 'tavily' | 'searxng' | 'duckduckgo'
   search(query: string, maxResults: number): Promise<SearchHit[]>
 }
 
@@ -149,12 +149,11 @@ export interface SearchResult {
 1. 有 `TAVILY_API_KEY` → Tavily
 2. 有 `SEARXNG_BASE_URLS`（逗号分隔）→ 依次尝试
 3. 无 key → DuckDuckGo lite
-4. 最后 → Firecrawl keyless
 
 规则：
 
 - 每个 provider 8s 超时；连续 2 次失败熔断 10 分钟（进程内 Map）。
-- 成功的 provider 记在 `SearchResult.provider`；走到第 4 步之后 `degraded=true`。
+- 成功的 provider 记在 `SearchResult.provider`；走到 DDG 时 `degraded=true`。
 - 全部失败返回 `hits=[]`、`warnings` 包含每个 provider 的失败原因（截断到 120 字）。
 - 结果不去重（不同 provider 的排序有价值），由调用方决定。
 
@@ -163,7 +162,6 @@ export interface SearchResult {
 ```
 TAVILY_API_KEY
 SEARXNG_BASE_URLS      https://searx.example.com,https://searx2.example.com
-FIRECRAWL_API_KEY      可选；无 key 时走 keyless
 ```
 
 ### 4.3 工具 `web_search` / `read_url`
@@ -224,7 +222,7 @@ parameters: { id: string }
   id: 'lr-' + 8 hex,
   projectId,
   query,          // 搜索词；read_url 时填 URL
-  provider,       // tavily | searxng | duckduckgo | firecrawl | url
+  provider,       // tavily | searxng | duckduckgo | url
   title, url, snippet, content,
   fetchedAt,
   usedInRunIds,   // JSON 数组，工具返回时追加当前 runId
@@ -236,13 +234,13 @@ parameters: { id: string }
 - 新增 HTTP：
   - `GET /api/lore?q=&approved=&limit=` — 列表
   - `POST /api/lore/:id/approve` — 作者批准
-  - `POST /api/lore/:id/reject` — 删除（未批准才可删）
+  - `DELETE /api/lore/:id` — 删除（未批准才可删）
 - `read_lore` 的读取规则见 §4.3（本 run 直读，跨 run 需批准）。
 
 ### 4.5 设置页
 
-新增分组「联网搜索」：`TAVILY_API_KEY`、`SEARXNG_BASE_URLS`、`FIRECRAWL_API_KEY`；显示只读状态「当前可用 provider：tavily / duckduckgo」。
-新增开关「任务后一致性检查」→ `INKLOOM_CRITIC`（`on` 默认 / `off`）。
+新增分组「联网搜索」：`TAVILY_API_KEY`、`SEARXNG_BASE_URLS`；显示只读状态「当前可用 provider：tavily / duckduckgo」。
+「任务后一致性检查」开关（`INKLOOM_CRITIC`）随切片 3 一起加，见 §6.3。
 
 ## 5. 切片 2：图谱 2.0
 
