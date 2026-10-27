@@ -498,10 +498,18 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         const page = await fetchReadable(params.url, {
           ...(params.maxChars === undefined ? {} : { maxChars: params.maxChars }),
         })
-        const { id } = await savePage(ctx.db, ctx.project.id, deps.getRunId(), page)
+        // ★ 落卡失败不该丢掉已经抓到的正文（与 web_search 同一取舍）
+        let savedId = ''
+        let saveWarning = ''
+        try {
+          const saved = await savePage(ctx.db, ctx.project.id, deps.getRunId(), page)
+          savedId = saved.id
+        } catch (e) {
+          saveWarning = `\n（落卡失败，本次没有资料卡：${(e as Error).message}）`
+        }
         return ok(
-          `已读取「${page.title || page.url}」（${page.text.length} 字，extracted=${page.extracted}，资料卡 ${id}）\n\n${page.text.slice(0, 2000)}`,
-          { id, url: page.url, extracted: page.extracted },
+          `已读取「${page.title || page.url}」（${page.text.length} 字，extracted=${page.extracted}${savedId === '' ? '' : `，资料卡 ${savedId}`}）\n\n${page.text.slice(0, 2000)}${saveWarning}`,
+          { id: savedId === '' ? null : savedId, url: page.url, extracted: page.extracted },
         )
       } catch (e) {
         return fail(`读取失败：${(e as Error).message}`)

@@ -120,6 +120,20 @@ describe('web tools', () => {
     expect(h.savePage).toHaveBeenCalledWith(expect.anything(), 'p1', 'ar_1', expect.anything())
   })
 
+  it('★ read_url 落卡失败时仍返回正文', async () => {
+    h.fetchReadable.mockResolvedValue({
+      title: '页面',
+      url: 'https://b.example',
+      text: '正文正文',
+      extracted: true,
+    })
+    h.savePage.mockRejectedValue(new Error('db locked'))
+    const res = await tool('read_url').execute('2a', { url: 'https://b.example' })
+    expect(res.isError).toBeFalsy()
+    expect(textOf(res)).toContain('正文正文')
+    expect(textOf(res)).toContain('落卡失败')
+  })
+
   it('★ read_url 缺协议时给中文提示，不发请求', async () => {
     const res = await tool('read_url').execute('2b', { url: 'example.com/a?x=1' })
     expect(res.isError).toBe(true)

@@ -11,6 +11,7 @@ export interface LoreView {
   snippet: string
   content: string | null
   provider: string
+  approved: boolean
 }
 
 function newId(): string {
@@ -95,6 +96,7 @@ export async function getLoreForRun(
     snippet: row.snippet ?? '',
     content: row.content,
     provider: row.provider,
+    approved: row.approved,
   }
 }
 
@@ -119,6 +121,7 @@ export async function listLore(
     snippet: row.snippet ?? '',
     content: row.content,
     provider: row.provider,
+    approved: row.approved,
   }))
 }
 
@@ -131,6 +134,7 @@ export async function approveLore(db: IndexDb, id: string): Promise<LoreView | n
     snippet: row.snippet ?? '',
     content: row.content,
     provider: row.provider,
+    approved: row.approved,
   }
 }
 

@@ -182,7 +182,7 @@ export interface SearchResult {
   provider: string | null
   query: string
   hits: SearchHit[]
-  /** true = 没用 Tavily（没 key 或被熔断，走了兜底源） */
+  /** true = 没用 Tavily（没 key / 被熔断 / 走了 SearXNG） */
   degraded: boolean
   warnings: string[]
 }
@@ -599,4 +599,6 @@ export interface LoreItem {
   snippet: string
   content: string | null
   provider: string
+  /** 作者批准后才会被跨会话 read_lore 读到 */
+  approved: boolean
 }

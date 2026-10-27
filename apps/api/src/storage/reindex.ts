@@ -74,6 +74,9 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
   for (const row of await db.chapter.findMany({ select: { chapterNo: true, finalizedAt: true } })) {
     if (row.finalizedAt !== null) prevFinalizedAt.set(row.chapterNo, row.finalizedAt)
   }
+  // ★ 资料卡也是“文件里没有副本”的数据：批准状态与 usedInRunIds 只在库里，
+  //   清表前必须留存，否则一次回滚/导入就把作者批准过的考据全清了。
+  const prevLore = await db.loreReference.findMany()
 
   // 1. 清空（顺序：先子后父，避免外键冲突）
   await db.draftSegment.deleteMany()
@@ -134,6 +137,13 @@ export async function reindex(root: string, db: IndexDb): Promise<ReindexReport>
     },
   })
   report.projects = 1
+
+  // 2.5 回灌资料卡（projectId 与 novel.json 一致的才留）
+  const keepLore = prevLore.filter((row) => row.projectId === projectId)
+  if (keepLore.length > 0) {
+    await db.loreReference.createMany({ data: keepLore })
+    warnings.push(`保留了 ${keepLore.length} 张资料卡（含批准状态）`)
+  }
 
   // 3. 角色
   for (const raw of await readJsonArray(root, 'characters/index.json')) {

@@ -70,7 +70,7 @@
 - **可恢复**：计划从书里读取（刷新 / 服务重启后仍在）；停止、预算耗尽后「继续执行」从没做完的任务接着做，计划作废了可「重新规划」
 - **全程可见**：思考折叠、工具卡片与结果、产物一键跳到对应模块
 - **预算**：`80 + 2 × 任务数` 步工具调用保护；章节与形象图不设额度，一个会话可连写多章；用完显示「已暂停」，点「继续执行」接着跑
-- **可联网**：Agent 有 `web_search` / `read_url` / `read_lore`；结果落资料卡，默认未批准，作者批准后才进 prompt。
+- **可联网**：Agent 有 `web_search` / `read_url` / `read_lore`；结果落资料卡，默认未批准，作者批准后才进 prompt。写作页右栏的「资料卡」列表可以直接批准/删除。
 - **技能**：`world` 世界、`characters` 人物、`story` 故事、`chapter` 正文、`review` 审阅、`free` 自由
 
 Agent 侧工具：`read_book`、`read_element`、`web_search`、`read_url`、`read_lore`、
@@ -216,7 +216,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 365 单元 + 332 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 380 单元 + 333 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
@@ -229,6 +229,7 @@ pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 
 - `POST /api/search`（真实 Tavily key）→ `provider=tavily`、`degraded=false`、3 条命中都带 `snippet` 与 `provider`
 - `read_url` 抓 `https://example.com` → `extracted=true`、156 字，落成资料卡；`GET /api/lore` 能看到同一条且 `content` 非空
+- 重定向、IP 变体、5MB 上限、步数耗尽空转、reindex 保留资料卡均有单测/集成覆盖
 - `generate_chapter` 连写 3 章不再被额度拦住（`plan-tools.test.ts` 等价证据）
 
 **已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent**。

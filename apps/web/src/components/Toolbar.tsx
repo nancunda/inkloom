@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import {
   useApplyProposals,
+  useApproveLore,
   useCheck,
+  useDeleteLore,
   useFinalize,
   useGenerate,
   useJobs,
+  useLore,
   usePropose,
   useSearch,
   useUnfinalize,
@@ -32,6 +35,9 @@ export function Toolbar({ chapter, plain = false }: Props) {
   const apply = useApplyProposals()
   const check = useCheck()
   const search = useSearch()
+  const lore = useLore()
+  const approveLore = useApproveLore()
+  const deleteLore = useDeleteLore()
   const { data: jobsData } = useJobs()
   const jobs = (jobsData?.jobs ?? []).slice(0, 4)
 
@@ -296,7 +302,7 @@ export function Toolbar({ chapter, plain = false }: Props) {
             <div className="mt-2 space-y-1 text-xs">
               <p className="text-[10px] text-neutral-400">
                 {found.provider ?? '无可用搜索源'}
-                {found.degraded ? ' · 已降级（未配置 key）' : ''}
+                {found.degraded ? ' · 已降级（未用 Tavily）' : ''}
               </p>
               {found.hits.map((h) => (
                 <a
@@ -316,6 +322,57 @@ export function Toolbar({ chapter, plain = false }: Props) {
                 </p>
               )}
             </div>
+          )}
+        </section>
+
+        <section>
+          <p className="mb-1 text-xs font-medium tracking-wide text-neutral-500">
+            资料卡（Agent 搜到的）
+          </p>
+          {(lore.data?.items ?? []).length === 0 ? (
+            <p className="text-xs text-neutral-400">
+              还没有资料卡。搜索后自动落卡，批准后才进提示词。
+            </p>
+          ) : (
+            <ul className="space-y-1 text-xs">
+              {(lore.data?.items ?? []).slice(0, 6).map((item) => (
+                <li key={item.id} className="rounded border border-neutral-200 p-1.5">
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={item.content ?? item.snippet}
+                    className="block truncate text-blue-700 hover:underline"
+                  >
+                    {item.title || item.url}
+                  </a>
+                  <div className="mt-1 flex items-center gap-2 text-[10px] text-neutral-400">
+                    <span>{item.provider}</span>
+                    {item.approved ? (
+                      <span className="text-emerald-600">已批准</span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={approveLore.isPending}
+                        onClick={() => void run(() => approveLore.mutateAsync(item.id))}
+                        className="rounded border border-neutral-300 px-1.5 text-neutral-600 disabled:text-neutral-300"
+                      >
+                        批准
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={deleteLore.isPending || item.approved}
+                      title={item.approved ? '已批准的资料卡不能删（L3）' : '删除这张资料卡'}
+                      onClick={() => void run(() => deleteLore.mutateAsync(item.id))}
+                      className="rounded border border-neutral-300 px-1.5 text-neutral-600 disabled:text-neutral-300"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
 

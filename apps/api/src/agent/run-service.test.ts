@@ -442,6 +442,57 @@ describe('中止终态', () => {
     expect(agent.prompts.at(-1)).toContain('任务 t1')
     stopAgentRun(started.id)
   })
+
+  it('★ 步数耗尽 + 任务全部完成 → 也是 paused，不再空转请验收', async () => {
+    await seedPlan('approved', [{ id: 't1', status: 'done', reviewed: true }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    const before = agent.promptCalls
+    const run = getAgentRun(started.id)
+    if (run !== null) run.budget.steps = run.budget.maxSteps
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await new Promise((r) => setTimeout(r, 80))
+
+    const after = getAgentRun(started.id)
+    expect(after?.status).toBe('paused')
+    // ★ 不能再 drive 一次：beforeToolCall 会拦住 request_review，会无限烧 token
+    expect(agent.promptCalls).toBe(before)
+  })
+
+  it('★ 暂停时发消息被拒（只能点「继续执行」）', async () => {
+    await seedPlan('approved', [{ id: 't1', status: 'done', reviewed: true }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    const run = getAgentRun(started.id)
+    if (run !== null) run.budget.steps = run.budget.maxSteps
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await new Promise((r) => setTimeout(r, 80))
+    expect(getAgentRun(started.id)?.status).toBe('paused')
+
+    expect(() => sendAgentMessage(started.id, '再改一下')).toThrow(/已暂停/)
+  })
+
+  it('★ 模型连续两轮不调工具 → paused，不再无限推它验收', async () => {
+    await seedPlan('approved', [{ id: 't1', status: 'done', reviewed: true }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    expect(agent.promptCalls).toBe(1)
+
+    // 第一轮：没调任何工具，推它一把
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await new Promise((r) => setTimeout(r, 80))
+    expect(agent.promptCalls).toBe(2)
+
+    // 第二轮还是不动 → 停给作者
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await new Promise((r) => setTimeout(r, 80))
+    expect(getAgentRun(started.id)?.status).toBe('paused')
+    expect(agent.promptCalls).toBe(2)
+  })
 })
 
 describe('review 基本校验', () => {

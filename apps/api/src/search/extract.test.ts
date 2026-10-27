@@ -29,6 +29,18 @@ describe('assertPublicUrl', () => {
   it('放行公网 http/https', () => {
     expect(assertPublicUrl('https://example.com/a?b=1').hostname).toBe('example.com')
   })
+
+  it('★ 拒绝 IP 变体与 IPv6 内网（不止字面 127.0.0.1）', () => {
+    for (const bad of [
+      'http://2130706433/',
+      'http://0x7f000001/',
+      'http://[::ffff:127.0.0.1]/',
+      'http://[fc00::1]/',
+      'http://[fe80::1]/',
+    ]) {
+      expect(() => assertPublicUrl(bad)).toThrow()
+    }
+  })
 })
 
 describe('decodeHtml', () => {
@@ -84,5 +96,36 @@ describe('fetchReadable', () => {
     }
     await expect(fetchReadable('http://127.0.0.1/x', { fetchImpl })).rejects.toThrow('本机')
     expect(called).toBe(false)
+  })
+
+  it('★ 重定向到内网被拒：每一跳都重新校验', async () => {
+    const seen: string[] = []
+    const fetchImpl: FetchLike = async (url) => {
+      seen.push(String(url))
+      return new Response('', {
+        status: 302,
+        headers: { location: 'http://127.0.0.1:8787/api/book' },
+      })
+    }
+    await expect(fetchReadable('https://example.com/x', { fetchImpl })).rejects.toThrow('本机')
+    expect(seen).toEqual(['https://example.com/x'])
+  })
+
+  it('重定向到公网会跟着走一跳', async () => {
+    const fetchImpl: FetchLike = async (url) =>
+      String(url).endsWith('/final')
+        ? html('<html><body><p>落地页</p></body></html>')
+        : new Response('', { status: 301, headers: { location: 'https://example.com/final' } })
+    const r = await fetchReadable('https://example.com/start', { fetchImpl })
+    expect(r.text).toContain('落地页')
+  })
+
+  it('★ 声明体积超 5MB 不读正文就拒', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(null, {
+        status: 200,
+        headers: { 'content-type': 'text/html', 'content-length': String(6 * 1024 * 1024) },
+      })
+    await expect(fetchReadable('https://example.com/big', { fetchImpl })).rejects.toThrow('太大')
   })
 })

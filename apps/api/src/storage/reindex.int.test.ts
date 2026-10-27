@@ -232,6 +232,32 @@ describe('reindex', () => {
     expect(await db.character.count()).toBe(1)
   })
 
+  it('★ 已批准的资料卡不会被 reindex 清掉（文件里没有副本）', async () => {
+    const { project } = await createProject({ rootPath: root, name: '七霞', genre: '玄幻' })
+    await seed(project.id)
+    await reindex(root, db)
+    await db.loreReference.create({
+      data: {
+        id: 'lr-keepme01',
+        projectId: project.id,
+        query: '剑冢',
+        provider: 'tavily',
+        title: '剑冢考据',
+        url: 'https://a.example',
+        snippet: '摘要',
+        content: null,
+        usedInRunIds: JSON.stringify(['ar_1']),
+        approved: true,
+      },
+    })
+
+    await reindex(root, db)
+
+    const row = await db.loreReference.findUnique({ where: { id: 'lr-keepme01' } })
+    expect(row?.approved).toBe(true)
+    expect(row?.usedInRunIds).toContain('ar_1')
+  })
+
   it('损坏的 JSON 文件记 warning 并跳过，不中断整个重建', async () => {
     const { project } = await createProject({ rootPath: root, name: '七霞', genre: '玄幻' })
     await seed(project.id)

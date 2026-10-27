@@ -79,6 +79,10 @@ interface AgentRun {
   gateBox: { current: AgentGate | null }
   journal: string
   journalTail: Promise<void>
+  /** 上一轮结束时的步数：没涨 = 模型只说话没动手 */
+  lastSteps: number
+  /** 连续“只说话不动手”的轮数；推两推还不动就停给作者 */
+  stallTurns: number
 }
 
 const runs = new Map<string, AgentRun>()
@@ -272,6 +276,14 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
   }
   if (run.stopped) return
 
+  // ★ 跑圈保护：步数没涨说明模型这一轮没调工具，推它也没用
+  if (run.budget.steps > run.lastSteps) {
+    run.lastSteps = run.budget.steps
+    run.stallTurns = 0
+  } else {
+    run.stallTurns += 1
+  }
+
   // 1. 本轮显式设了门禁（agent_end 已写入 run.gate）→ 等作者
   if (run.gate !== null) {
     run.status = 'waiting_review'
@@ -291,17 +303,28 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
 
     if (plan.status === 'approved') {
       const next = nextOpenTask(plan)
-      // ★ 只有「还有任务」才暂停；任务全做完时步数用完也要去请作者验收
-      if (run.budget.steps >= run.budget.maxSteps && next !== null) {
+      // ★ 预算用尽一律暂停（包括“任务全做完、还没请验收”）：
+      //   否则 beforeToolCall 会拦住 request_review，drive 会一圈圈空转烧 token
+      if (run.budget.steps >= run.budget.maxSteps) {
         pauseRun(
           run,
-          `步数预算已用完（${run.budget.maxSteps} 步），还有任务没做完。点「继续执行」接着跑。`,
+          next !== null
+            ? `步数预算已用完（${run.budget.maxSteps} 步），还有任务没做完。点「继续执行」接着跑。`
+            : `步数预算已用完（${run.budget.maxSteps} 步），还没能请作者验收。点「继续执行」继续。`,
         )
         return
       }
       if (next !== null) {
         const { project } = getContext()
         void drive(run, buildTaskPrompt(project, plan, next))
+        return
+      }
+      // ★ 全部任务完成但模型连续两轮不调工具：再推也是空转，停给作者
+      if (run.stallTurns >= 2) {
+        pauseRun(
+          run,
+          '模型连续两轮没有调用工具，没法推进计划。点「继续执行」，或直接告诉它下一步做什么。',
+        )
         return
       }
       // 全部任务完成，但还没请作者验收：推它一把
@@ -607,6 +630,8 @@ export async function startAgentRun(
     gateBox,
     journal,
     journalTail: Promise.resolve(),
+    lastSteps: 0,
+    stallTurns: 0,
   }
 
   agent.subscribe((e) => handlePiEvent(run, e))
@@ -671,6 +696,8 @@ export function resumeAgentRun(id: string): AgentRunSnapshot {
   run.finishedAt = null
   run.error = null
   run.budget.steps = 0
+  run.lastSteps = 0
+  run.stallTurns = 0
   activeRunId = run.id
   emit(run, { type: 'user.message', text: '继续执行计划里还没完成的任务' })
 
@@ -845,8 +872,10 @@ export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
   run.stopped = false
   run.finishedAt = null
   activeRunId = run.id
-  // 续聊重置步数（章节与形象图已无额度）
+  // 续聊重置步数（章节与形象图已无额度）与跑圈计数
   run.budget.steps = 0
+  run.lastSteps = 0
+  run.stallTurns = 0
   void drive(run, text)
   return snapshot(run)
 }
