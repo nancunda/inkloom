@@ -18,6 +18,7 @@ const GROUPS: { title: string; hint: string; keys: string[] }[] = [
       'SILICONFLOW_IMAGE_MODEL',
       'TYPESAFE_API_KEY',
       'TAVILY_API_KEY',
+      'SEARXNG_BASE_URLS',
     ],
   },
   {
@@ -37,6 +38,7 @@ const LABEL: Record<string, string> = {
   SILICONFLOW_IMAGE_MODEL: '生图模型',
   TYPESAFE_API_KEY: 'TypeSafe JEV Key',
   TAVILY_API_KEY: 'Tavily Key（联网搜索）',
+  SEARXNG_BASE_URLS: 'SearXNG 实例（逗号分隔，可选）',
   INKLOOM_WORDS_PER_CHAPTER: '每章目标字数',
 }
 

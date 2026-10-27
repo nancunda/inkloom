@@ -32,6 +32,9 @@ type Block =
 const TOOL_LABEL: Record<string, string> = {
   read_book: '读取全书',
   read_element: '读取要素',
+  web_search: '联网搜索',
+  read_url: '读网页',
+  read_lore: '读资料卡',
   write_element: '写入要素',
   write_blueprint: '写入蓝图',
   write_plan: '写计划',

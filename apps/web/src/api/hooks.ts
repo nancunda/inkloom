@@ -15,6 +15,7 @@ import type {
   LibraryCurrent,
   LibraryData,
   LocationRow,
+  LoreItem,
   OntologyClassesData,
   OntologyDetailData,
   OntologyGraphData,
@@ -581,5 +582,35 @@ export function useOntologyClasses() {
   return useQuery({
     queryKey: ['ontology', 'classes'],
     queryFn: () => api<OntologyClassesData>('/ontology/classes'),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 资料卡
+// ---------------------------------------------------------------------------
+
+export function useLore(approved?: boolean) {
+  return useQuery({
+    queryKey: ['lore', approved ?? 'all'],
+    queryFn: () =>
+      api<{ items: LoreItem[] }>(
+        `/lore${approved === undefined ? '' : `?approved=${approved ? '1' : '0'}`}`,
+      ),
+  })
+}
+
+export function useApproveLore() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => post<LoreItem>(`/lore/${id}/approve`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lore'] }),
+  })
+}
+
+export function useDeleteLore() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<{ ok: true }>(`/lore/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lore'] }),
   })
 }

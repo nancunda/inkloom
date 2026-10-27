@@ -294,19 +294,27 @@ export function Toolbar({ chapter, plain = false }: Props) {
           </button>
           {found !== null && (
             <div className="mt-2 space-y-1 text-xs">
+              <p className="text-[10px] text-neutral-400">
+                {found.provider ?? '无可用搜索源'}
+                {found.degraded ? ' · 已降级（未配置 key）' : ''}
+              </p>
               {found.hits.map((h) => (
                 <a
                   key={h.url}
                   href={h.url}
                   target="_blank"
                   rel="noreferrer"
-                  title={h.content}
+                  title={h.snippet}
                   className="block truncate text-blue-700 hover:underline"
                 >
                   {h.title}
                 </a>
               ))}
-              {found.hits.length === 0 && <p className="text-neutral-400">没有结果</p>}
+              {found.hits.length === 0 && (
+                <p className="text-neutral-400">
+                  没有结果{found.warnings.length > 0 ? `：${found.warnings[0]}` : ''}
+                </p>
+              )}
             </div>
           )}
         </section>

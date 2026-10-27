@@ -173,13 +173,18 @@ export interface ThreadsData {
 export interface SearchHit {
   title: string
   url: string
-  content: string
+  snippet: string
+  provider: string
 }
 
 export interface SearchResult {
-  provider: string
+  /** 全部 provider 都失败时为 null */
+  provider: string | null
   query: string
   hits: SearchHit[]
+  /** true = 没用 Tavily（没 key 或被熔断，走了兜底源） */
+  degraded: boolean
+  warnings: string[]
 }
 
 export interface CharacterRow {
@@ -584,4 +589,14 @@ export type OntologyDetailData = OntologyNodeDetail | OntologyClassDetail
 export interface OntologyClassesData {
   classes: OntologyClassRow[]
   predicates: OntologyPredicateRow[]
+}
+
+/** 资料卡：Agent 搜到/抓到的外部材料（默认未批准） */
+export interface LoreItem {
+  id: string
+  title: string
+  url: string
+  snippet: string
+  content: string | null
+  provider: string
 }
