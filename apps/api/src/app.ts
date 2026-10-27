@@ -11,6 +11,7 @@ import { checkpoints } from './routes/checkpoints.js'
 import { elements } from './routes/elements.js'
 import { toApiError } from './routes/errors.js'
 import { libraryRoutes } from './routes/library.js'
+import { ontologyRoutes } from './routes/ontology.js'
 import { read } from './routes/read.js'
 import { settings } from './routes/settings.js'
 
@@ -32,6 +33,7 @@ export function createApp(deps: ActionDeps = {}): Hono {
   app.route('/api', read)
   app.route('/api', libraryRoutes)
   app.route('/api', elements)
+  app.route('/api', ontologyRoutes)
   app.route('/api', checkpoints)
   app.route('/api', agentRoutes)
   app.route('/api', settings)
