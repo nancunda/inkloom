@@ -1117,7 +1117,7 @@ git commit -m "feat(search): readable extraction with ssrf guard and charset det
   ```ts
   export async function saveSearchHits(
     db: IndexDb, projectId: string, runId: string, query: string, hits: SearchHit[],
-  ): Promise<{ id: string; title: string; url: string }[]>
+  ): Promise<{ id: string; title: string; url: string; snippet: string }[]>
   export async function savePage(
     db: IndexDb, projectId: string, runId: string, page: ExtractResult,
   ): Promise<{ id: string }>
@@ -1235,8 +1235,8 @@ export async function saveSearchHits(
   runId: string,
   query: string,
   hits: SearchHit[],
-): Promise<{ id: string; title: string; url: string }[]> {
-  const out: { id: string; title: string; url: string }[] = []
+): Promise<{ id: string; title: string; url: string; snippet: string }[]> {
+  const out: { id: string; title: string; url: string; snippet: string }[] = []
   for (const hit of hits) {
     const id = newId()
     await db.loreReference.create({
@@ -1253,7 +1253,7 @@ export async function saveSearchHits(
         approved: false,
       },
     })
-    out.push({ id, title: hit.title, url: hit.url })
+    out.push({ id, title: hit.title, url: hit.url, snippet: hit.snippet })
   }
   return out
 }
@@ -1474,16 +1474,35 @@ const READ_LORE = Type.Object({
     parameters: WEB_SEARCH,
     execute: async (_id, params) => {
       const ctx = getContext()
-      const r = await createSearchService().search(params.query, params.maxResults ?? 5)
+      let r: SearchResult
+      try {
+        r = await createSearchService().search(params.query, params.maxResults ?? 5)
+      } catch (e) {
+        return fail(`搜索失败：${(e as Error).message}`)
+      }
       if (r.hits.length === 0) {
         return fail(
           `没有搜到结果${r.warnings.length > 0 ? `（${r.warnings.join('；')}）` : ''}。可以换个说法，或让作者在设置里配搜索 key。`,
         )
       }
-      const saved = await saveSearchHits(ctx.db, ctx.project.id, deps.getRunId(), params.query, r.hits)
-      const lines = saved.map((s, i) => `${i + 1}. ${s.title} — ${s.url}（资料卡 ${s.id}）`)
+      // ★ 落卡失败不该连搜索结果一起丢：模型还能看摘要，只是 read_lore 拿不到卡
+      let saved: { id: string; title: string; url: string; snippet: string }[] = []
+      let saveWarning = ''
+      try {
+        saved = await saveSearchHits(ctx.db, ctx.project.id, deps.getRunId(), params.query, r.hits)
+      } catch (e) {
+        saveWarning = `\n（落卡失败，本次没有资料卡：${(e as Error).message}）`
+      }
+      const rows =
+        saved.length > 0
+          ? saved
+          : r.hits.map((h) => ({ id: '', title: h.title, url: h.url, snippet: h.snippet }))
+      const lines = rows.map(
+        (s, i) =>
+          `${i + 1}. ${s.title} — ${s.url} — ${clip(s.snippet)}${s.id === '' ? '' : `（资料卡 ${s.id}）`}`,
+      )
       return ok(
-        `找到 ${saved.length} 条（provider=${r.provider ?? 'none'}${r.degraded ? '，已降级' : ''}）\n${lines.join('\n')}`,
+        `找到 ${rows.length} 条（provider=${r.provider ?? 'none'}${r.degraded ? '，已降级' : ''}）\n${lines.join('\n')}${saveWarning}`,
         { provider: r.provider, degraded: r.degraded, ids: saved.map((s) => s.id) },
       )
     },
@@ -1496,6 +1515,9 @@ const READ_LORE = Type.Object({
       '抓取一个公网网页并提取正文（最长 1.2 万字），落成资料卡后返回摘要。一次只读一个链接。',
     parameters: READ_URL,
     execute: async (_id, params) => {
+      if (!/^https?:\/\//i.test(params.url)) {
+        return fail(`url 需要以 http:// 或 https:// 开头，收到：${params.url}`)
+      }
       try {
         const ctx = getContext()
         const page = await fetchReadable(params.url, {
@@ -1524,7 +1546,12 @@ const READ_LORE = Type.Object({
         return fail(`资料卡 ${params.id} 不存在，或未获作者批准（跨会话资料需要先在资料页批准）`)
       }
       const body = row.content ?? row.snippet
-      return ok(`${row.title} — ${row.url}\n\n${body.slice(0, 4000)}`, { id: row.id, provider: row.provider })
+      // ★ 搜索卡只有摘要：不说清楚，模型会当成正文写考据
+      const note = row.content === null ? '\n\n（仅有摘要；需要正文请对来源 URL 调 read_url）' : ''
+      return ok(`${row.title} — ${row.url}\n\n${body.slice(0, 4000)}${note}`, {
+        id: row.id,
+        provider: row.provider,
+      })
     },
   }
 ```
@@ -1573,6 +1600,8 @@ Expected: PASS
 git add apps/api/src/services/lore-service.ts apps/api/src/services/lore-service.int.test.ts apps/api/src/agent/tools.ts apps/api/src/agent/web-tools.test.ts apps/api/src/agent/run-service.ts
 git commit -m "feat(agent): web_search/read_url/read_lore tools with lore cards"
 ```
+
+> 执行时按审查补了 4 处（已同步到上面的代码）：`saveSearchHits` 多回 `snippet`，搜索结果列表带 160 字摘要；落卡失败降级为「结果可用、只是无卡 id」；`read_url` 先校验 `http(s)://` 给中文提示；`read_lore` 包 try/catch 且摘要卡提示「仅有摘要，去 read_url」。`web-tools.test.ts` 因此增至 8 例（含参数顺序、空结果、抛错、落卡失败、缺协议）。
 
 ---
 

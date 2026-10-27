@@ -32,8 +32,8 @@ export async function saveSearchHits(
   runId: string,
   query: string,
   hits: SearchHit[],
-): Promise<{ id: string; title: string; url: string }[]> {
-  const out: { id: string; title: string; url: string }[] = []
+): Promise<{ id: string; title: string; url: string; snippet: string }[]> {
+  const out: { id: string; title: string; url: string; snippet: string }[] = []
   for (const hit of hits) {
     const id = newId()
     await db.loreReference.create({
@@ -50,7 +50,7 @@ export async function saveSearchHits(
         approved: false,
       },
     })
-    out.push({ id, title: hit.title, url: hit.url })
+    out.push({ id, title: hit.title, url: hit.url, snippet: hit.snippet })
   }
   return out
 }

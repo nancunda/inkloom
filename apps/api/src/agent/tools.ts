@@ -23,10 +23,11 @@ import { Type } from 'typebox'
 import { commitAll } from '../git/runner.js'
 import { fetchReadable } from '../search/extract.js'
 import { createSearchService } from '../search/service.js'
+import type { SearchResult } from '../search/types.js'
 import { getContext } from '../services/context.js'
 import { readElement, upsertElement } from '../services/element-service.js'
 import { generateChapter } from '../services/generate-service.js'
-import { getLoreForRun, savePage, saveSearchHits } from '../services/lore-service.js'
+import { getLoreForRun, type LoreView, savePage, saveSearchHits } from '../services/lore-service.js'
 import { generatePortrait } from '../services/portrait-service.js'
 import { hashContent, readIfExists } from '../storage/atomic-write.js'
 import {
@@ -175,6 +176,11 @@ function withProjectId(payload: unknown, projectId: string): unknown {
     return { ...payload, projectId }
   }
   return payload
+}
+
+/** 摘要压成一行并截断：搜索列表里不要塞换行 */
+function clip(text: string, max = 160): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
 function ok(
@@ -443,28 +449,37 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     parameters: WEB_SEARCH,
     execute: async (_id, params) => {
       const ctx = getContext()
+      let r: SearchResult
       try {
-        const r = await createSearchService().search(params.query, params.maxResults ?? 5)
-        if (r.hits.length === 0) {
-          return fail(
-            `没有搜到结果${r.warnings.length > 0 ? `（${r.warnings.join('；')}）` : ''}。可以换个说法，或让作者在设置里配搜索 key。`,
-          )
-        }
-        const saved = await saveSearchHits(
-          ctx.db,
-          ctx.project.id,
-          deps.getRunId(),
-          params.query,
-          r.hits,
-        )
-        const lines = saved.map((s, i) => `${i + 1}. ${s.title} — ${s.url}（资料卡 ${s.id}）`)
-        return ok(
-          `找到 ${saved.length} 条（provider=${r.provider ?? 'none'}${r.degraded ? '，已降级' : ''}）\n${lines.join('\n')}`,
-          { provider: r.provider, degraded: r.degraded, ids: saved.map((s) => s.id) },
-        )
+        r = await createSearchService().search(params.query, params.maxResults ?? 5)
       } catch (e) {
         return fail(`搜索失败：${(e as Error).message}`)
       }
+      if (r.hits.length === 0) {
+        return fail(
+          `没有搜到结果${r.warnings.length > 0 ? `（${r.warnings.join('；')}）` : ''}。可以换个说法，或让作者在设置里配搜索 key。`,
+        )
+      }
+      // ★ 落卡失败不该连搜索结果一起丢：模型还能看摘要，只是 read_lore 拿不到卡
+      let saved: { id: string; title: string; url: string; snippet: string }[] = []
+      let saveWarning = ''
+      try {
+        saved = await saveSearchHits(ctx.db, ctx.project.id, deps.getRunId(), params.query, r.hits)
+      } catch (e) {
+        saveWarning = `\n（落卡失败，本次没有资料卡：${(e as Error).message}）`
+      }
+      const rows =
+        saved.length > 0
+          ? saved
+          : r.hits.map((h) => ({ id: '', title: h.title, url: h.url, snippet: h.snippet }))
+      const lines = rows.map(
+        (s, i) =>
+          `${i + 1}. ${s.title} — ${s.url} — ${clip(s.snippet)}${s.id === '' ? '' : `（资料卡 ${s.id}）`}`,
+      )
+      return ok(
+        `找到 ${rows.length} 条（provider=${r.provider ?? 'none'}${r.degraded ? '，已降级' : ''}）\n${lines.join('\n')}${saveWarning}`,
+        { provider: r.provider, degraded: r.degraded, ids: saved.map((s) => s.id) },
+      )
     },
   }
 
@@ -475,6 +490,9 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       '抓取一个公网网页并提取正文（最长 1.2 万字），落成资料卡后返回摘要。一次只读一个链接。',
     parameters: READ_URL,
     execute: async (_id, params) => {
+      if (!/^https?:\/\//i.test(params.url)) {
+        return fail(`url 需要以 http:// 或 https:// 开头，收到：${params.url}`)
+      }
       try {
         const ctx = getContext()
         const page = await fetchReadable(params.url, {
@@ -498,12 +516,19 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     parameters: READ_LORE,
     execute: async (_id, params) => {
       const ctx = getContext()
-      const row = await getLoreForRun(ctx.db, params.id, deps.getRunId())
+      let row: LoreView | null
+      try {
+        row = await getLoreForRun(ctx.db, params.id, deps.getRunId())
+      } catch (e) {
+        return fail(`读取资料卡失败：${(e as Error).message}`)
+      }
       if (row === null) {
         return fail(`资料卡 ${params.id} 不存在，或未获作者批准（跨会话资料需要先在资料页批准）`)
       }
       const body = row.content ?? row.snippet
-      return ok(`${row.title} — ${row.url}\n\n${body.slice(0, 4000)}`, {
+      // ★ 搜索卡只有摘要：不说清楚，模型会当成正文写考据
+      const note = row.content === null ? '\n\n（仅有摘要；需要正文请对来源 URL 调 read_url）' : ''
+      return ok(`${row.title} — ${row.url}\n\n${body.slice(0, 4000)}${note}`, {
         id: row.id,
         provider: row.provider,
       })
