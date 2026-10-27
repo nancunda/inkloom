@@ -38,6 +38,8 @@ export interface GraphData {
   snapshot: GraphSnapshot
   /** 存储层的容错告警（坏行/坏 JSON），给 UI 一个出口 */
   warnings: string[]
+  /** 逐文件 mtime 签名：前端拿它做「换了数据就重挂画布」的 key */
+  signature: string
 }
 
 interface Parser<T> {
@@ -80,7 +82,7 @@ export async function getGraphData(): Promise<GraphData> {
   ]
   const files = await readOntologyFiles(root, watchFiles)
   if (cache !== null && cache.root === root && cache.key === files.signature) {
-    return { snapshot: cache.snapshot, warnings: cache.warnings }
+    return { snapshot: cache.snapshot, warnings: cache.warnings, signature: cache.key }
   }
 
   const characters = await readArray<Character>(root, 'characters/index.json', characterSchema)
@@ -107,7 +109,7 @@ export async function getGraphData(): Promise<GraphData> {
   })
   const snapshot: GraphSnapshot = { ...base, issues: [...base.issues, ...validateGraph(base)] }
   cache = { root, key: files.signature, snapshot, warnings: files.warnings }
-  return { snapshot, warnings: files.warnings }
+  return { snapshot, warnings: files.warnings, signature: files.signature }
 }
 
 export async function getGraphSnapshot(): Promise<GraphSnapshot> {

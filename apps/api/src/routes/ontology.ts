@@ -20,7 +20,7 @@ function countInstances(classOf: ReadonlyMap<string, string[]>): Map<string, num
 }
 
 ontologyRoutes.get('/ontology/graph', async (c) => {
-  const { snapshot: snap, warnings } = await getGraphData()
+  const { snapshot: snap, warnings, signature } = await getGraphData()
   const classId = c.req.query('class')
   const q = (c.req.query('q') ?? '').trim().toLowerCase()
   const issuesOnly = c.req.query('issues') === '1'
@@ -69,6 +69,7 @@ ontologyRoutes.get('/ontology/graph', async (c) => {
     warnings,
     total,
     truncated: total > nodes.length,
+    signature,
     builtAt,
   })
 })
@@ -96,7 +97,19 @@ ontologyRoutes.get('/ontology/nodes/:id', async (c) => {
   }
   return c.json({
     node: { ...node, classIds: snap.classOf.get(id) ?? [] },
-    edges: snap.edges.filter((e) => e.from === id || e.to === id),
+    // 端点名字由服务端给：前端只拿到过滤后的节点集，靠它自己解析会退化成裸 id
+    edges: snap.edges
+      .filter((e) => e.from === id || e.to === id)
+      .filter((e) => e.tombstone !== true)
+      .map((e) => ({
+        ...e,
+        fromName:
+          snap.nodes.get(e.from)?.name ??
+          snap.classes.find((cl) => cl.id === e.from)?.name ??
+          e.from,
+        toName:
+          snap.nodes.get(e.to)?.name ?? snap.classes.find((cl) => cl.id === e.to)?.name ?? e.to,
+      })),
     issues: snap.issues.filter((i) => i.subject === id),
   })
 })

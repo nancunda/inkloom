@@ -511,6 +511,9 @@ export interface OntologyEdgeRow {
   from: string
   predicate: string
   to: string
+  /** 服务端给的端点名字（可能缺省，旧响应） */
+  fromName?: string
+  toName?: string
   sinceChapter?: number
   untilChapter?: number
   confidence?: number
@@ -558,6 +561,7 @@ export interface OntologyGraphData {
   warnings: string[]
   total: number
   truncated: boolean
+  signature: string
   builtAt: string
 }
 

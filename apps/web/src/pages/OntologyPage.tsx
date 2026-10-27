@@ -1,6 +1,6 @@
 import { Background, Controls, type Edge, MarkerType, type Node, ReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { type FormEvent, type ReactNode, useMemo, useState } from 'react'
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react'
 import { useOntologyGraph, useOntologyNode } from '../api/hooks'
 import type {
   OntologyClassRow,
@@ -8,6 +8,7 @@ import type {
   OntologyEdgeRow,
   OntologyNodeRow,
 } from '../api/types'
+import { type ModuleId, useSessionStore } from '../stores/session'
 
 const TYPE_LABEL: Record<string, string> = {
   character: '人物',
@@ -29,7 +30,16 @@ const TYPE_COLOR: Record<string, string> = {
   class: '#a1a1a1',
 }
 
-const EXAMPLES = ['林岚', '寒山关', '世界规则']
+/** 虚拟节点/边的来源文件 → 该去哪个模块改（spec §5.2 要求给出口） */
+const ORIGIN: Record<string, { label: string; module: ModuleId }> = {
+  'characters/index.json': { label: '角色卡', module: 'cast' },
+  'characters/relations.json': { label: '关系网络', module: 'cast' },
+  'world/locations.json': { label: '世界地图', module: 'world' },
+  'world/routes.json': { label: '世界地图', module: 'world' },
+  'world/rules.json': { label: '世界规则', module: 'world' },
+  'story/threads.json': { label: '线索轨迹', module: 'story' },
+  'story/arcs.json': { label: '故事弧', module: 'story' },
+}
 
 /** characters/relations.json 的 kind → 中文（虚拟边谓词是 rel:<kind>） */
 const REL_LABEL: Record<string, string> = {
@@ -43,7 +53,8 @@ const REL_LABEL: Record<string, string> = {
 }
 
 function primaryClass(n: OntologyNodeRow): string {
-  return n.classIds[0] ?? 'cls-concept'
+  // classIds 末尾是最具体的类（基类先入集合），否则作者定义的子类永远被并进父类列
+  return n.classIds.at(-1) ?? 'cls-concept'
 }
 
 /** 谓词换个中文标签；rel:* 按 kind 映射，未注册的原样输出 */
@@ -95,6 +106,18 @@ function ClassTree({
   const render = (parent: string | null, depth: number): ReactNode[] =>
     (byParent.get(parent) ?? []).flatMap((c) => [row(c, depth, c.id), ...render(c.id, depth + 1)])
 
+  // 父类缺失或成环的类进不了树：不能让他俩直接消失（spec §6：图仍可渲染，该分支标红）
+  const reachable = new Set<string>()
+  const walk = (parent: string | null): void => {
+    for (const c of byParent.get(parent) ?? []) {
+      if (reachable.has(c.id)) continue
+      reachable.add(c.id)
+      walk(c.id)
+    }
+  }
+  walk(null)
+  const orphans = classes.filter((c) => !reachable.has(c.id))
+
   return (
     <div className="space-y-0.5">
       <button
@@ -107,6 +130,12 @@ function ClassTree({
         全部节点
       </button>
       {render(null, 0)}
+      {orphans.length > 0 && (
+        <>
+          <p className="mt-2 px-2 text-[10px] text-rose-600">孤立类（父类缺失或成环）</p>
+          {orphans.map((c) => row(c, 0, c.id))}
+        </>
+      )}
     </div>
   )
 }
@@ -117,13 +146,17 @@ function DetailBody({
   classNames,
   nodeNames,
   predicateLabels,
+  onGoModule,
 }: {
   detail: OntologyDetailData
   classNames: Map<string, string>
   nodeNames: Map<string, string>
   predicateLabels: Map<string, string>
+  onGoModule: (module: ModuleId) => void
 }) {
-  /** 端点名字：节点 > 类 > 裸 id（悬空端点只能退回 id） */
+  /** 端点名字：服务端给的 > 节点 > 类 > 裸 id（悬空端点只能退回 id） */
+  const edgeNameOf = (e: OntologyEdgeRow, side: 'from' | 'to'): string =>
+    (side === 'from' ? e.fromName : e.toName) ?? nameOf(side === 'from' ? e.from : e.to)
   const nameOf = (id: string): string => nodeNames.get(id) ?? classNames.get(id) ?? id
 
   if (detail.node === null) {
@@ -161,6 +194,7 @@ function DetailBody({
   }
 
   const node = detail.node
+  const origin = node.sourceFile === undefined ? undefined : ORIGIN[node.sourceFile]
   return (
     <div className="space-y-3">
       <div>
@@ -204,9 +238,10 @@ function DetailBody({
             {detail.edges.map((e: OntologyEdgeRow) => (
               <li key={e.id} className="text-[11px] leading-5 text-neutral-600">
                 {e.from === node.id ? '→' : '←'} {predicateLabel(e.predicate, predicateLabels)}{' '}
-                {nameOf(e.from === node.id ? e.to : e.from)}
+                {e.from === node.id ? edgeNameOf(e, 'to') : edgeNameOf(e, 'from')}
                 {e.sinceChapter === undefined ? '' : ` · 第 ${e.sinceChapter} 章起`}
                 {e.retracted === true ? ' · 已废止' : ''}
+                {e.virtual ? <span className="ml-1 text-[10px] text-neutral-400">只读</span> : null}
               </li>
             ))}
           </ul>
@@ -214,7 +249,18 @@ function DetailBody({
       </div>
 
       {node.sourceFile !== undefined && (
-        <p className="text-[10px] leading-4 text-neutral-400">来源：{node.sourceFile}</p>
+        <p className="text-[10px] leading-4 text-neutral-500">
+          来源：{origin?.label ?? node.sourceFile}
+          {origin !== undefined && (
+            <button
+              type="button"
+              onClick={() => onGoModule(origin.module)}
+              className="ml-1 underline decoration-dotted hover:text-neutral-900"
+            >
+              去「{origin.label}」修改
+            </button>
+          )}
+        </p>
       )}
 
       {detail.issues.length > 0 && (
@@ -234,6 +280,7 @@ export function OntologyPage() {
   const [q, setQ] = useState('')
   const [issuesOnly, setIssuesOnly] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
+  const setModule = useSessionStore((s) => s.setModule)
 
   const { data, isLoading, error } = useOntologyGraph({
     classId: classId ?? undefined,
@@ -241,6 +288,12 @@ export function OntologyPage() {
     issuesOnly,
   })
   const detail = useOntologyNode(selected)
+
+  // 换了筛选后，右栏不能还停在一个已经不在画布上的节点
+  useEffect(() => {
+    if (selected === null || data === undefined) return
+    if (!data.nodes.some((n) => n.id === selected)) setSelected(null)
+  }, [data, selected])
 
   const classNames = useMemo(
     () => new Map((data?.classes ?? []).map((c) => [c.id, c.name])),
@@ -268,10 +321,10 @@ export function OntologyPage() {
       rows.set(cls, rowIndex + 1)
       return {
         id: n.id,
-        position: { x: 40 + col * 150, y: 40 + rowIndex * 64 },
+        position: { x: 40 + col * 190, y: 60 + rowIndex * 64 },
         data: { label: n.name },
         style: {
-          width: 132,
+          width: 120,
           padding: 6,
           fontSize: 11,
           borderRadius: 8,
@@ -281,6 +334,21 @@ export function OntologyPage() {
         },
       }
     })
+    // 列标题：不然作者只能猜这四列凭什么是这四列
+    const headers: Node[] = columns.map((cls, col) => ({
+      id: `col-${cls}`,
+      position: { x: 40 + col * 190, y: 10 },
+      data: { label: classNames.get(cls) ?? cls },
+      draggable: false,
+      selectable: false,
+      style: {
+        width: 120,
+        border: 'none',
+        background: 'transparent',
+        fontSize: 10,
+        color: '#737373',
+      },
+    }))
     // 画布只画两端都是节点的边；指向类 id 的 instanceOf 在右栏关系里看
     const drawn = new Set(nodes.map((n) => n.id))
     const edges: Edge[] = data.edges
@@ -295,10 +363,12 @@ export function OntologyPage() {
           strokeDasharray: e.retracted === true ? '2 4' : undefined,
         },
         labelStyle: { fontSize: 9, fill: '#737373' },
+        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+        labelBgPadding: [2, 1] as [number, number],
         markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
       }))
-    return { nodes, edges }
-  }, [data, predicateLabels])
+    return { nodes: [...headers, ...nodes], edges }
+  }, [data, predicateLabels, classNames])
 
   const submit = (e: FormEvent): void => {
     e.preventDefault()
@@ -307,7 +377,7 @@ export function OntologyPage() {
 
   return (
     <div className="flex h-full min-h-0 w-full bg-white">
-      <aside className="flex w-48 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50/60">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50/60">
         <div className="border-b border-neutral-200 px-3 py-3">
           <h1 className="text-sm font-semibold text-neutral-900">图谱</h1>
           <p className="mt-0.5 text-[11px] leading-4 text-neutral-500">
@@ -318,6 +388,7 @@ export function OntologyPage() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="搜节点名"
+              aria-label="搜索节点名"
               className="min-w-0 flex-1 rounded border border-neutral-300 px-2 py-1 text-[11px] focus:border-neutral-500 focus:outline-none"
             />
             <button
@@ -373,7 +444,19 @@ export function OntologyPage() {
               }}
               className="text-[11px] text-neutral-500 hover:text-neutral-900"
             >
-              清除
+              清除搜索
+            </button>
+          )}
+          {(classId !== null || issuesOnly) && (
+            <button
+              type="button"
+              onClick={() => {
+                setClassId(null)
+                setIssuesOnly(false)
+              }}
+              className="text-[11px] text-neutral-500 hover:text-neutral-900"
+            >
+              清除筛选
             </button>
           )}
           <p className="ml-auto text-[10px] text-neutral-400">实线=已入图 · 浅色=既有数据投影</p>
@@ -384,64 +467,79 @@ export function OntologyPage() {
           {error !== null && <p className="p-6 text-sm text-rose-700">{error.message}</p>}
           {data !== undefined && data.nodes.length === 0 && (
             <div className="p-6">
-              <p className="text-sm text-neutral-600">没有匹配的节点。</p>
-              <p className="mt-2 text-[11px] text-neutral-500">试试：</p>
-              <div className="mt-1 flex gap-1.5">
-                {EXAMPLES.map((x) => (
+              {q === '' && classId === null && !issuesOnly ? (
+                <>
+                  <p className="text-sm text-neutral-600">这本书还没有入图的实体。</p>
+                  <p className="mt-2 text-[11px] leading-5 text-neutral-500">
+                    图谱由现有实体自动生成：先去「角色 / 世界 /
+                    故事」建内容，这里就会出现人物、地点、规则节点。
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-neutral-600">当前筛选下没有节点。</p>
                   <button
-                    key={x}
                     type="button"
                     onClick={() => {
-                      setDraft(x)
-                      setQ(x)
+                      setQ('')
+                      setDraft('')
+                      setClassId(null)
+                      setIssuesOnly(false)
                     }}
-                    className="rounded border border-neutral-300 px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-100"
+                    className="mt-2 rounded border border-neutral-300 px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-100"
                   >
-                    {x}
+                    清除全部筛选
                   </button>
-                ))}
-              </div>
+                </>
+              )}
             </div>
           )}
           {data !== undefined && data.nodes.length > 0 && (
             <ReactFlow
-              key={`${data.builtAt}-${classId ?? 'all'}-${q}-${issuesOnly ? 'i' : ''}`}
+              key={`${data.signature}-${classId ?? 'all'}-${q}-${issuesOnly ? 'i' : ''}`}
               defaultNodes={flow.nodes}
               defaultEdges={flow.edges}
               nodesDraggable={false}
               nodesConnectable={false}
-              onNodeClick={(_, node) => setSelected(node.id)}
+              onNodeClick={(_, node) => {
+                if (node.id.startsWith('col-')) return
+                setSelected(node.id)
+              }}
               fitView
               fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
               minZoom={0.3}
               maxZoom={1.4}
             >
               <Background gap={16} color="#e5e5e5" />
-              <Controls showInteractive={false} />
+              <Controls showInteractive={false} position="bottom-right" />
             </ReactFlow>
           )}
-          {data !== undefined && data.warnings.length > 0 && (
-            <div className="absolute bottom-2 left-2 right-2 rounded border border-neutral-300 bg-white/95 px-3 py-2 text-[11px] leading-5 text-neutral-700">
-              {data.warnings.slice(0, 3).map((w) => (
-                <p key={w}>{w}</p>
-              ))}
-              {data.warnings.length > 3 && <p>另有 {data.warnings.length - 3} 条</p>}
-            </div>
-          )}
-          {data !== undefined && data.issues.length > 0 && (
-            <div className="absolute bottom-2 left-2 right-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
-              {data.issues.slice(0, 3).map((i) => (
-                <p key={`${i.code}-${i.subject}`}>
-                  [{i.code}] {i.message}
-                </p>
-              ))}
-              {data.issues.length > 3 && <p>另有 {data.issues.length - 3} 条问题</p>}
+          {data !== undefined && (data.warnings.length > 0 || data.issues.length > 0) && (
+            <div className="pointer-events-none absolute inset-x-2 bottom-2 flex flex-col gap-1">
+              {data.warnings.length > 0 && (
+                <div className="pointer-events-auto rounded border border-neutral-300 bg-white/95 px-3 py-2 text-[11px] leading-5 text-neutral-700">
+                  {data.warnings.slice(0, 3).map((w) => (
+                    <p key={w}>{w}</p>
+                  ))}
+                  {data.warnings.length > 3 && <p>另有 {data.warnings.length - 3} 条</p>}
+                </div>
+              )}
+              {data.issues.length > 0 && (
+                <div className="pointer-events-auto rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
+                  {data.issues.slice(0, 3).map((i) => (
+                    <p key={`${i.code}-${i.subject}`}>
+                      [{i.code}] {i.message}
+                    </p>
+                  ))}
+                  {data.issues.length > 3 && <p>另有 {data.issues.length - 3} 条问题</p>}
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      <aside className="flex w-72 shrink-0 flex-col border-l border-neutral-200 bg-neutral-50/60">
+      <aside className="flex w-80 shrink-0 flex-col border-l border-neutral-200 bg-neutral-50/60">
         <div className="border-b border-neutral-200 px-4 py-3">
           <p className="text-[11px] font-medium text-neutral-500">节点详情</p>
         </div>
@@ -460,6 +558,7 @@ export function OntologyPage() {
               classNames={classNames}
               nodeNames={nodeNames}
               predicateLabels={predicateLabels}
+              onGoModule={setModule}
             />
           )}
         </div>
