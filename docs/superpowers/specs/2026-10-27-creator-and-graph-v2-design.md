@@ -481,14 +481,16 @@ parameters: {
 
 ## 8. 切片 5：推演（只留边界）
 
-不在本轮实现。下一份 spec 必须回答：
+不在本轮实现。研究结论见 [世界推演模式](../research/2026-10-27-world-simulation-patterns.md)，下一份 spec 按以下已定结论展开：
 
-- `story/events.jsonl` 的事件模型（沿用 S1 §4.4）
-- 沙盘分支如何隔离（不写 canon，只在 `.inkloom/sandbox/`）
-- 「采纳为正史」的事务边界（事件 + 边 + git commit）
-- Critic 如何复用为「推演一致性检查」
+- **正史 = append-only 事件日志 + 纯函数 fold + 章节快照**：`replay(events, rulesVersion) -> {state, stateHash}`；快照只是缓存，不是真相。
+- **沙盘 = fork 点 + 差异事件集**：只存 fork 之后的差异，前缀引用 fork 点；不复制正史，也不用「事件子集」（会丢前缀状态与顺序）。
+- **提案—硬校验—软校验—作者采纳** 四拍：硬规则用纯函数，软判断用只读 LLM critic，作者唯一 commit。
+- **单写者**：v1 最多 1 个世界 agent + 2–3 个角色提案器，不做自治多 agent 自由对话。
+- **采纳 = rebase**：逐条追加、重排 `timeOrder`、校验前置、写 `adoptedFrom/supersedes`；冲突默认拒绝。
+- 事件字段扩展（`requires` / `invalidates` / `intent` / `ruleTrace` / `evidence` / `confidence`）随下一份 spec 一起改数据模型。
 
-本轮只保证：图谱查询工具（`query_graph` / `find_path`）与资料卡能为推演提供输入。
+本轮只保证：`query_graph` / `find_path` / `explain_fact` 与资料卡是沙盘的查询底座。
 
 ## 9. 验收标准
 
