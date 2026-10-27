@@ -133,4 +133,62 @@ describe('/api/ontology', () => {
     expect((await app().request('/api/ontology/reload', { method: 'POST' })).status).toBe(200)
     expect((await app().request('/api/ontology/graph')).status).toBe(200)
   })
+
+  it('文件变了缓存自动失效（按 mtime 签名重建）', async () => {
+    const first = (await (await app().request('/api/ontology/graph')).json()) as {
+      nodes: { id: string }[]
+    }
+    expect(first.nodes.map((n) => n.id)).not.toContain('grp-later')
+
+    await writeFile(
+      join(root, 'world/ontology/nodes.jsonl'),
+      [
+        '{"id":"grp-qingyun","type":"group","name":"青云宗","createdAt":"2026-10-27T00:00:00.000Z"}',
+        '{"id":"grp-later","type":"group","name":"后起宗","createdAt":"2026-10-27T00:00:00.000Z"}',
+      ].join('\n'),
+      'utf8',
+    )
+    const second = (await (await app().request('/api/ontology/graph')).json()) as {
+      nodes: { id: string }[]
+    }
+    expect(second.nodes.map((n) => n.id)).toContain('grp-later')
+  })
+
+  it('类 id 当端点：返回类详情与实例，而不是 404', async () => {
+    const r = await app().request('/api/ontology/nodes/cls-sect')
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as {
+      node: null
+      class: { id: string; instanceCount: number }
+      instances: string[]
+    }
+    expect(j.node).toBeNull()
+    expect(j.class.id).toBe('cls-sect')
+    expect(j.instances).toContain('grp-qingyun')
+  })
+
+  it('★ 待修复筛选能带出问题边的两端节点', async () => {
+    const j = (await (await app().request('/api/ontology/graph?issues=1')).json()) as {
+      nodes: { id: string }[]
+    }
+    // ed-cccccc 的 to 是 ghost，from 是 c1
+    expect(j.nodes.map((n) => n.id)).toContain('c1')
+  })
+
+  it('节点被 limit 截断时给出 total 与 truncated', async () => {
+    const j = (await (await app().request('/api/ontology/graph?limit=1')).json()) as {
+      nodes: unknown[]
+      total: number
+      truncated: boolean
+    }
+    expect(j.nodes).toHaveLength(1)
+    expect(j.total).toBeGreaterThan(1)
+    expect(j.truncated).toBe(true)
+  })
+
+  it('未打开书时返回 404', async () => {
+    clearContext()
+    clearGraphCache()
+    expect((await app().request('/api/ontology/graph')).status).toBe(404)
+  })
 })

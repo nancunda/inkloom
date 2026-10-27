@@ -19,6 +19,8 @@ export interface OntologyFiles {
   /** 全部输入（含 watchFiles）的 POSIX 相对路径；不存在的文件也会列出 */
   files: string[]
   mtimeMax: number
+  /** 逐文件 mtime 拼接的签名：单值 max 表达不了「删文件/新增更旧文件」 */
+  signature: string
 }
 
 export function ontologyDir(root: string): string {
@@ -119,5 +121,6 @@ export async function readOntologyFiles(
     warnings,
     files: paths.map((p) => relativeToBook(root, p)),
     mtimeMax: Math.max(0, ...mtimes),
+    signature: mtimes.map((m) => String(m)).join(':'),
   }
 }

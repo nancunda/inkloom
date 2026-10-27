@@ -22,9 +22,10 @@ import { getContext } from './context.js'
 
 interface GraphCache {
   root: string
-  /** mtimeMax + 文件数：单靠 mtime 表达不了「文件被删/新增更旧文件」 */
+  /** 逐文件 mtime 签名：任何文件增删改都会变 */
   key: string
   snapshot: GraphSnapshot
+  warnings: string[]
 }
 
 let cache: GraphCache | null = null
@@ -33,12 +34,24 @@ export function clearGraphCache(): void {
   cache = null
 }
 
+export interface GraphData {
+  snapshot: GraphSnapshot
+  /** 存储层的容错告警（坏行/坏 JSON），给 UI 一个出口 */
+  warnings: string[]
+}
+
 interface Parser<T> {
   safeParse: (v: unknown) => { success: true; data: T } | { success: false }
 }
 
 async function readArray<T>(root: string, rel: string, schema: Parser<T>): Promise<T[]> {
-  const raw = await readJsonElement(root, rel)
+  let raw: unknown
+  try {
+    raw = await readJsonElement(root, rel)
+  } catch {
+    // 实体文件整体坏掉不该让图谱页整页 400：降级为空数组（其它页面会报具体错误）
+    return []
+  }
   if (!Array.isArray(raw)) return []
   const out: T[] = []
   for (const item of raw) {
@@ -49,11 +62,11 @@ async function readArray<T>(root: string, rel: string, schema: Parser<T>): Promi
 }
 
 /**
- * 图谱快照。
- * ★ 缓存按 root + mtimeMax + 文件数：任一文件（含实体文件）变化都会重建。
+ * 图谱快照 + 容错告警。
+ * ★ 缓存按 root + 逐文件 mtime 签名：任一文件（含实体文件）变化都会重建。
  * ★ 切片 1 不在这里加索引表（spec D1）。
  */
-export async function getGraphSnapshot(): Promise<GraphSnapshot> {
+export async function getGraphData(): Promise<GraphData> {
   const { root } = getContext()
   const p = bookPaths(root)
   const watchFiles = [
@@ -66,8 +79,9 @@ export async function getGraphSnapshot(): Promise<GraphSnapshot> {
     join(p.story, 'arcs.json'),
   ]
   const files = await readOntologyFiles(root, watchFiles)
-  const key = `${files.mtimeMax}:${files.files.length}`
-  if (cache !== null && cache.root === root && cache.key === key) return cache.snapshot
+  if (cache !== null && cache.root === root && cache.key === files.signature) {
+    return { snapshot: cache.snapshot, warnings: cache.warnings }
+  }
 
   const characters = await readArray<Character>(root, 'characters/index.json', characterSchema)
   const relations = await readArray(root, 'characters/relations.json', characterRelationSchema)
@@ -92,6 +106,10 @@ export async function getGraphSnapshot(): Promise<GraphSnapshot> {
     builtFrom: { files: files.files, mtimeMax: files.mtimeMax },
   })
   const snapshot: GraphSnapshot = { ...base, issues: [...base.issues, ...validateGraph(base)] }
-  cache = { root, key, snapshot }
-  return snapshot
+  cache = { root, key: files.signature, snapshot, warnings: files.warnings }
+  return { snapshot, warnings: files.warnings }
+}
+
+export async function getGraphSnapshot(): Promise<GraphSnapshot> {
+  return (await getGraphData()).snapshot
 }

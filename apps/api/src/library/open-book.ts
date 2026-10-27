@@ -5,6 +5,7 @@ import { commitAll, initRepo, isRepo } from '../git/runner.js'
 import { openBookIndexDb } from '../index-db/open-book.js'
 import { type AppContext, closeContext, peekContext, setContext } from '../services/context.js'
 import { clearJobs, runningJobCount } from '../services/job-service.js'
+import { clearGraphCache } from '../services/ontology-service.js'
 import { ensureBookGitignore } from '../storage/book-gitignore.js'
 import { openProject } from '../storage/project.js'
 import { writeQueue } from '../storage/queue.js'
@@ -97,6 +98,7 @@ export function switchBook(libraryRoot: string, folder: string): Promise<void> {
 
     const next = await prepareBook(root) // 1. 先开新
     await closeContext() // 2. 成功后才关旧
+    clearGraphCache() // 旧书的图快照不该跟到新书
     await activate(next) // 3. 最后切指针
     clearRuns()
     clearJobs()
@@ -113,6 +115,7 @@ export function switchBook(libraryRoot: string, folder: string): Promise<void> {
 /** 关闭当前书（回到书库页） */
 export async function closeBook(): Promise<void> {
   await closeContext()
+  clearGraphCache()
   clearRuns()
   clearJobs()
 }
