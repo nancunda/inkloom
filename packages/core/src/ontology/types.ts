@@ -32,7 +32,7 @@ export type GraphEdgeView = Omit<GraphEdge, 'createdAt'> & {
   undirected?: boolean
   /** 被别的边 retracts 指向 */
   retracted?: boolean
-  /** 废止记录行本身（带 retracts）：只用于吊销，不参与推导与展示 */
+  /** 废止记录行本身（带 retracts）：只用于吊销，不参与推导；展示侧仍需按此标记过滤 */
   tombstone?: boolean
   sourceFile?: string
 }
@@ -63,6 +63,7 @@ export interface GraphIssue {
 }
 
 export interface GraphSource {
+  // events?: StoryEvent[]  ⏳ 切片 2 引入（切片 1 不读 events.jsonl）
   characters: Character[]
   relations: CharacterRelation[]
   locations: Location[]

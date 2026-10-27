@@ -14,10 +14,12 @@ import type { GraphEdgeView, GraphIssue, GraphNode, GraphSnapshot, GraphSource }
 export type {
   GraphEdgeView,
   GraphIssue,
+  GraphIssueCode,
   GraphNode,
   GraphSnapshot,
   GraphSource,
 } from './types.js'
+export { GRAPH_ISSUE_CODES } from './types.js'
 
 const DEFAULT_CLASS_BY_TYPE: Partial<Record<NodeType, string>> = {
   character: 'cls-character',

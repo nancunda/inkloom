@@ -272,7 +272,7 @@ export interface GraphSource {
   arcs: StoryArc[]
   nodes: OntologyNode[]        // nodes.jsonl
   edges: GraphEdge[]           // edges.jsonl
-  events: StoryEvent[]         // events.jsonl
+  events?: StoryEvent[]        // ⏳ 切片 2 引入（切片 1 不读 events.jsonl）
   classesFile: ClassesFile
 }
 
