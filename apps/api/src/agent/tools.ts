@@ -39,6 +39,7 @@ import {
 } from '../storage/plans.js'
 import { writeQueue } from '../storage/queue.js'
 import { buildBookSnapshot, renderSnapshot } from './book-snapshot.js'
+import { renderGraphSummary } from './graph-summary.js'
 import { createGraphTools } from './graph-tools.js'
 import { type AgentGate, deriveGate } from './plan-gate.js'
 import { clip, fail, ok } from './tool-result.js'
@@ -390,7 +391,8 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     parameters: READ_BOOK,
     execute: async () => {
       const snap = await buildBookSnapshot()
-      return ok(renderSnapshot(snap), {
+      const summary = await renderGraphSummary()
+      return ok(`${renderSnapshot(snap)}\n\n${summary}`, {
         characters: Array.isArray(snap.characters) ? snap.characters.length : 0,
       })
     },
