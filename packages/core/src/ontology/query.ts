@@ -13,6 +13,7 @@ export interface GraphPattern {
 }
 
 export interface PatternResult {
+  /** 满足节点条件的端点；边条件分支下，边的另一端可能不在 nodes 里（如 instanceOf 指向类 id） */
   nodes: GraphNode[]
   edges: GraphEdgeView[]
 }
@@ -35,10 +36,17 @@ const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 const DEFAULT_DEPTH = 4
 const MAX_DEPTH = 8
+/** explainFact 的传递推导最多看几跳：与 findPath 默认深度同口径 */
+const FACT_HOPS = DEFAULT_DEPTH
 
 function clampLimit(n: number | undefined): number {
   if (n === undefined || !Number.isFinite(n)) return DEFAULT_LIMIT
   return Math.min(Math.max(Math.trunc(n), 1), MAX_LIMIT)
+}
+
+function clampDepth(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_DEPTH
+  return Math.min(Math.max(Math.trunc(n), 1), MAX_DEPTH)
 }
 
 /** 参与推理的边：废止行（tombstone）与已被吊销（retracted）的边都不算 */
@@ -82,12 +90,21 @@ export function matchPattern(snap: GraphSnapshot, pattern: GraphPattern): Patter
   const edges = liveEdges(snap)
 
   if (hasEdgeCond(pattern)) {
+    // ★ 双向路线匹配忽略方向（types.ts 的 undirected 契约）
+    const fromHit = (e: GraphEdgeView): boolean =>
+      pattern.from === undefined ||
+      e.from === pattern.from ||
+      (e.undirected === true && e.to === pattern.from)
+    const toHit = (e: GraphEdgeView): boolean =>
+      pattern.to === undefined ||
+      e.to === pattern.to ||
+      (e.undirected === true && e.from === pattern.to)
     const picked = edges
       .filter(
         (e) =>
           (pattern.predicate === undefined || e.predicate === pattern.predicate) &&
-          (pattern.from === undefined || e.from === pattern.from) &&
-          (pattern.to === undefined || e.to === pattern.to),
+          fromHit(e) &&
+          toHit(e),
       )
       .sort((a, b) => a.id.localeCompare(b.id))
       .slice(0, limit)
@@ -117,15 +134,20 @@ export function matchPattern(snap: GraphSnapshot, pattern: GraphPattern): Patter
 }
 
 /**
- * 邻接表：路径按无向遍历（探索「这两个东西怎么连上的」），边本身保留原方向。
- * ★ 双向路线（undirected）在这里不用特殊处理——遍历本来就不看方向。
+ * 邻接表：`bidirectional` 决定反向是否可走。
+ * - findPath 传 `() => true`（探索「怎么连上的」，不看方向）；
+ * - explainFact 的传递推导只沿有向边走，除非谓词/边本身声明无向。
  */
-function adjacency(snap: GraphSnapshot): Map<string, { to: string; edge: GraphEdgeView }[]> {
+function adjacency(
+  snap: GraphSnapshot,
+  bidirectional: (e: GraphEdgeView) => boolean,
+): Map<string, { to: string; edge: GraphEdgeView }[]> {
   const out = new Map<string, { to: string; edge: GraphEdgeView }[]>()
   for (const e of liveEdges(snap)) {
     const a = out.get(e.from) ?? []
     a.push({ to: e.to, edge: e })
     out.set(e.from, a)
+    if (!bidirectional(e)) continue
     const b = out.get(e.to) ?? []
     b.push({ to: e.from, edge: e })
     out.set(e.to, b)
@@ -143,12 +165,12 @@ export function findPath(
   to: string,
   maxDepth = DEFAULT_DEPTH,
 ): PathResult {
-  const depthCap = Math.min(Math.max(Math.trunc(maxDepth), 1), MAX_DEPTH)
+  const depthCap = clampDepth(maxDepth)
   if (from === to) {
     const n = snap.nodes.get(from)
     return { nodes: n === undefined ? [] : [n], edges: [], found: n !== undefined }
   }
-  const adj = adjacency(snap)
+  const adj = adjacency(snap, () => true)
   const prev = new Map<string, { from: string; edge: GraphEdgeView }>()
   const depth = new Map<string, number>([[from, 0]])
   const queue = [from]
@@ -188,7 +210,9 @@ export function findPath(
   const nodes = nodeIds
     .map((id) => snap.nodes.get(id))
     .filter((n): n is GraphNode => n !== undefined)
-  return { nodes, edges, found: nodes.length === nodeIds.length }
+  // 端点可能只存在于边里（悬空节点）：不能返回 found:false 却带着半截路径
+  if (nodes.length !== nodeIds.length) return { nodes: [], edges: [], found: false }
+  return { nodes, edges, found: true }
 }
 
 function predicateLabel(snap: GraphSnapshot, predicate: string): string {
@@ -208,7 +232,10 @@ export function explainFact(
 ): ExplainResult {
   const label = predicateLabel(snap, predicate)
   const direct = liveEdges(snap).find(
-    (e) => e.from === from && e.predicate === predicate && e.to === to,
+    (e) =>
+      e.predicate === predicate &&
+      ((e.from === from && e.to === to) ||
+        (e.undirected === true && e.from === to && e.to === from)),
   )
   if (direct !== undefined) {
     return {
@@ -221,8 +248,10 @@ export function explainFact(
   }
 
   if (predicate === 'instanceOf') {
+    // ★ spec §5.5：子类实例按父类查也算——不能只看 classOf 是否直接含目标类
+    const closure = classClosure(snap, to)
     const classes = snap.classOf.get(from) ?? []
-    if (classes.includes(to)) {
+    if (classes.some((c) => closure.has(c))) {
       return {
         found: true,
         direct: false,
@@ -235,12 +264,14 @@ export function explainFact(
 
   const transitive = snap.predicates.find((p) => p.id === predicate)?.transitive === true
   if (transitive) {
-    const adj = adjacency(snap)
+    const def = snap.predicates.find((p) => p.id === predicate)
+    // 有向谓词只沿边方向推导，否则会把「n3 —ally→ n1」这种不存在的反向事实说成成立
+    const adj = adjacency(snap, (e) => e.undirected === true || def?.directed === false)
     const visited = new Set<string>([from])
     const queue: { id: string; hops: string[] }[] = [{ id: from, hops: [from] }]
     while (queue.length > 0) {
       const cur = queue.shift() as { id: string; hops: string[] }
-      if (cur.hops.length > 4) continue
+      if (cur.hops.length - 1 >= FACT_HOPS) continue
       for (const step of adj.get(cur.id) ?? []) {
         if (step.edge.predicate !== predicate) continue
         if (visited.has(step.to)) continue
