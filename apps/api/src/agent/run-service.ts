@@ -549,6 +549,7 @@ export async function startAgentRun(
     maxSteps: 80,
     chapterCalls: 0,
     portraitCalls: 0,
+    subagentCalls: 0,
   }
   const gateBox: { current: AgentGate | null } = { current: null }
 

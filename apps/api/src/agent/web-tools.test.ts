@@ -34,7 +34,7 @@ function tool(name: string) {
     apiKey: 'k',
     imageApiKey: null,
     model: 'm',
-    budget: { steps: 0, maxSteps: 80, chapterCalls: 0, portraitCalls: 0 },
+    budget: { steps: 0, maxSteps: 80, chapterCalls: 0, portraitCalls: 0, subagentCalls: 0 },
     plan: { getPlanId: () => null, setPlanId: () => undefined, notify: () => undefined },
     onGate: () => undefined,
     getRunId: () => 'ar_1',

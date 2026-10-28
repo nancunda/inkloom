@@ -39,9 +39,12 @@ import {
 } from '../storage/plans.js'
 import { writeQueue } from '../storage/queue.js'
 import { buildBookSnapshot, renderSnapshot } from './book-snapshot.js'
+import type { CriticInput, CriticVerdict } from './critic.js'
 import { renderGraphSummary } from './graph-summary.js'
 import { createGraphTools } from './graph-tools.js'
 import { type AgentGate, deriveGate } from './plan-gate.js'
+import { isAgentRoleId } from './roles.js'
+import type { SubagentRequest, SubagentResult } from './subagent.js'
 import { clip, fail, ok } from './tool-result.js'
 
 export type { AgentGate } from './plan-gate.js'
@@ -53,6 +56,8 @@ export interface RunBudget {
   chapterCalls: number
   /** 只统计；不再拦截 */
   portraitCalls: number
+  /** 子智能体调用次数（delegate + critic），只统计 */
+  subagentCalls: number
 }
 
 /** run-service 与工具之间的计划桥：工具改状态、run 层知道当前计划 */
@@ -71,6 +76,10 @@ export interface AgentToolDeps {
   onGate: (gate: AgentGate) => void
   /** 当前 run id：资料卡用它判断「本 run 可读」 */
   getRunId: () => string
+  /** 子智能体 runner；run-service 注入。缺省时 delegate 直接失败 */
+  subagent?: (req: SubagentRequest) => Promise<SubagentResult>
+  /** critic 门禁；只在 INKLOOM_CRITIC=on 时注入 */
+  critic?: (input: CriticInput) => Promise<CriticVerdict>
 }
 
 interface Parser {
@@ -377,6 +386,20 @@ const READ_LORE = Type.Object({
   id: Type.String({ minLength: 4, description: '资料卡 id，形如 lr-a1b2c3d4' }),
 })
 
+const DELEGATE = Type.Object({
+  // 显式四个 Literal：与 roles.ts 的 AgentRoleId 一一对应，新增角色必须两边一起改
+  role: Type.Union([
+    Type.Literal('researcher'),
+    Type.Literal('worldbuilder'),
+    Type.Literal('critic'),
+    Type.Literal('stylist'),
+  ]),
+  task: Type.String({ minLength: 1, maxLength: 500, description: '具体要它做什么，一次一件事' }),
+  context: Type.Optional(
+    Type.String({ maxLength: 2000, description: '需要它知道的背景；它看不到你的对话历史' }),
+  ),
+})
+
 const GENERATE_PORTRAIT = Type.Object({
   characterId: Type.String(),
   style: Type.Optional(Type.String({ description: '风格后缀，默认国风插画' })),
@@ -407,8 +430,15 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     execute: async (_id, params) => {
       const { root } = getContext()
       const rel = params.path
-      if (!/^(characters|world|story)\//.test(rel) || rel.includes('..')) {
-        return fail(`路径不可读：${rel}。只能是 characters/、world/、story/ 下的文件`)
+      if (!/^(characters|world|story|chapters)\//.test(rel) || rel.includes('..')) {
+        return fail(`路径不可读：${rel}。只能是 characters/、world/、story/、chapters/ 下的文件`)
+      }
+      // ★ 章节是 Markdown：返回原文，不做 JSON 化（否则模型看到的是转义后的字符串）
+      if (rel.startsWith('chapters/')) {
+        const raw = await readIfExists(join(root, rel))
+        if (raw === null) return fail(`文件不存在：${rel}`)
+        const text = raw.length > 30_000 ? `${raw.slice(0, 30_000)}\n…（已截断）` : raw
+        return ok(text, { path: rel, hash: hashContent(raw), format: 'text' })
       }
       const data = await readElement(rel)
       if (data === null) return fail(`文件不存在：${rel}`)
@@ -521,6 +551,34 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         id: row.id,
         provider: row.provider,
       })
+    },
+  }
+
+  const delegateTool: AgentTool<typeof DELEGATE> = {
+    name: 'delegate',
+    label: '派子智能体',
+    description:
+      '把一个只读子任务派给专家子智能体并等它跑完：researcher=联网考据，worldbuilder=审设定与图谱缺口，critic=查一致性，stylist=文风建议。它看不到你的对话历史，也不写文件；需要背景请写进 context。',
+    parameters: DELEGATE,
+    execute: async (_id, params) => {
+      if (deps.subagent === undefined) return fail('这个会话没有启用子智能体')
+      if (!isAgentRoleId(params.role)) return fail(`未知角色：${params.role}`)
+      const r = await deps.subagent({
+        role: params.role,
+        task: params.task,
+        ...(params.context === undefined ? {} : { context: params.context }),
+      })
+      if (!r.ok) {
+        const partial =
+          r.text.length === 0 ? '' : `\n\n已产出的部分结论：\n${r.text.slice(0, 1000)}`
+        return fail(
+          `[${r.role}] 子任务失败：${r.error ?? '未知原因'}。可以换一种方式，或自己继续。${partial}`,
+        )
+      }
+      return ok(
+        `[${r.role}] 用了 ${r.steps} 步，${r.tokens.toLocaleString()} tokens。\n摘要：\n${r.text.slice(0, 4000)}`,
+        { role: r.role, ok: r.ok, steps: r.steps, tokens: r.tokens },
+      )
     },
   }
 
@@ -786,6 +844,38 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         }
       }
 
+      let criticNote = ''
+      if (params.status === 'done' && deps.critic !== undefined) {
+        const verdict = await deps.critic({
+          taskId: task.id,
+          title: task.title,
+          brief: task.brief,
+          artifacts,
+          summary: params.note ?? cur.summary,
+          goal: bundle.plan.goal,
+        })
+        if (verdict.kind === 'blocked') {
+          const lines = verdict.errors.map(
+            (c, i) => `${i + 1}. ${c.message}（证据：${c.evidence.join('、')}）`,
+          )
+          const warns =
+            verdict.warnings.length === 0 ? '' : `\n另有 ${verdict.warnings.length} 处提示。`
+          return fail(
+            `一致性检查发现 ${verdict.errors.length} 处矛盾，任务保持未完成：\n${lines.join('\n')}${warns}\n修好后重新调用 update_task(status="done")。`,
+            { taskId: task.id, blocked: true, conflicts: verdict.errors.length },
+          )
+        }
+        if (verdict.kind === 'passed') {
+          const sug =
+            verdict.suggestions.length === 0
+              ? ''
+              : `；建议：${verdict.suggestions.slice(0, 3).join('；')}`
+          criticNote = `一致性检查通过（${verdict.warnings.length} 处提示${sug}）。`
+        } else {
+          criticNote = `一致性检查未完成：${verdict.reason}。`
+        }
+      }
+
       const next =
         params.status === 'done'
           ? {
@@ -814,7 +904,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             ? '开始做吧。'
             : '任务已标记为卡住；说明卡点后停下等作者。'
       return ok(
-        `任务 ${task.id} → ${params.status}${params.note === undefined ? '' : `（${params.note}）`}。${hint}`,
+        `任务 ${task.id} → ${params.status}${params.note === undefined ? '' : `（${params.note}）`}。${criticNote}${hint}`,
         { taskId: task.id, status: params.status },
       )
     },
@@ -964,6 +1054,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     webSearchTool,
     readUrlTool,
     readLoreTool,
+    delegateTool,
     ...createGraphTools(),
     writeElementTool,
     writeBlueprintTool,
