@@ -591,10 +591,21 @@ export interface OntologyClassesData {
   predicates: OntologyPredicateRow[]
 }
 
+/** 路径里的节点是 core 的 GraphNode：没有 classIds（只有 /graph、/nodes/:id 才补） */
+export interface OntologyPathNode {
+  id: string
+  type: string
+  name: string
+  aliases?: string[]
+  attrs: Record<string, string>
+  virtual: boolean
+  sourceFile?: string
+}
+
 /** GET /api/ontology/path 的响应：found=false 时 nodes/edges 为空数组 */
 export interface OntologyPathData {
   found: boolean
-  nodes: OntologyNodeRow[]
+  nodes: OntologyPathNode[]
   edges: OntologyEdgeRow[]
 }
 

@@ -137,10 +137,14 @@ export function OntologyPage() {
     return null
   }, [path.data, hits, selected, hops, anchorKind, filtered])
 
-  const highlightIds = useMemo(
-    () => (highlightNodes === null ? [] : inducedIds(filtered, highlightNodes)),
-    [filtered, highlightNodes],
-  )
+  const highlightIds = useMemo(() => {
+    const found = path.data
+    // ★ 路径只用服务端返回的那几条边：诱导子图会把两端同在路径上的弦边也点亮
+    if (found?.found === true) {
+      return [...found.nodes.map((n) => n.id), ...found.edges.map((e) => e.id)]
+    }
+    return highlightNodes === null ? [] : inducedIds(filtered, highlightNodes)
+  }, [path.data, filtered, highlightNodes])
 
   // 搜索只靠 focus 运镜，高亮不再抢镜头；路径 / N 跳仍需要 fit 到子图
   const highlightFit =
@@ -183,7 +187,8 @@ export function OntologyPage() {
         stats={{
           nodes: data?.nodes.length ?? 0,
           total: data?.total ?? 0,
-          edges: data?.edges.length ?? 0,
+          // 侧栏统计活边：与概况/查询同口径，已废止的不算（画布仍淡出显示）
+          edges: (data?.edges ?? []).filter((e) => e.retracted !== true).length,
           issues: data?.issues.length ?? 0,
           truncated: data?.truncated === true,
         }}

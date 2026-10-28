@@ -205,19 +205,40 @@ export function buildGraph(src: GraphSource): GraphSnapshot {
   }
 
   const classOf = new Map<string, string[]>()
+  const classDepth = new Map<string, number>()
+  const depthOf = (id: string): number => {
+    const hit = classDepth.get(id)
+    if (hit !== undefined) return hit
+    const d = classAncestors(id, classById).length
+    classDepth.set(id, d)
+    return d
+  }
   for (const node of nodes.values()) {
     const direct = new Set<string>()
+    const declared = new Set<string>()
     const base = DEFAULT_CLASS_BY_TYPE[node.type]
     if (base !== undefined) direct.add(base)
     for (const e of instanceOfByFrom.get(node.id) ?? []) {
-      if (classById.has(e.to)) direct.add(e.to)
+      if (classById.has(e.to)) {
+        direct.add(e.to)
+        declared.add(e.to)
+      }
     }
     const all = new Set<string>()
     for (const id of direct) {
       all.add(id)
       for (const a of classAncestors(id, classById)) all.add(a)
     }
-    classOf.set(node.id, [...all])
+    // ★ 顺序是契约：越具体越靠后（末位 = 最具体的类）。
+    //   同深度时节点显式声明的 instanceOf 类比类型默认类更具体，再按 id 稳定排序。
+    const ordered = [...all].sort((a, b) => {
+      const byDepth = depthOf(a) - depthOf(b)
+      if (byDepth !== 0) return byDepth
+      const byDeclared = (declared.has(a) ? 1 : 0) - (declared.has(b) ? 1 : 0)
+      if (byDeclared !== 0) return byDeclared
+      return a < b ? -1 : a > b ? 1 : 0
+    })
+    classOf.set(node.id, ordered)
   }
 
   const subclasses = new Map<string, string[]>()

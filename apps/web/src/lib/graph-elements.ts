@@ -1,4 +1,4 @@
-import type { OntologyGraphData, OntologyNodeRow } from '../api/types'
+import type { OntologyGraphData } from '../api/types'
 
 /** rel:<kind> 的中文（与详情栏/图例同一口径，只有这一份） */
 export const REL_LABEL: Record<string, string> = {
@@ -224,9 +224,4 @@ export function searchNodes(elements: GraphElements, text: string): string[] {
     .filter((n) => n.data.kind === 'instance')
     .filter((n) => n.data.label.toLowerCase().includes(q) || n.data.id.toLowerCase().includes(q))
     .map((n) => n.data.id)
-}
-
-/** 详情栏用：取最具体的类名 */
-export function primaryClass(n: OntologyNodeRow): string {
-  return n.classIds.at(-1) ?? 'cls-concept'
 }

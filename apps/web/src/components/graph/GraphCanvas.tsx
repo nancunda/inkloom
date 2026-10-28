@@ -20,7 +20,6 @@ export interface GraphCanvasHandle {
   focus(id: string): void
   highlight(ids: string[], fit?: boolean): void
   resetHighlight(): void
-  positions(): Record<string, { x: number; y: number }>
 }
 
 interface Props {
@@ -178,7 +177,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
           cy.elements().removeClass('dimmed').removeClass('hl')
         })
       },
-      positions: () => (cyRef.current === null ? {} : positionsOf(cyRef.current)),
     }),
     [],
   )

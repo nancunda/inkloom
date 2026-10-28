@@ -130,6 +130,53 @@ describe('buildGraph', () => {
     expect(g.subclasses.get('cls-group')).toEqual(['cls-sect'])
   })
 
+  it('★ 三层/跨分支：classOf 末位永远是最具体的类', () => {
+    const classes: ClassesFile = {
+      version: 1,
+      classes: [
+        { id: 'cls-item', name: '物品', parentId: null, kind: 'item', properties: [], rules: [] },
+        {
+          id: 'cls-character',
+          name: '人物',
+          parentId: null,
+          kind: 'character',
+          properties: [],
+          rules: [],
+        },
+        {
+          id: 'cls-sword',
+          name: '剑修',
+          parentId: 'cls-character',
+          kind: 'character',
+          properties: [],
+          rules: [],
+        },
+      ],
+      predicates: [],
+    }
+    const node: OntologyNode = {
+      id: 'itm-duanjian',
+      type: 'item',
+      name: '断剑',
+      aliases: [],
+      summary: '',
+      attrs: {},
+      createdAt: '2026-10-27T00:00:00.000Z',
+    }
+    const edge: GraphEdge = {
+      id: 'ed-sword',
+      from: 'itm-duanjian',
+      predicate: 'instanceOf',
+      to: 'cls-sword',
+      source: { kind: 'author' },
+      createdAt: '2026-10-27T00:00:00.000Z',
+    }
+    const g = buildGraph(source({ nodes: [node], edges: [edge], classesFile: classes }))
+    // 深度 0 的默认类与无关祖先按 id 稳定排序（cls-character 在前），显式声明的子类（深度 2）在末位
+    expect(g.classOf.get('itm-duanjian')).toEqual(['cls-character', 'cls-item', 'cls-sword'])
+    expect(g.classOf.get('itm-duanjian')?.at(-1)).toBe('cls-sword')
+  })
+
   it('被 retracts 指向的边不再参与类闭包，废止行自己也不参与', () => {
     const classes: ClassesFile = {
       version: 1,
