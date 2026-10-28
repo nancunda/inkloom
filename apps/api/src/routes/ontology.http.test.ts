@@ -58,7 +58,7 @@ beforeEach(async () => {
     join(dir, 'nodes.jsonl'),
     [
       '{"id":"grp-qingyun","type":"group","name":"青云宗","createdAt":"2026-10-27T00:00:00.000Z"}',
-      '{"id":"grp-hall","type":"group","name":"听雪楼","createdAt":"2026-10-27T00:00:00.000Z"}',
+      '{"id":"grp-hall","type":"group","name":"听雪楼","attrs":{"tier":"一流"},"createdAt":"2026-10-27T00:00:00.000Z"}',
       '{"id":"itm-token","type":"item","name":"玄铁令","createdAt":"2026-10-27T00:00:00.000Z"}',
     ].join('\n'),
     'utf8',
@@ -261,6 +261,12 @@ describe('/api/ontology 查询', () => {
 
     const empty = await app().request('/api/ontology/path?from=c2&to=itm-token&maxDepth=')
     expect(((await empty.json()) as { found: boolean }).found).toBe(true)
+
+    const two = await app().request('/api/ontology/path?from=c2&to=itm-token&maxDepth=2')
+    expect(((await two.json()) as { found: boolean }).found).toBe(true)
+
+    const zero = await app().request('/api/ontology/path?from=c2&to=itm-token&maxDepth=0')
+    expect(((await zero.json()) as { found: boolean }).found).toBe(true)
   })
 
   it('query 体不是对象 / 坏了 / attr 为 null → 400', async () => {
@@ -290,6 +296,22 @@ describe('/api/ontology 查询', () => {
       body: JSON.stringify({ attr: { tier: 1 } }),
     })
     expect(numberAttr.status).toBe(400)
+
+    const arrayAttr = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify({ attr: [] }),
+    })
+    expect(arrayAttr.status).toBe(400)
+
+    // 合法 attr 仍要能命中：grp-hall 的 tier=一流
+    const hit = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify({ predicate: 'belongsTo', to: 'grp-hall', attr: { tier: '一流' } }),
+    })
+    expect(hit.status).toBe(200)
+    expect(((await hit.json()) as { edges: { id: string }[] }).edges.map((e) => e.id)).toEqual([
+      'ed-dddddd',
+    ])
   })
 
   it('★ explain：直接边与不存在', async () => {
