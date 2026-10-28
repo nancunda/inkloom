@@ -16,7 +16,8 @@ type TraceListProps = {
   className?: string | undefined;
   expanded: boolean;
   onDelete?: ((trace: TraceRecord) => void) | undefined;
-  onExpandStateChange: (expanded: boolean) => void;
+  /** Omit to hide the expand/collapse button (e.g. a panel that is always expanded) */
+  onExpandStateChange?: ((expanded: boolean) => void) | undefined;
   onRename?: ((trace: TraceRecord) => void) | undefined;
   onTraceSelect?: ((trace: Readonly<TraceRecord>) => void) | undefined;
   selectedTrace?: TraceRecord | undefined;
@@ -63,8 +64,9 @@ export const TraceList = ({
 
         <IconButton
           aria-label={expanded ? "Collapse Trace List" : "Expand Trace List"}
+          className={onExpandStateChange === undefined ? "invisible" : undefined}
           onClick={() => {
-            onExpandStateChange(!expanded);
+            onExpandStateChange?.(!expanded);
           }}
         >
           <ArrowLeft className={cn("size-3", expanded ? "" : "rotate-180")} />
@@ -74,27 +76,28 @@ export const TraceList = ({
       {expanded ? (
         <div className="border-agentprism-border flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
           <ul className="flex-1 overflow-y-auto">
-            {traces.map((trace) => (
+            {traces.map((trace, index) => (
               <li
-                className="border-agentprism-border group relative w-full list-none border-b [&:not(:last-child)]:border-b"
+                className="border-agentprism-border w-full list-none border-b [&:not(:last-child)]:border-b"
                 key={trace.id}
               >
                 <TraceListItem
+                  actions={
+                    onRename === undefined && onDelete === undefined ? undefined : (
+                      <TraceListItemMenu
+                        above={index === traces.length - 1}
+                        onDelete={onDelete}
+                        onRename={onRename}
+                        trace={trace}
+                      />
+                    )
+                  }
                   badges={trace.badges}
                   isSelected={selectedTrace?.id === trace.id}
                   onClick={() => onTraceSelect?.(trace)}
                   showDescription={false}
                   trace={trace}
                 />
-                {onRename !== undefined || onDelete !== undefined ? (
-                  <div className="absolute top-2 right-2">
-                    <TraceListItemMenu
-                      onDelete={onDelete ?? (() => undefined)}
-                      onRename={onRename ?? (() => undefined)}
-                      trace={trace}
-                    />
-                  </div>
-                ) : null}
               </li>
             ))}
           </ul>

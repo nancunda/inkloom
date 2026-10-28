@@ -72,6 +72,29 @@ function spanOf(
   }
 }
 
+/**
+ * 事件型 span 的右边界：spec §6.2 要求用「下一事件的时间」推，
+ * 否则 start === end，时间轴上宽度 0%（等于看不见）。
+ * 末尾事件没有下一事件时拉到会话结束；同一毫秒时至少给 1ms。
+ */
+function endOf(start: string, next: string | undefined, sessionEnd: string): string {
+  const startMs = new Date(start).getTime()
+  for (const candidate of [next, sessionEnd]) {
+    if (candidate === undefined) continue
+    const ms = new Date(candidate).getTime()
+    if (ms > startMs) return candidate
+  }
+  return new Date(startMs + 1).toISOString()
+}
+
+function countSpans(spans: readonly TraceSpan[]): number {
+  let total = 0
+  for (const span of spans) {
+    total += 1 + countSpans(span.children ?? [])
+  }
+  return total
+}
+
 export function toTraceData(
   meta: AgentSessionMeta,
   events: AgentEvent[],
@@ -87,7 +110,8 @@ export function toTraceData(
   const traceRecord: TraceRecord = {
     id: meta.id,
     name: meta.title,
-    spansCount: events.length,
+    // 真实的 span 数在循环跑完后才知道（见函数末尾）
+    spansCount: 0,
     durationMs: Math.max(0, ended - started),
     agentDescription: `${meta.status} · ${meta.steps} 步 · ${meta.subagentCalls} 次子智能体`,
     startTime: started,
@@ -114,13 +138,15 @@ export function toTraceData(
   // 流式增量先攒在一个 llm span 上，遇到下一条「新动作」就换新的
   let llm: TraceSpan | null = null
 
-  for (const e of events) {
+  for (const [index, e] of events.entries()) {
     const at = e.at
+    // 事件型 span（作者发言/门禁/计划/未知事件）用它收边；llm/tool/子体由自己的结束事件推进
+    const endAt = endOf(at, events[index + 1]?.at, endedAt)
     switch (e.type) {
       case 'run.started': {
         runCount += 1
         if (runCount > 1) {
-          const cont = spanOf(`cont:${e.runId}`, '继续对话', 'event', at, at)
+          const cont = spanOf(`cont:${e.runId}`, '继续对话', 'event', at, endAt)
           cont.output = e.goal
           cont.raw = [JSON.stringify(e)]
           children.push(cont)
@@ -128,7 +154,7 @@ export function toTraceData(
         break
       }
       case 'user.message': {
-        const s = spanOf(`u:${e.runId}:${e.seq}`, '作者', 'chain_operation', at, at)
+        const s = spanOf(`u:${e.runId}:${e.seq}`, '作者', 'chain_operation', at, endAt)
         s.output = e.text
         s.raw = [JSON.stringify(e)]
         children.push(s)
@@ -152,13 +178,21 @@ export function toTraceData(
         break
       }
       case 'assistant.message': {
-        // 一次性到达的完整回复（没有流式增量时才会有这条）
-        const s = spanOf(`am:${e.runId}:${e.seq}`, '模型', 'llm_call', at, at)
+        // 服务端同一条回复既发流式增量、又发 assistant.message（见 run-service 的
+        // message_end）。有增量时它只是「权威全文」，收尾覆盖到已有的 llm span 上，
+        // 否则每轮都会在时间线上多出一行重复的「模型」。
+        if (llm !== null) {
+          if (e.text.length > 0) llm.output = e.text
+          if (e.thinking.length > 0) llm.reasoning = { content: e.thinking }
+          llm.endTime = new Date(endAt)
+          llm = null
+          break
+        }
+        const s = spanOf(`am:${e.runId}:${e.seq}`, '模型', 'llm_call', at, endAt)
         s.output = e.text
         if (e.thinking.length > 0) s.reasoning = { content: e.thinking }
         s.raw = [JSON.stringify(e)]
         children.push(s)
-        llm = null
         break
       }
       case 'tool.started': {
@@ -236,16 +270,20 @@ export function toTraceData(
         break
       }
       case 'plan.updated': {
-        const s = spanOf(
-          `plan:${e.plan.id}:${e.plan.updatedAt}`,
-          `计划《${e.plan.title}》`,
-          'chain_operation',
-          at,
-          at,
-        )
+        // 服务端每次 update_task 都会发一遍 plan.updated，同一份计划会被快照 N 次；
+        // id 必须带上事件身份（runId+seq），否则 SpanCard 按 id 比对选中态时会一次命中多处。
+        const planId = `plan:${e.runId}:${e.seq}`
+        const s = spanOf(planId, `计划《${e.plan.title}》`, 'chain_operation', at, endAt)
         s.output = `${e.plan.tasks.filter((t) => t.status === 'done').length}/${e.plan.tasks.length} 完成`
         s.children = e.plan.tasks.map((t) => {
-          const task = spanOf(`task:${t.id}`, t.title, 'span', at, at, TASK_STATUS[t.status])
+          const task = spanOf(
+            `${planId}:${t.id}`,
+            t.title,
+            'span',
+            at,
+            endAt,
+            TASK_STATUS[t.status],
+          )
           task.output = t.summary ?? t.brief
           if (t.artifacts.length > 0) task.input = t.artifacts.join('\n')
           return task
@@ -261,7 +299,7 @@ export function toTraceData(
           e.gate.kind === 'plan' ? '等待批准计划' : '等待审阅任务',
           'event',
           at,
-          at,
+          endAt,
           'warning',
         )
         s.output = e.gate.title
@@ -272,7 +310,7 @@ export function toTraceData(
       case 'gate.resolved': {
         const label =
           e.decision === 'approve' ? '已批准' : e.decision === 'revise' ? '已打回' : '已跳过'
-        const s = spanOf(`gate-done:${e.runId}:${e.seq}`, label, 'event', at, at)
+        const s = spanOf(`gate-done:${e.runId}:${e.seq}`, label, 'event', at, endAt)
         s.output = e.feedback ?? ''
         s.raw = [JSON.stringify(e)]
         children.push(s)
@@ -292,7 +330,7 @@ export function toTraceData(
                 : '本轮被停止'
         const status =
           e.type === 'run.failed' ? 'error' : e.type === 'run.finished' ? 'success' : 'warning'
-        const s = spanOf(`end:${e.runId}:${e.seq}`, label, 'event', at, at, status)
+        const s = spanOf(`end:${e.runId}:${e.seq}`, label, 'event', at, endAt, status)
         if (e.type === 'run.paused') s.output = e.reason
         if (e.type === 'run.failed') s.output = e.error
         s.raw = [JSON.stringify(e)]
@@ -308,12 +346,14 @@ export function toTraceData(
         // 服务端先上线了新事件类型、前端还没跟上：留一个能看的 span，别丢信息。
         // 走到这里时 `e` 被降为 never，所以要重新捞回公共字段。
         const unknown = e as unknown as { runId: string; seq: number; type: string }
-        const s = spanOf(`ev:${unknown.runId}:${unknown.seq}`, unknown.type, 'span', at, at)
+        const s = spanOf(`ev:${unknown.runId}:${unknown.seq}`, unknown.type, 'span', at, endAt)
         s.raw = [JSON.stringify(e)]
         children.push(s)
       }
     }
   }
 
+  // 日志计数（events.length）会被 delta/ping 撑大，和右侧树对不上，所以数真实节点
+  traceRecord.spansCount = countSpans([root])
   return { traceRecord, spans: [root] }
 }

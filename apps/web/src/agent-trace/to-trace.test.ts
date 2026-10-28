@@ -110,4 +110,65 @@ describe('toTraceData', () => {
     const child = spans[0]?.children?.find((c) => c.type === 'span')
     expect(child?.raw[0]).toContain('something.new')
   })
+
+  it('★ 增量 + assistant.message 只合成一个模型 span，不重复', () => {
+    const { spans } = toTraceData(meta, [
+      ev({ type: 'run.started', goal: 'g' }),
+      ev({ type: 'thinking.delta', text: '想' }),
+      ev({ type: 'text.delta', text: '半' }),
+      ev({ type: 'assistant.message', text: '半句', thinking: '想一想' }),
+    ])
+    const llmSpans = spans[0]?.children?.filter((c) => c.type === 'llm_call') ?? []
+    expect(llmSpans).toHaveLength(1)
+    expect(llmSpans[0]?.output).toBe('半句')
+    expect(llmSpans[0]?.reasoning?.content).toBe('想一想')
+  })
+
+  it('★ 两次 plan.updated 的计划与任务 id 互不相同', () => {
+    const plan = (tasks: { id: string; status: string }[]) => ({
+      version: 1,
+      id: 'p1',
+      title: '计划',
+      goal: 'g',
+      status: 'approved',
+      summary: null,
+      feedback: null,
+      createdAt: '2026-10-28T10:00:00.000Z',
+      updatedAt: '2026-10-28T10:00:00.000Z',
+      tasks: tasks.map((t) => ({
+        ...t,
+        title: t.id,
+        skill: 'chapter',
+        brief: '',
+        review: 'none',
+        artifacts: [],
+        feedback: null,
+        summary: null,
+        reviewed: false,
+      })),
+    })
+    const { spans } = toTraceData(meta, [
+      ev({ type: 'run.started', goal: 'g' }),
+      ev({ type: 'plan.updated', seq: 2, plan: plan([{ id: 't1', status: 'todo' }]) }),
+      ev({ type: 'plan.updated', seq: 3, plan: plan([{ id: 't1', status: 'done' }]) }),
+    ])
+    const plans = spans[0]?.children?.filter((c) => c.title.startsWith('计划')) ?? []
+    expect(plans).toHaveLength(2)
+    const ids = plans.flatMap((p) => [p.id, ...(p.children ?? []).map((c) => c.id)])
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('★ ping 不建 span，事件型 span 的时长不为零', () => {
+    const { spans } = toTraceData(meta, [
+      ev({ type: 'run.started', goal: 'g' }),
+      ev({ type: 'user.message', text: '写', seq: 2 }),
+      ev({ type: 'ping', seq: 3, at: '2026-10-28T10:00:03.000Z' }),
+      ev({ type: 'ping', seq: 4, at: '2026-10-28T10:00:04.000Z' }),
+    ])
+    const children = spans[0]?.children ?? []
+    expect(children).toHaveLength(1)
+    const author = children[0]
+    expect(author?.title).toBe('作者')
+    expect((author?.endTime.getTime() ?? 0) - (author?.startTime.getTime() ?? 0)).toBeGreaterThan(0)
+  })
 })

@@ -1,5 +1,5 @@
 import type { TraceRecord } from "@evilmartians/agent-prism-types";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import type { AvatarProps } from "../Avatar";
 import type { ReadonlyProps } from "../ReadonlyProps";
@@ -8,11 +8,14 @@ import { Avatar } from "../Avatar";
 import { Badge } from "../Badge";
 
 type TraceListItemHeaderProps = {
+  /** Row actions, rendered left of the span badge */
+  actions?: ReactNode | undefined;
   avatar?: Omit<AvatarProps, "ref"> | undefined;
   trace: TraceRecord;
 };
 
 export const TraceListItemHeader = ({
+  actions,
   avatar,
   trace,
 }: ReadonlyProps<TraceListItemHeaderProps>): ReactElement => {
@@ -27,6 +30,7 @@ export const TraceListItemHeader = ({
       </div>
 
       <div className="flex items-center gap-2">
+        {actions}
         <Badge
           label={
             trace.spansCount === 1 ? "1 span" : `${trace.spansCount} spans`

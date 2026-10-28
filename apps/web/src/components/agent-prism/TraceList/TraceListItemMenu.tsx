@@ -9,23 +9,30 @@ import type { ReadonlyProps } from "../ReadonlyProps";
 import { IconButton } from "../IconButton";
 
 type TraceListItemMenuProps = {
-  onDelete: (trace: TraceRecord) => void;
-  onRename: (trace: TraceRecord) => void;
+  /** Render the dropdown above the trigger (use for the last row of a scroll container) */
+  above?: boolean | undefined;
+  onDelete?: ((trace: TraceRecord) => void) | undefined;
+  onRename?: ((trace: TraceRecord) => void) | undefined;
   trace: TraceRecord;
 };
 
 /**
- * Per-row "..." menu. Deliberately dependency-free: a plain button plus an
- * absolutely positioned list, closed on outside mousedown or on picking an
- * action.
+ * Per-row "..." actions. Deliberately dependency-free: a plain trigger button
+ * plus an absolutely positioned panel, closed on outside mousedown, on Escape,
+ * or on picking an action.
+ *
+ * Not a `role="menu"`: that role promises arrow-key navigation we do not
+ * implement, so the actions stay plain buttons inside a disclosure.
  */
 export const TraceListItemMenu = ({
+  above = false,
   onDelete,
   onRename,
   trace,
-}: ReadonlyProps<TraceListItemMenuProps>): ReactElement => {
+}: ReadonlyProps<TraceListItemMenuProps>): ReactElement | null => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -37,15 +44,25 @@ export const TraceListItemMenu = ({
         setOpen(false);
       }
     };
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
     document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open]);
 
-  const run = (action: (target: TraceRecord) => void) => (): void => {
+  if (onRename === undefined && onDelete === undefined) return null;
+
+  const run = (action: ((target: TraceRecord) => void) | undefined) => (): void => {
     setOpen(false);
-    action(trace);
+    action?.(trace);
   };
 
   const itemClassName =
@@ -62,12 +79,11 @@ export const TraceListItemMenu = ({
     >
       <IconButton
         aria-expanded={open}
-        aria-haspopup="menu"
         aria-label={`更多操作：${trace.name}`}
-        className="group-hover:opacity-100 focus-visible:opacity-100 opacity-0 transition-opacity"
         onClick={() => {
           setOpen((value) => !value);
         }}
+        ref={triggerRef}
         size="6"
         variant="ghost"
       >
@@ -76,27 +92,22 @@ export const TraceListItemMenu = ({
 
       {open ? (
         <div
-          className="border-agentprism-border bg-agentprism-background absolute top-full right-0 z-10 mt-1 w-28 overflow-hidden rounded-md border shadow-md"
-          role="menu"
+          className={`border-agentprism-border bg-agentprism-background absolute right-0 z-10 w-28 overflow-hidden rounded-md border shadow-md ${
+            above ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
         >
-          <button
-            className={itemClassName}
-            onClick={run(onRename)}
-            role="menuitem"
-            type="button"
-          >
-            <Pencil className="size-3" />
-            改名
-          </button>
-          <button
-            className={itemClassName}
-            onClick={run(onDelete)}
-            role="menuitem"
-            type="button"
-          >
-            <Trash2 className="size-3" />
-            删除
-          </button>
+          {onRename === undefined ? null : (
+            <button className={itemClassName} onClick={run(onRename)} type="button">
+              <Pencil className="size-3" />
+              改名
+            </button>
+          )}
+          {onDelete === undefined ? null : (
+            <button className={itemClassName} onClick={run(onDelete)} type="button">
+              <Trash2 className="size-3" />
+              删除
+            </button>
+          )}
         </div>
       ) : null}
     </div>

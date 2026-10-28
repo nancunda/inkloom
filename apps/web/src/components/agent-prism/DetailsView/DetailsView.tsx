@@ -116,6 +116,8 @@ type ReadonlySpan = DeepReadonly<TraceSpan>;
  * reasoning, whatever the vendor, even when only a reasoning-token count is
  * known.
  */
+const BUILTIN_TABS = ["attributes", "context", "input-output", "raw", "thinking"] as const;
+
 const getTabItems = (
   data: ReadonlySpan,
   extraTabs: readonly DetailsViewExtraTab[],
@@ -148,11 +150,14 @@ const getTabItems = (
     label: "Attributes",
     value: "attributes",
   },
-  ...extraTabs.map((tab) => ({
-    ...(tab.icon === undefined ? {} : { icon: tab.icon }),
-    label: tab.title,
-    value: tab.key,
-  })),
+  ...extraTabs
+    // 与内置 id 撞名会让同一个 tab 渲染两份内容，直接忽略
+    .filter((tab) => !(BUILTIN_TABS as readonly string[]).includes(tab.key))
+    .map((tab) => ({
+      ...(tab.icon === undefined ? {} : { icon: tab.icon }),
+      label: tab.title,
+      value: tab.key,
+    })),
   {
     icon: <SquareTerminal className="size-4" />,
     label: "RAW",
@@ -236,7 +241,7 @@ export const DetailsView = ({
         {tab === "attributes" && <DetailsViewAttributesTab data={data} />}
         {tab === "raw" && <DetailsViewRawDataTab data={data} />}
         {extraTabs
-          .filter((item) => item.key === tab)
+          .filter((item) => item.key === tab && !(BUILTIN_TABS as readonly string[]).includes(item.key))
           .map((item) => (
             <Fragment key={item.key}>{item.content}</Fragment>
           ))}

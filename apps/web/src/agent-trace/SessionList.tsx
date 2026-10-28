@@ -5,8 +5,8 @@ import { TraceList } from '../components/agent-prism/TraceList/TraceList'
 /**
  * 会话列表：把 AgentPrism 的 TraceList 收窄成「会话」语义。
  *
- * 面板在共创页是常驻展开的（不折叠），所以 onExpandStateChange 是个空操作——
- * 折叠按钮留在上游组件里，但这里不需要它改变状态。
+ * 面板在共创页是常驻展开的，所以不传 onExpandStateChange——上游那个折叠按钮
+ * 只在传了回调时才可见，否则它会成为一个点了没反应的死按钮。
  */
 export function SessionList(props: {
   traces: TraceRecord[]
@@ -19,7 +19,6 @@ export function SessionList(props: {
     <TraceList
       expanded
       onDelete={props.onDelete}
-      onExpandStateChange={() => undefined}
       onRename={props.onRename}
       onTraceSelect={props.onSelect}
       {...(props.selected === undefined ? {} : { selectedTrace: props.selected })}

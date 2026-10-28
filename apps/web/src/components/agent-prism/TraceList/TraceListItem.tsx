@@ -1,5 +1,5 @@
 import type { TraceRecord } from "@evilmartians/agent-prism-types";
-import type { KeyboardEvent, ReactElement } from "react";
+import type { KeyboardEvent, ReactElement, ReactNode } from "react";
 
 import cn from "classnames";
 import { useCallback } from "react";
@@ -15,6 +15,8 @@ import { TokensBadge } from "../TokensBadge";
 import { TraceListItemHeader } from "./TraceListItemHeader";
 
 type TraceListItemProps = {
+  /** Row actions, rendered in the header next to the span badge */
+  actions?: ReactNode | undefined;
   avatar?: Omit<AvatarProps, "ref"> | undefined;
   badges?: Omit<BadgeProps, "ref">[] | undefined;
   isSelected?: boolean | undefined;
@@ -24,6 +26,7 @@ type TraceListItemProps = {
 };
 
 export const TraceListItem = ({
+  actions,
   avatar,
   badges,
   isSelected,
@@ -59,7 +62,7 @@ export const TraceListItem = ({
       role="button"
       tabIndex={0}
     >
-      <TraceListItemHeader avatar={avatar} trace={trace} />
+      <TraceListItemHeader actions={actions} avatar={avatar} trace={trace} />
 
       <div className="flex flex-wrap items-center gap-2">
         {showDescription ? (
