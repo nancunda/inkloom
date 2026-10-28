@@ -79,8 +79,7 @@ export function toolsForRole(role: AgentRole, all: readonly AgentTool[]): AgentT
 ## 4. 运行器 `apps/api/src/agent/subagent.ts`
 
 ```ts
-import type { AgentTool, StreamFn } from '@earendil-works/pi-agent-core'
-import type { Model } from '@earendil-works/pi-ai'
+import type { AgentInitialState, AgentTool, StreamFn } from '@earendil-works/pi-agent-core'
 
 export interface SubagentRequest {
   role: AgentRoleId
@@ -114,8 +113,8 @@ export type SubagentEvent =
     }
 
 export interface SubagentRunnerDeps {
-  /** Pi 模型对象（@earendil-works/pi-ai 的 Model<any>，与主 Agent 同一个） */
-  model: Model<any>
+  /** Pi 模型对象（与主 Agent 同一个；类型取 AgentInitialState，Biome 禁显式 any） */
+  model: NonNullable<AgentInitialState['model']>
   streamFn: StreamFn
   /** 工具全集用惰性 getter：runner 在 delegate 执行期才取，避免与 createAgentTools 循环依赖 */
   getTools: () => readonly AgentTool[]
