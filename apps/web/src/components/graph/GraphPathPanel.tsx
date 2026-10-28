@@ -1,4 +1,5 @@
 import type { OntologyPathData } from '../../api/types'
+import { pathHops } from '../../lib/graph-path'
 import { predicateLabel } from './graph-theme'
 
 interface Props {
@@ -22,6 +23,7 @@ export function GraphPathPanel({
 }: Props) {
   const names = new Map((path?.nodes ?? []).map((n) => [n.id, n.name]))
   const nameOf = (id: string): string => names.get(id) ?? id
+  const hops = path === undefined ? [] : pathHops(path.nodes, path.edges)
 
   return (
     <section className="border-b border-neutral-200 bg-white px-4 py-3">
@@ -43,14 +45,18 @@ export function GraphPathPanel({
         !loading &&
         (path.found ? (
           <ol className="mt-1 space-y-0.5">
-            {path.edges.map((e) => (
-              <li key={e.id} className="text-[11px] leading-5 text-neutral-700">
-                {nameOf(e.from)}{' '}
+            {hops.map((h) => (
+              <li
+                key={`${h.from}-${h.predicate}-${h.to}`}
+                className="text-[11px] leading-5 text-neutral-700"
+              >
+                {nameOf(h.from)}{' '}
                 <span className="text-neutral-400">
-                  —{predicateLabel(e.predicate, predicateLabels)}→
+                  —{predicateLabel(h.predicate, predicateLabels)}
+                  {h.back && !h.undirected ? '（反向）' : ''}→
                 </span>{' '}
-                {nameOf(e.to)}
-                {e.virtual ? <span className="ml-1 text-[10px] text-neutral-400">只读</span> : null}
+                {nameOf(h.to)}
+                {h.virtual ? <span className="ml-1 text-[10px] text-neutral-400">只读</span> : null}
               </li>
             ))}
           </ol>

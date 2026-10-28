@@ -4,9 +4,13 @@ import cytoscape, {
   type EventObject,
   type LayoutOptions,
 } from 'cytoscape'
+import fcose from 'cytoscape-fcose'
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import type { GraphElements } from '../../lib/graph-elements'
 import { GRAPH_STYLE } from './graph-theme'
+
+// ★ 内置 cose 不认识复合节点（类框会被拉得巨大）：用 fcose 这种复合感知布局
+cytoscape.use(fcose)
 
 export type GraphLayoutName = 'cose' | 'breadthfirst' | 'concentric' | 'grid' | 'preset'
 
@@ -33,12 +37,16 @@ interface Props {
 
 const LAYOUTS: Record<Exclude<GraphLayoutName, 'preset'>, LayoutOptions> = {
   cose: {
-    name: 'cose',
+    name: 'fcose',
     animate: false,
     fit: true,
     padding: 36,
-    nodeRepulsion: () => 12000,
-    idealEdgeLength: () => 100,
+    // 同类的实例互相吸引、组间保持距离：分组框才会紧凑
+    nodeRepulsion: () => 4500,
+    idealEdgeLength: () => 80,
+    nodeSeparation: 60,
+    gravity: 0.3,
+    packComponents: true,
   } as LayoutOptions,
   breadthfirst: {
     name: 'breadthfirst',
@@ -121,6 +129,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   const posRef = useRef<Record<string, { x: number; y: number }>>({})
   /** 当前高亮集合：元素重建会携 class 一起丢掉，重建后靠它重放 */
   const hlRef = useRef<string[]>([])
+  /** 布局代次：旧的 layoutstop 回调不能覆盖新的一次重建 */
+  const layoutTokenRef = useRef(0)
   /** 书内容变了：旧坐标与旧高亮都失效，否则新节点会跟旧位置混搭 */
   const sigRef = useRef(signature)
   if (sigRef.current !== signature) {
@@ -138,7 +148,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         if (cy === null) return
         // 用户主动换布局 = 坐标全变：布局完就把新坐标记下来并落盘
         applyLayout(cy, name, () => {
-          posRef.current = positionsOf(cy)
+          // 合并而不是替换：筛选状态下只看得见子集，不能把隐藏节点的坐标弄丢
+          posRef.current = { ...posRef.current, ...positionsOf(cy) }
           cbRef.current.onPositions?.(posRef.current)
           cy.fit(undefined, 36)
         })
@@ -252,17 +263,39 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
     // ★ 过滤只该增减元素，不该把作者拖好的图推倒重来：跑完布局再把已知坐标覆盖回去
     const known = { ...(presetRef.current ?? {}), ...posRef.current }
     const hasKnown = Object.keys(known).length > 0
-    applyLayout(cy, layoutRef.current === 'preset' && !hasKnown ? 'cose' : layoutRef.current)
-    cy.batch(() => {
-      cy.nodes().forEach((n) => {
-        const p = known[n.id()]
-        if (p !== undefined) n.position(p)
+    const name = layoutRef.current
+    const fallback = name === 'preset' && !hasKnown
+    // ★ fcose 是异步布局：坐标回填、fit、高亮重放都必须等 layoutstop，否则会拿旧位置
+    const token = layoutTokenRef.current + 1
+    layoutTokenRef.current = token
+    const finish = (): void => {
+      if (token !== layoutTokenRef.current) return
+      cy.batch(() => {
+        cy.nodes().forEach((n) => {
+          const p = known[n.id()]
+          if (p !== undefined) n.position(p)
+        })
       })
-    })
-    posRef.current = positionsOf(cy)
-    cy.fit(undefined, 36)
-    // 重建会把 class 一起清掉：把当前高亮静默重放回去（不抢镜头）
-    applyHighlight(cy, hlRef.current, false)
+      posRef.current = { ...posRef.current, ...positionsOf(cy) }
+      // 复合节点的包围盒在 layoutstop 同一帧里还可能没算完：先强制算一遍，下帧再 fit 一次
+      const zoomToFit = (): void => {
+        if (token !== layoutTokenRef.current) return
+        cy.nodes().forEach((n) => {
+          n.boundingBox()
+        })
+        cy.fit(undefined, 36)
+      }
+      zoomToFit()
+      window.requestAnimationFrame(zoomToFit)
+      // 重建会把 class 一起清掉：把当前高亮静默重放回去（不抢镜头）
+      applyHighlight(cy, hlRef.current, false)
+    }
+
+    if (name === 'preset' && !fallback) {
+      finish()
+      return
+    }
+    applyLayout(cy, fallback ? 'cose' : name, finish)
   }, [elements])
 
   return <div ref={boxRef} className="h-full w-full" data-testid="graph-canvas" />
