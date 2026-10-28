@@ -23,7 +23,7 @@
 | **世界** | 规则、力量体系、地点与路线（地图上拖拽） |
 | **角色** | 角色卡、关系网络（拖两个节点连线建关系）、形象图 |
 | **故事** | 卷、故事弧、逐章蓝图、线索轨迹 |
-| **图谱** | 类—实例—边：人物/地点/规则自动入图；点节点看属性、来源与关系 |
+| **图谱** | Cytoscape 复合图：类=分组框、实例=节点、拖拽记住位置；按类型/谓词/跳数过滤，右键查两点路径 |
 | **写作** | 场景候选、diff、接受/拒绝、整场重写、定稿、专注模式 |
 | **素材** | 形象图与参考资产（prompt / provider / params 可复现） |
 | **设置** | 模型、密钥、判断层开关 |
@@ -47,13 +47,19 @@
 
 ## 图谱：看得见的世界模型
 
-![图谱](docs/screenshots/accept-ontology.png)
+![图谱](docs/screenshots/accept-ontology-v2.png)
 
+- 画布是 Cytoscape 复合图：每个类一个分组框，实例挂在最具体的类里；`instanceOf` 用父子关系表达，不再单独画边
+- 位置会记住：拖过的坐标存在浏览器本地，key 是 `inkloom:graph-layout:<bookId>:<signature>`；书内容一变旧坐标自动作废
+- 布局可切：力导向（fcose）/ 层级 / 同心圆 / 网格；双击类框折叠；切换布局会重置拖拽位置（工具栏有提示）
+- 过滤与搜索：节点类型多选、谓词多选、左栏类树、「只看 N 跳邻居」；搜索命中会高亮并聚焦
+- 路径：右键节点设起点 / 终点，右栏逐跳显示「林岚 —师徒→ 玄真」，其余节点淡出
 - 人物、地点、规则、线索、卷是**虚拟节点**：来自各自文件，改要去原模块改
 - 势力、物品、概念可以写进 `world/ontology/nodes.jsonl`；类与谓词在 `world/ontology/classes.json`
 - 跨类型边在 `world/ontology/edges.jsonl`（append-only，带章节区间与来源）
 - 坏行不会整页报错：跳过该行并在页面底部列出「第几行坏了」
-- 图谱只读：切片 1 不做提案与事件；Agent 提议、事件链沙盘在后续切片
+- 图谱只读：Agent 用 `query_graph` / `find_path` / `explain_fact` 查；改设定走 `write_element`
+- 同一套推理也是 HTTP 接口：`GET /api/ontology/path`、`POST /api/ontology/query`、`GET /api/ontology/explain`
 
 ---
 
@@ -216,7 +222,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 382 单元 + 333 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 384 单元 + 339 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
