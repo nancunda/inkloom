@@ -387,7 +387,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     name: 'read_book',
     label: '读取全书',
     description:
-      '一次读取本书的设定全貌：novel.json、角色、关系、签名、世界规则、力量体系、地点、路线、卷、全部蓝图、章节状态。搭世界或写蓝图前先读它。',
+      '一次读取本书的设定全貌：novel.json、角色、关系、签名、世界规则、力量体系、地点、路线、卷、全部蓝图、章节状态；末尾附图谱概况（节点/边/类计数、前 8 类实例数、error 问题、最近 5 条已批准资料卡）。搭世界或写蓝图前先读它。',
     parameters: READ_BOOK,
     execute: async () => {
       const snap = await buildBookSnapshot()
