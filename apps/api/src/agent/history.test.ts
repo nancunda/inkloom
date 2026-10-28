@@ -93,31 +93,23 @@ describe('compactMessages', () => {
     expect(out.length).toBeLessThan(msgs.length)
   })
 
-  it('★ 落在最近窗口里的 toolCall 与 toolResult 必须同存（拆散会让续接 400）', () => {
+  it('★ 任意预算下 toolCall 与 toolResult 都必须同进退（压缩/丢弃都不许拆）', () => {
     const msgs = [
       user('目标'),
-      ...Array.from({ length: 20 }, () => user('f'.repeat(100))),
-      assistantCall('查一下', 'c1'),
-      toolResult('结果', 'c1'),
-      user('最后'),
-    ]
-    const out = compactMessages(msgs, { keepRecent: 3, budgetChars: 500 })
-    const texts = out.map((m) => JSON.stringify(m))
-    expect(texts.some((t) => t.includes('"c1"'))).toBe(true)
-    expect(texts.filter((t) => t.includes('"c1"')).length).toBe(2)
-  })
-
-  it('★ 落在旧区的 toolCall 与 toolResult 必须同删（不留半对）', () => {
-    const msgs = [
-      user('目标'),
-      assistantCall('查一下', 'c1'),
-      toolResult('结果', 'c1'),
+      // 超 ASSISTANT_CLIP：逼出压缩路径，旧实现会在这里把 toolCall 抹掉
+      assistantCall('y'.repeat(2000), 'c1'),
+      toolResult('x'.repeat(5000), 'c1'),
       ...Array.from({ length: 20 }, () => user('f'.repeat(100))),
       user('最后'),
     ]
-    const out = compactMessages(msgs, { keepRecent: 3, budgetChars: 500 })
-    const texts = out.map((m) => JSON.stringify(m))
-    expect(texts.filter((t) => t.includes('"c1"')).length).toBe(0)
+    for (const budget of [1000, 4000, 8000]) {
+      const texts = compactMessages(msgs, { keepRecent: 3, budgetChars: budget }).map((m) =>
+        JSON.stringify(m),
+      )
+      const call = texts.some((t) => t.includes('"type":"toolCall"'))
+      const result = texts.some((t) => t.includes('"toolCallId":"c1"'))
+      expect({ budget, paired: call === result }).toEqual({ budget, paired: true })
+    }
   })
 
   it('消息数少于 keepRecent 时不崩', () => {

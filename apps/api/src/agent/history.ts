@@ -48,20 +48,10 @@ function blocksOf(message: AgentMessage): ContentBlock[] | null {
   return Array.isArray(content) ? (content as ContentBlock[]) : null
 }
 
-/** 字符口径的正文：只用于「这段文本有多长」，不参与体积预算 */
-function textOf(message: AgentMessage): string {
-  const content = (message as { content?: unknown }).content
-  if (typeof content === 'string') return content
-  const blocks = blocksOf(message)
-  if (blocks === null) return ''
-  let out = ''
-  for (const block of blocks) {
-    if (typeof block.text === 'string') out += block.text
-  }
-  return out
-}
-
-/** ★ 预算按整条消息的 JSON 体积算：thinking / details / 图片也占真实空间，只数字会漏 */
+/**
+ * ★ 预算按整条消息的 JSON 字符数算：thinking / details / 图片也占真实空间，只数正文会漏。
+ *   这是字符口径（中文落盘字节约为 3 倍），上限 120k 字符对应快照 < 400KB，可接受。
+ */
 function sizeOf(messages: AgentMessage[]): number {
   let total = 0
   for (const message of messages) total += JSON.stringify(message).length
@@ -115,7 +105,7 @@ function compressMessage(message: AgentMessage): AgentMessage {
 function hasToolCall(message: AgentMessage): boolean {
   if ((message as { role?: string }).role !== 'assistant') return false
   const blocks = blocksOf(message)
-  return blocks !== null && blocks.some((b) => b.type === 'toolCall')
+  return blocks?.some((b) => b.type === 'toolCall') ?? false
 }
 
 /**
@@ -160,6 +150,7 @@ function groupsToKeep(groups: AgentMessage[][], keepRecent: number): number {
 /**
  * 预算内不动；超预算时压旧组、再从最旧的组开始丢。
  * ★ 首组（作者原始目标）与最后 keepRecent 条对应的组永远保留，否则续接接不上话。
+ *   尾窗口不压缩是取舍：里面若有超大工具输出会短暂超预算，但比拆散上下文安全。
  */
 export function compactMessages(
   messages: AgentMessage[],
@@ -202,7 +193,7 @@ export async function saveMessageSnapshot(
     version: 1,
     sessionId,
     savedAt: new Date().toISOString(),
-    messages: compactMessages(stripSystemMessages(snap.messages)),
+    messages: compactMessages(snap.messages),
   }
   // atomicWrite 不建目录：第一次存快照时 sessions/ 还不存在
   await mkdir(sessionDir(root), { recursive: true })
