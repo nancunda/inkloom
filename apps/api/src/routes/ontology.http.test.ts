@@ -192,3 +192,65 @@ describe('/api/ontology', () => {
     expect((await app().request('/api/ontology/graph')).status).toBe(404)
   })
 })
+
+describe('/api/ontology 查询', () => {
+  it('★ 最短路径：c1 → 青云宗（belongsTo）', async () => {
+    const r = await app().request('/api/ontology/path?from=c1&to=grp-qingyun')
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as {
+      found: boolean
+      nodes: { id: string }[]
+      edges: { id: string }[]
+    }
+    expect(j.found).toBe(true)
+    expect(j.nodes.map((n) => n.id)).toEqual(['c1', 'grp-qingyun'])
+    expect(j.edges.map((e) => e.id)).toEqual(['ed-bbbbbb'])
+  })
+
+  it('路径缺参 → 400；找不到 → found=false', async () => {
+    expect((await app().request('/api/ontology/path?from=c1')).status).toBe(400)
+    const j = (await (await app().request('/api/ontology/path?from=c1&to=nope')).json()) as {
+      found: boolean
+    }
+    expect(j.found).toBe(false)
+  })
+
+  it('★ POST /query 按类与谓词查', async () => {
+    const byClass = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify({ classId: 'cls-sect' }),
+    })
+    expect(byClass.status).toBe(200)
+    const j1 = (await byClass.json()) as { nodes: { id: string }[] }
+    expect(j1.nodes.map((n) => n.id)).toEqual(['grp-qingyun'])
+
+    const byEdge = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify({ predicate: 'belongsTo', from: 'c1', to: 'grp-qingyun' }),
+    })
+    const j2 = (await byEdge.json()) as { nodes: { id: string }[]; edges: { id: string }[] }
+    expect(j2.edges.map((e) => e.id)).toEqual(['ed-bbbbbb'])
+    expect(j2.nodes.map((n) => n.id).sort()).toEqual(['c1', 'grp-qingyun'])
+  })
+
+  it('query 体不是对象 → 400', async () => {
+    const r = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify(['x']),
+    })
+    expect(r.status).toBe(400)
+  })
+
+  it('★ explain：直接边与不存在', async () => {
+    const ok = await app().request(
+      '/api/ontology/explain?from=c1&predicate=belongsTo&to=grp-qingyun',
+    )
+    const j = (await ok.json()) as { found: boolean; direct: boolean; reason: string }
+    expect(j.found).toBe(true)
+    expect(j.direct).toBe(true)
+    expect(j.reason).toContain('直接')
+
+    const miss = await app().request('/api/ontology/explain?from=c1&predicate=ally&to=nope')
+    expect(((await miss.json()) as { found: boolean }).found).toBe(false)
+  })
+})

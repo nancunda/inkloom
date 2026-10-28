@@ -1,3 +1,4 @@
+import { explainFact, findPath, matchPattern } from '@inkloom/core'
 import { InkloomError } from '@inkloom/shared'
 import { Hono } from 'hono'
 import { clearGraphCache, getGraphData } from '../services/ontology-service.js'
@@ -142,4 +143,41 @@ ontologyRoutes.get('/ontology/search', async (c) => {
 ontologyRoutes.post('/ontology/reload', (c) => {
   clearGraphCache()
   return c.json({ ok: true })
+})
+
+/** 查询相关的公共取参：缺参直接 400，避免把 undefined 当成 id 去查 */
+function required(raw: string | undefined, key: string): string {
+  const v = (raw ?? '').trim()
+  if (v.length === 0) throw new InkloomError('INVALID_INPUT', `缺少 ${key}`)
+  return v
+}
+
+function depthOf(raw: string | undefined): number {
+  const n = Number(raw ?? '4')
+  if (!Number.isInteger(n)) return 4
+  return Math.min(Math.max(n, 1), 8)
+}
+
+ontologyRoutes.get('/ontology/path', async (c) => {
+  const from = required(c.req.query('from'), 'from')
+  const to = required(c.req.query('to'), 'to')
+  const { snapshot } = await getGraphData()
+  return c.json(findPath(snapshot, from, to, depthOf(c.req.query('maxDepth'))))
+})
+
+ontologyRoutes.post('/ontology/query', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as unknown
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new InkloomError('INVALID_INPUT', '请求体必须是 GraphPattern 对象')
+  }
+  const { snapshot } = await getGraphData()
+  return c.json(matchPattern(snapshot, body as Parameters<typeof matchPattern>[1]))
+})
+
+ontologyRoutes.get('/ontology/explain', async (c) => {
+  const from = required(c.req.query('from'), 'from')
+  const predicate = required(c.req.query('predicate'), 'predicate')
+  const to = required(c.req.query('to'), 'to')
+  const { snapshot } = await getGraphData()
+  return c.json(explainFact(snapshot, from, predicate, to))
 })
