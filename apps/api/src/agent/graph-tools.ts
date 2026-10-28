@@ -130,16 +130,22 @@ export function createGraphTools(): AgentTool[] {
         const a = nameOf(snap, r.nodes[i]?.id ?? e.from)
         const b = nameOf(snap, r.nodes[i + 1]?.id ?? e.to)
         const label = snap.predicates.find((p) => p.id === e.predicate)?.label ?? e.predicate
-        // ★ BFS 不看方向：反向跨越时必须按边自身方向渲染，否则会把事实说反
+        // ★ BFS 不看方向：反向跨越时按边自身方向渲染；无向边没有「反向」一说
         const back = r.nodes[i]?.id !== e.from
-        const line = back ? `${b} —${label}→ ${a}（反向）` : `${a} —${label}→ ${b}`
+        const backTag = back && e.undirected !== true ? '（反向）' : ''
+        const line = back ? `${b} —${label}→ ${a}${backTag}` : `${a} —${label}→ ${b}`
         return `${i + 1}. ${line}${e.virtual ? '（虚拟）' : ''}`
       })
       if (r.edges.length === 0) {
-        return ok('同一个节点，0 跳。', { found: true, hops: 0 })
+        return ok('同一个节点，0 跳。', {
+          found: true,
+          hops: 0,
+          nodes: nodeFacts(r.nodes),
+          edges: [],
+        })
       }
       return ok(
-        `找到路径：${r.nodes.map((n) => n.name).join(' → ')}（${r.edges.length} 跳）\n${hops.join('\n')}`,
+        `找到路径（${r.edges.length} 跳）：${r.nodes.map((n) => n.name).join(' → ')}\n${hops.join('\n')}`,
         { found: true, hops: r.edges.length, nodes: nodeFacts(r.nodes), edges: edgeFacts(r.edges) },
       )
     },

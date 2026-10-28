@@ -25,6 +25,7 @@ const snap = {
   nodes: new Map([
     ['c1', { id: 'c1', type: 'character', name: '林岚', attrs: { tier: '一流' }, virtual: true }],
     ['c2', { id: 'c2', type: 'character', name: '玄真', attrs: {}, virtual: true }],
+    ['c3', { id: 'c3', type: 'character', name: '沈砚', attrs: {}, virtual: true }],
   ]),
   edges: [
     {
@@ -32,6 +33,14 @@ const snap = {
       from: 'c1',
       predicate: 'belongsTo',
       to: 'c2',
+      virtual: true,
+      source: { kind: 'agent' },
+    },
+    {
+      id: 'ed-2',
+      from: 'c2',
+      predicate: 'belongsTo',
+      to: 'c3',
       virtual: true,
       source: { kind: 'agent' },
     },
@@ -71,8 +80,8 @@ describe('graph tools', () => {
     h.snapshot.mockResolvedValue(snap)
   })
 
-  it('★ query_graph 返回摘要与 JSON', async () => {
-    const res = await tool('query_graph').execute('1', { predicate: 'belongsTo' })
+  it('★ query_graph 返回摘要与 details', async () => {
+    const res = await tool('query_graph').execute('1', { predicate: 'belongsTo', from: 'c1' })
     expect(res.isError).toBeFalsy()
     expect(textOf(res)).toContain('1 条边')
     expect(textOf(res)).toContain('林岚')
@@ -88,16 +97,20 @@ describe('graph tools', () => {
     expect(details.edges.map((e) => e.id)).toEqual(['ed-1'])
   })
 
-  it('★ query_graph 透传 classId / attr / limit', async () => {
-    const res = await tool('query_graph').execute('1c', {
-      classId: 'cls-character',
-      attr: { tier: '一流' },
-      limit: 1,
-    })
-    expect(res.isError).toBeFalsy()
-    expect(textOf(res)).toContain('1 个节点')
-    expect(textOf(res)).toContain('林岚')
+  it('★ query_graph 真的透传 classId（不存在的类 → 空）', async () => {
+    const res = await tool('query_graph').execute('1d', { classId: 'cls-nonexistent' })
+    expect(res.isError).toBe(true)
+    expect(textOf(res)).toContain('没有匹配')
+  })
+
+  it('★ query_graph 真的透传 attr', async () => {
+    const res = await tool('query_graph').execute('1e', { attr: { tier: '一流' } })
     expect((res.details as { nodes: { id: string }[] }).nodes.map((n) => n.id)).toEqual(['c1'])
+  })
+
+  it('★ query_graph 真的截断 limit', async () => {
+    const res = await tool('query_graph').execute('1f', { nodeType: 'character', limit: 1 })
+    expect((res.details as { nodeCount: number }).nodeCount).toBe(1)
   })
 
   it('query_graph 查不到时 isError 并提示放宽', async () => {
@@ -121,9 +134,26 @@ describe('graph tools', () => {
     expect(textOf(back)).toContain('1. 林岚 —隶属→ 玄真（反向）')
   })
 
-  it('find_path 同一节点：0 跳', async () => {
+  it('★ find_path 多跳且反向：逐跳都按边方向渲染', async () => {
+    const forward = await tool('find_path').execute('2d', { from: 'c1', to: 'c3' })
+    expect(textOf(forward)).toContain('1. 林岚 —隶属→ 玄真')
+    expect(textOf(forward)).toContain('2. 玄真 —隶属→ 沈砚')
+    expect(textOf(forward)).not.toContain('反向')
+
+    const back = await tool('find_path').execute('2e', { from: 'c3', to: 'c1' })
+    expect(textOf(back)).toContain('1. 玄真 —隶属→ 沈砚（反向）')
+    expect(textOf(back)).toContain('2. 林岚 —隶属→ 玄真（反向）')
+  })
+
+  it('find_path 同一节点：0 跳且 details 形状一致', async () => {
     const res = await tool('find_path').execute('2c', { from: 'c1', to: 'c1' })
-    expect(textOf(res)).toContain('0 跳')
+    expect(textOf(res)).toContain('同一个节点')
+    expect(res.details).toMatchObject({
+      found: true,
+      hops: 0,
+      nodes: [{ id: 'c1' }],
+      edges: [],
+    })
   })
 
   it('★ find_path 找不到时 isError，并提示用 query_graph', async () => {
