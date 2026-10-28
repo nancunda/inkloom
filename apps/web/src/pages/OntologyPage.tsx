@@ -107,20 +107,35 @@ export function OntologyPage() {
     }
   }, [menu])
 
+  // 类节点不是图里的实体：既不能作路径端点，也没法当 N 跳锚点
+  const menuKind =
+    menu === null ? undefined : filtered.nodes.find((n) => n.data.id === menu.id)?.data.kind
+  const anchorKind =
+    selected === null
+      ? null
+      : (filtered.nodes.find((n) => n.data.id === selected)?.data.kind ?? null)
+
   const hits = useMemo(() => searchNodes(filtered, search), [filtered, search])
 
   useEffect(() => {
     if (hits[0] !== undefined) canvasRef.current?.focus(hits[0])
   }, [hits])
 
+  // 类框当锚点时跳数控件已禁用，残留值也要归零，否则图会被压暗到只剩一个框
+  useEffect(() => {
+    if (anchorKind === 'class' && hops !== 0) setHops(0)
+  }, [anchorKind, hops])
+
   // 高亮优先级：路径 > 搜索 > N 跳邻居；都没有就不高亮
   const highlightNodes = useMemo<Set<string> | null>(() => {
     const found = path.data
     if (found?.found === true) return new Set(found.nodes.map((n) => n.id))
     if (hits.length > 0) return new Set(hits)
-    if (selected !== null && hops > 0) return nodesWithinHops(filtered, selected, hops)
+    if (selected !== null && hops > 0 && anchorKind !== 'class') {
+      return nodesWithinHops(filtered, selected, hops)
+    }
     return null
-  }, [path.data, hits, selected, hops, filtered])
+  }, [path.data, hits, selected, hops, anchorKind, filtered])
 
   const highlightIds = useMemo(
     () => (highlightNodes === null ? [] : inducedIds(filtered, highlightNodes)),
@@ -128,7 +143,8 @@ export function OntologyPage() {
   )
 
   // 搜索只靠 focus 运镜，高亮不再抢镜头；路径 / N 跳仍需要 fit 到子图
-  const highlightFit = path.data?.found === true || (hits.length === 0 && hops > 0)
+  const highlightFit =
+    path.data?.found === true || (hits.length === 0 && hops > 0 && anchorKind !== 'class')
 
   // 元素重建会清掉 class，画布自己会重放；这里只负责高亮集合变化
   useEffect(() => {
@@ -154,14 +170,6 @@ export function OntologyPage() {
     clear()
     canvasRef.current?.runLayout(layout === 'preset' ? 'cose' : layout)
   }
-
-  // 类节点不是图里的实体：既不能作路径端点，也没法当 N 跳锚点
-  const menuKind =
-    menu === null ? undefined : filtered.nodes.find((n) => n.data.id === menu.id)?.data.kind
-  const anchorKind =
-    selected === null
-      ? null
-      : (filtered.nodes.find((n) => n.data.id === selected)?.data.kind ?? null)
 
   return (
     <div className="flex h-full min-h-0 w-full bg-white">

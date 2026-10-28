@@ -82,6 +82,13 @@ function applyLayout(cy: Core, name: GraphLayoutName, onStop?: () => void): void
   layout.run()
 }
 
+/** 两组 id 是否等价（顺序无关）：页面每次重渲染都会传新数组，靠它避免重复跑动画 */
+function sameIds(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  const set = new Set(b)
+  return a.every((id) => set.has(id))
+}
+
 /** 压暗全图、高亮命中集合；fit=false 用于元素重建后的静默重放 */
 function applyHighlight(cy: Core, ids: string[], fit: boolean): void {
   const picked = cy.collection()
@@ -145,6 +152,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1.1) }, { duration: 200 })
       },
       highlight: (ids, fit = true) => {
+        // 元素重建由画布自己重放；内容没变就别重启动画，否则敲无命中的搜索也会把视图拽回来
+        if (sameIds(ids, hlRef.current)) return
         hlRef.current = ids
         const cy = cyRef.current
         if (cy === null) return

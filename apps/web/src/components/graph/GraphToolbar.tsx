@@ -39,8 +39,6 @@ const LAYOUT_LABEL: Record<GraphLayoutName, string> = {
   preset: '手动位置',
 }
 
-/** 与 TYPE_LABEL 的键保持一致；类节点不参与类型过滤 */
-
 const BTN =
   'rounded border border-neutral-300 px-1.5 py-0.5 text-[11px] text-neutral-600 hover:bg-neutral-100'
 
