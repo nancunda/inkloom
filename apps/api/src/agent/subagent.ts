@@ -36,6 +36,8 @@ export type SubagentEvent =
       toolName: string
       ok: boolean
       summary: string
+      /** ★ 已完成步数：前端卡片靠它实时刷新，否则子体思考期间一直显示 0 步 */
+      steps: number
     }
   | {
       type: 'ended'
@@ -46,6 +48,8 @@ export type SubagentEvent =
       tokens: number
       /** 结果文本前 400 字，前端卡片直接展示 */
       summary: string
+      /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null */
+      error: string | null
     }
 
 export interface SubagentRunnerDeps {
@@ -165,6 +169,7 @@ export function createSubagentRunner(
           toolName: e.toolName,
           ok: e.isError !== true,
           summary: clip(raw.length === 0 ? '(无输出)' : raw),
+          steps,
         })
       }
     }
@@ -187,7 +192,16 @@ export function createSubagentRunner(
     } catch (e) {
       // ★ 有 started 就必须有 ended：构造失败（白名单断言、模型对象异常）也要收口
       const msg = (e as Error).message
-      deps.onEvent({ type: 'ended', id, role: role.id, ok: false, steps, tokens, summary: '' })
+      deps.onEvent({
+        type: 'ended',
+        id,
+        role: role.id,
+        ok: false,
+        steps,
+        tokens,
+        summary: '',
+        error: msg,
+      })
       return { id, role: role.id, ok: false, steps, tokens, text: '', error: msg }
     }
 
@@ -234,6 +248,7 @@ export function createSubagentRunner(
       steps,
       tokens,
       summary: trimmed.slice(0, 400),
+      error,
     })
     return { id, role: role.id, ok, steps, tokens, text: trimmed, error }
   }

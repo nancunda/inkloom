@@ -56,7 +56,7 @@ describe('AGENT_ROLES', () => {
       worldbuilder: AGENT_ROLES.worldbuilder.maxSteps,
       critic: AGENT_ROLES.critic.maxSteps,
       stylist: AGENT_ROLES.stylist.maxSteps,
-    }).toEqual({ researcher: 6, worldbuilder: 5, critic: 5, stylist: 4 })
+    }).toEqual({ researcher: 12, worldbuilder: 10, critic: 8, stylist: 8 })
   })
 
   it('isAgentRoleId 只认四个角色', () => {

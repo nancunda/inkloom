@@ -137,6 +137,8 @@ describe('createSubagentRunner', () => {
     expect(new Set(d.events.map((e) => e.id)).size).toBe(1)
     const ended = d.events[2] as Extract<SubagentEvent, { type: 'ended' }>
     expect(ended.summary).toBe('找到 2 条资料')
+    // 前端卡片靠 ended.error 区分「完成」与「未跑完」
+    expect(ended.error).toBeNull()
   })
 
   it('★ 子体工具集被白名单裁剪：没有 write_element / delegate', async () => {
@@ -153,20 +155,22 @@ describe('createSubagentRunner', () => {
     await d.run({ role: 'stylist', task: 'x' })
     const agent = h.agents[0] as unknown as FakeAgentLike
     const call = () => agent.opts.beforeToolCall?.(undefined, undefined)
-    for (let i = 0; i < 4; i += 1) expect(await call()).toBeUndefined()
+    for (let i = 0; i < 8; i += 1) expect(await call()).toBeUndefined()
     const blocked = await call()
     expect(blocked).toMatchObject({ block: true, terminate: true })
-    expect(d.budget.steps).toBe(4)
+    expect(d.budget.steps).toBe(8)
   })
 
   it('★ 步数触顶后结束 → ok=false，原因是上限（不能报成功但空结论）', async () => {
-    h.callToolCalls = 5
+    h.callToolCalls = 9
     const d = deps()
     const r = await d.run({ role: 'stylist', task: 'x' })
     expect(r.ok).toBe(false)
-    expect(r.error).toBe('子任务步数上限（4 步）')
-    expect(d.budget.steps).toBe(4)
+    expect(r.error).toBe('子任务步数上限（8 步）')
+    expect(d.budget.steps).toBe(8)
     expect(d.events.map((e) => e.type)).toEqual(['started', 'ended'])
+    const ended = d.events[1] as Extract<SubagentEvent, { type: 'ended' }>
+    expect(ended.error).toBe('子任务步数上限（8 步）')
   })
 
   it('★ 主预算用尽 → 第一个工具调用就被挡', async () => {

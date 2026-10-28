@@ -473,6 +473,8 @@ export type AgentEvent =
       toolName: string
       ok: boolean
       summary: string
+      /** 该工具跑完时已用掉的步数 */
+      steps: number
     }
   | {
       seq: number
@@ -484,6 +486,8 @@ export type AgentEvent =
       steps: number
       tokens: number
       summary: string
+      /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null */
+      error: string | null
     }
   | { seq: number; at: string; type: 'run.finished' }
   | { seq: number; at: string; type: 'run.paused'; reason: string }

@@ -37,6 +37,8 @@ type Block =
       tokens: number
       tools: { toolCallId: string; name: string; ok: boolean; summary: string }[]
       summary: string
+      /** 未完成的原因（步数上限/超时/抛错）；完成时为空串 */
+      error: string
     }
   | { kind: 'plan'; id: string; plan: AgentPlan }
   | { kind: 'status'; id: string; text: string; tone: 'info' | 'error' }
@@ -244,6 +246,7 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
           tokens: 0,
           tools: [],
           summary: '',
+          error: '',
         },
       ]
     }
@@ -252,6 +255,8 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
         b.kind === 'subagent' && b.id === `sa:${ev.id}`
           ? {
               ...b,
+              // 运行中也要实时步数：否则子体思考期间一直显示 0 步，像卡死
+              steps: ev.steps,
               tools: [
                 ...b.tools,
                 {
@@ -274,6 +279,7 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
               steps: ev.steps,
               tokens: ev.tokens,
               summary: ev.summary,
+              error: ev.error ?? '',
             }
           : b,
       )
@@ -943,11 +949,14 @@ export function AgentPage() {
                             : b.status === 'stopped'
                               ? '已停止'
                               : b.status === 'failed'
-                                ? '失败'
+                                ? '未跑完'
                                 : '完成'}
                           {` · ${b.steps} 步 · ${b.tokens.toLocaleString()} tokens`}
                         </span>
                       </summary>
+                      {b.error.length > 0 && (
+                        <p className="mt-2 text-[11px] text-amber-800">原因：{b.error}</p>
+                      )}
                       {b.tools.length > 0 && (
                         <ul className="mt-2 space-y-1">
                           {b.tools.map((t) => (

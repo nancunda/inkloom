@@ -51,6 +51,7 @@ export type AgentStreamPayload =
       toolName: string
       ok: boolean
       summary: string
+      steps: number
     }
   | {
       type: 'subagent.ended'
@@ -60,6 +61,7 @@ export type AgentStreamPayload =
       steps: number
       tokens: number
       summary: string
+      error: string | null
     }
   | { type: 'run.finished' }
   | { type: 'run.paused'; reason: string }
@@ -641,6 +643,7 @@ export async function startAgentRun(
           toolName: e.toolName,
           ok: e.ok,
           summary: e.summary,
+          steps: e.steps,
         })
         return
       }
@@ -652,6 +655,7 @@ export async function startAgentRun(
         steps: e.steps,
         tokens: e.tokens,
         summary: e.summary,
+        error: e.error,
       })
     },
     onTokens: (n) => {

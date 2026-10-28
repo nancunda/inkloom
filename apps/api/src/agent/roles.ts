@@ -34,7 +34,9 @@ export const AGENT_ROLES: Record<AgentRoleId, AgentRole> = {
       '一次只查一个问题：先 web_search，需要细节再 read_url；read_book 只用来确认书内已有设定，不要整篇复述。',
     ].join('\n'),
     tools: ['web_search', 'read_url', 'read_lore', 'read_book'],
-    maxSteps: 6,
+    // ★ 验收实测：一次 web_search + 2~3 次 read_url 就要 4~6 步，原来的 6 步必然触顶。
+    //   上限只防跑飞，真正的总闸是主预算；给足检索轮次才可能拿到带出处的结论。
+    maxSteps: 12,
     output: 'text',
   },
   worldbuilder: {
@@ -47,7 +49,8 @@ export const AGENT_ROLES: Record<AgentRoleId, AgentRole> = {
       '用 query_graph / find_path 核对现状，不要凭印象说「还没有」。',
     ].join('\n'),
     tools: ['read_book', 'read_element', 'query_graph', 'find_path'],
-    maxSteps: 5,
+    // 核对多个元素 + 图查询 + 路径，5 步在读全要素时不够
+    maxSteps: 10,
     output: 'text',
   },
   critic: {
@@ -64,7 +67,8 @@ export const AGENT_ROLES: Record<AgentRoleId, AgentRole> = {
       'severity 用 error 表示「必须修」，warning 表示「建议修」。',
     ].join('\n'),
     tools: ['read_book', 'read_element', 'query_graph', 'find_path', 'explain_fact'],
-    maxSteps: 5,
+    // 要读正文 + 逐个核对设定，给到 8 步；检查器本身不用搜外网
+    maxSteps: 8,
     output: 'json',
   },
   stylist: {
@@ -77,7 +81,8 @@ export const AGENT_ROLES: Record<AgentRoleId, AgentRole> = {
       '关注视角、句长、对话贴合人物、AI 味套话；不评价剧情好不好。',
     ].join('\n'),
     tools: ['read_book', 'read_element'],
-    maxSteps: 4,
+    // 最多读一章 + 文风设定 + 人物表，8 步留出重读余量
+    maxSteps: 8,
     output: 'text',
   },
 }
