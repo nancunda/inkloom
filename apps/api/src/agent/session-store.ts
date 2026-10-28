@@ -107,6 +107,24 @@ export async function writeSessionMeta(root: string, meta: AgentSessionMeta): Pr
   await writeQueue.run(() => writeMetaNow(root, meta.id, meta))
 }
 
+/**
+ * 队列内读改写：调用方拿到的是队首那一刻的 meta，改完立刻写回。
+ * ★ 用 writeSessionMeta 直接覆盖会把并发发生的改名冲掉。
+ */
+export async function updateSessionMeta(
+  root: string,
+  id: string,
+  update: (prev: AgentSessionMeta | null) => AgentSessionMeta | Promise<AgentSessionMeta>,
+): Promise<AgentSessionMeta> {
+  assertSessionId(id)
+  return writeQueue.run(async () => {
+    const prev = await readSessionMeta(root, id)
+    const next = await update(prev)
+    await writeMetaNow(root, id, next)
+    return next
+  })
+}
+
 export async function readSessionMeta(root: string, id: string): Promise<AgentSessionMeta | null> {
   if (isLegacyId(id)) return null
   assertSessionId(id)
@@ -272,16 +290,14 @@ export async function renameSession(
   if (isLegacyId(id)) throw new InkloomError('CONFLICT', '历史记录只读，不能重命名')
   const trimmed = title.trim()
   if (trimmed.length === 0) throw new InkloomError('INVALID_INPUT', '标题不能为空')
-  return writeQueue.run(async () => {
-    const meta = requireWritableMeta(await readSessionMeta(root, id), id)
-    const next: AgentSessionMeta = {
+  return updateSessionMeta(root, id, (prev) => {
+    const meta = requireWritableMeta(prev, id)
+    return {
       ...meta,
       title: clipChars(trimmed, 80),
       status: isStale(meta) ? 'stopped' : meta.status,
       updatedAt: new Date().toISOString(),
     }
-    await writeMetaNow(root, id, next)
-    return next
   })
 }
 

@@ -28,9 +28,8 @@ import {
   type AgentSessionMeta,
   defaultTitle,
   newSessionId,
-  readSessionMeta,
   sessionJournalPath,
-  writeSessionMeta,
+  updateSessionMeta,
 } from './session-store.js'
 import { createSubagentRunner, type SubagentResult } from './subagent.js'
 import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
@@ -548,30 +547,31 @@ function finishRun(run: AgentRun): void {
 async function persistSessionMeta(run: AgentRun): Promise<void> {
   try {
     const plan = run.planId === null ? null : await loadPlan(run.root, run.planId).catch(() => null)
-    const prev = await readSessionMeta(run.root, run.sessionId)
-    const now = new Date().toISOString()
     const done = plan?.tasks.filter((t) => t.status === 'done').length ?? 0
-    const meta: AgentSessionMeta = {
-      id: run.sessionId,
-      title: prev?.title ?? defaultTitle(run.goal),
-      goal: run.goal,
-      status: run.status,
-      createdAt: prev?.createdAt ?? run.startedAt,
-      updatedAt: now,
-      tokens: run.tokens,
-      steps: run.budget.steps,
-      subagentCalls: run.budget.subagentCalls,
-      planId: run.planId,
-      planTitle: plan?.title ?? prev?.planTitle ?? null,
-      planDone: done,
-      planTotal: plan?.tasks.length ?? 0,
-      runIds: [...new Set([...(prev?.runIds ?? []), run.id])],
-      resumable: run.status !== 'running' && run.status !== 'waiting_review',
-    }
-    await writeSessionMeta(run.root, meta)
+    // ★ 队列内读改写：直接覆盖会抹掉同一时刻用户刚改的标题
+    const meta = await updateSessionMeta(run.root, run.sessionId, (prev) => {
+      const now = new Date().toISOString()
+      return {
+        id: run.sessionId,
+        title: prev?.title ?? defaultTitle(run.goal),
+        goal: run.goal,
+        status: run.status,
+        createdAt: prev?.createdAt ?? run.startedAt,
+        updatedAt: now,
+        tokens: run.tokens,
+        steps: run.budget.steps,
+        subagentCalls: run.budget.subagentCalls,
+        planId: run.planId,
+        planTitle: plan?.title ?? prev?.planTitle ?? null,
+        planDone: done,
+        planTotal: plan?.tasks.length ?? 0,
+        runIds: [...new Set([...(prev?.runIds ?? []), run.id])],
+        resumable: run.status !== 'running' && run.status !== 'waiting_review',
+      }
+    })
     await saveMessageSnapshot(run.root, run.sessionId, {
       version: 1,
-      savedAt: now,
+      savedAt: meta.updatedAt,
       sessionId: run.sessionId,
       runId: run.id,
       messages: run.agent.state.messages ?? [],

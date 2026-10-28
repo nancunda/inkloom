@@ -13,6 +13,7 @@ import {
   renameSession,
   sessionJournalPath,
   sessionMetaPath,
+  updateSessionMeta,
   writeSessionMeta,
 } from './session-store.js'
 
@@ -202,6 +203,20 @@ describe('session store', () => {
     const next = await renameSession(root, 'cs_e', `${'a'.repeat(79)}😀b`)
     expect(next.title.includes('😀')).toBe(true)
     expect(next.title).not.toContain('\uFFFD')
+  })
+
+  it('★ updateSessionMeta 在队列内读改写：并发改名不丢', async () => {
+    await writeSessionMeta(root, meta('cs_u', '旧名'))
+    await Promise.all([
+      renameSession(root, 'cs_u', '新名'),
+      updateSessionMeta(root, 'cs_u', (prev) => {
+        if (prev === null) throw new Error('会话不见了')
+        return { ...prev, tokens: 42 }
+      }),
+    ])
+    const back = await readSessionMeta(root, 'cs_u')
+    expect(back?.title).toBe('新名')
+    expect(back?.tokens).toBe(42)
   })
 
   it('★ 重命名生效；删除会把 meta/journal/快照一起清掉', async () => {
