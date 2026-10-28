@@ -472,14 +472,14 @@ export function AgentPage() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const setModule = useSessionStore((s) => s.setModule)
 
-  const appendEvents = (events: AgentEvent[]): void => {
+  const appendEvents = (events: AgentEvent[], countSubagents = false): void => {
     const fresh = events.filter((e) => e.seq > lastSeq.current).sort((a, b) => a.seq - b.seq)
     if (fresh.length === 0) return
     lastSeq.current = fresh[fresh.length - 1]?.seq ?? lastSeq.current
     for (const e of fresh) {
       if (e.type === 'plan.updated') setDiskPlan(e.plan)
-      // ★ 子智能体次数在运行中就要动：否则整段 delegate 期间预算行一直停在旧值
-      if (e.type === 'subagent.started') {
+      // ★ 只对 SSE 新到的事件计数：POST 返回的快照里 subagentCalls 已经是累加值
+      if (countSubagents && e.type === 'subagent.started') {
         setRun((prev) =>
           prev === null
             ? prev
@@ -552,7 +552,7 @@ export function AgentPage() {
     es.onmessage = (m) => {
       const ev = JSON.parse(m.data) as AgentEvent
       if (ev.type === 'ping') return
-      appendEvents([ev])
+      appendEvents([ev], true)
       if (
         ev.type === 'gate.waiting' ||
         ev.type === 'gate.resolved' ||

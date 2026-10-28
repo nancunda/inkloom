@@ -833,7 +833,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     name: 'update_task',
     label: '更新任务状态',
     description:
-      '开始/完成/卡住一个任务。done 时用 artifacts 报实际产出的文件相对路径（会逐个校验存在）；review/free 这类不产文件的任务用 note 写结论代替。',
+      '开始/完成/卡住一个任务。done 时用 artifacts 报实际产出的文件相对路径（会逐个校验存在）；review 这类不产文件的任务传 artifacts=[] 并用 note 写结论。',
     parameters: UPDATE_TASK,
     execute: async (_id, params, signal) => {
       // ★ 停止后不能再写任务状态：critic 会把窗口拉长到分钟级，而工具本身不会被执行器取消
@@ -877,8 +877,8 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
 
       let criticNote = ''
       if (params.status === 'done' && deps.critic !== undefined) {
-        // ★ review/free 任务按设计不产文件：用 note 当唯一证据，但不能什么都不交
-        const fileBearing = task.skill !== 'review' && task.skill !== 'free'
+        // ★ 只有 review 是结构性不产文件；free 的常见用法就是写要素文件，不能放过
+        const fileBearing = task.skill !== 'review'
         if (artifacts.length === 0) {
           if (fileBearing) {
             return fail(

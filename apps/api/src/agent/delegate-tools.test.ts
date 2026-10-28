@@ -77,7 +77,7 @@ function buildTools(critic?: (input: CriticInput) => Promise<CriticVerdict>): Ag
 }
 
 /** 提交并批准一份只含一个「无审阅」任务的计划，把任务推到 doing */
-async function startDoingTask(skill: 'world' | 'review' = 'world'): Promise<void> {
+async function startDoingTask(skill: 'world' | 'review' | 'free' = 'world'): Promise<void> {
   const written = await tool('write_plan').execute('c1', {
     title: '开篇计划',
     goal: '把骨架搭起来',
@@ -318,6 +318,40 @@ describe('update_task(done) 的 critic 门禁', () => {
     expect(r.isError).toBe(true)
     expect(textOf(r)).toContain('运行已停止')
     expect(called).toBe(0)
+    const after = await readPlanState(root, planId as string)
+    expect(after?.updatedAt).toBe(before?.updatedAt)
+  })
+
+  it('★ free 任务常常是写要素：空 artifacts 仍然拦住（不能靠一句 note 绕过）', async () => {
+    await startDoingTask('free')
+    tools = buildTools(async () => ({ kind: 'passed', warnings: [], suggestions: [] }))
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      note: '把驿传规则补进去了',
+    })
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toContain('artifacts')
+    const state = await readPlanState(root, planId as string)
+    expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('doing')
+  })
+
+  it('★ critic 检查期间被停止 → 返回后不写 done（覆盖最长 120s 的窗口）', async () => {
+    await startDoingTask()
+    const before = await readPlanState(root, planId as string)
+    const ac = new AbortController()
+    tools = buildTools(async () => {
+      // 模拟作者在 critic 跑的时候点了停止
+      ac.abort()
+      return { kind: 'passed', warnings: [], suggestions: [] }
+    })
+    const r = await tool('update_task').execute(
+      'c1',
+      { taskId: 'world', status: 'done', artifacts: ['world/note.md'] },
+      ac.signal,
+    )
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toContain('运行已停止')
     const after = await readPlanState(root, planId as string)
     expect(after?.updatedAt).toBe(before?.updatedAt)
   })

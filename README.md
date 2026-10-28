@@ -225,7 +225,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 433 单元 + 339 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 435 单元 + 339 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
