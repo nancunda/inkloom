@@ -89,15 +89,20 @@ export function toGraphElements(graph: OntologyGraphData): GraphElements {
     nodes.push({ data: { id: 'cls-concept', label: '概念', kind: 'class' } })
   }
 
+  const usedIds = new Set(nodes.map((n) => n.data.id))
   for (const n of graph.nodes) {
     const parent = parentOf(n, classIds)
+    const rawClass = n.classIds.at(-1)
+    // 类 id 与实例 id 撞车时 Cytoscape 会直接报「第二个同 id 元素」：类优先，实例跳过
+    if (usedIds.has(n.id)) continue
+    usedIds.add(n.id)
     nodes.push({
       data: {
         id: n.id,
         label: n.name,
         kind: 'instance',
         nodeType: n.type,
-        classId: parent,
+        ...(rawClass === undefined ? {} : { classId: rawClass }),
         color: TYPE_COLOR[n.type] ?? '#737373',
         ...(n.virtual ? { virtual: true } : {}),
         parent,
@@ -105,7 +110,7 @@ export function toGraphElements(graph: OntologyGraphData): GraphElements {
     })
   }
 
-  const nodeIds = new Set(nodes.map((n) => n.data.id))
+  const nodeIds = usedIds
   const edges = graph.edges
     .filter(
       (e) =>
@@ -129,6 +134,10 @@ export function toGraphElements(graph: OntologyGraphData): GraphElements {
   return { nodes, edges }
 }
 
+/**
+ * ★ 当前数据只有 instanceOf 会指向类；所以类框只跟实例走。
+ * 将来如果出现类级关系的边（非 instanceOf 指向类），这里要改成「边端点里的类也保留」。
+ */
 export function filterElements(
   elements: GraphElements,
   filter: { nodeTypes?: ReadonlySet<string>; predicates?: ReadonlySet<string> },
@@ -159,7 +168,10 @@ export function filterElements(
   return { nodes, edges }
 }
 
-/** BFS：锚点 N 跳内的节点（含锚点）；hops=0 只回锚点 */
+/**
+ * BFS：锚点 N 跳内的节点（含锚点）；hops=0 只回锚点。
+ * ★ 这里与画布同口径：废止边仍然画着，所以也算一跳；路径查询才排除废止边。
+ */
 export function nodesWithinHops(
   elements: GraphElements,
   anchor: string,

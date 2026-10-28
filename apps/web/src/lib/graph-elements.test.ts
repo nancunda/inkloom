@@ -52,6 +52,7 @@ function graph(over: Partial<OntologyGraphData> = {}): OntologyGraphData {
         kind: 'character',
         properties: [],
         rules: [],
+        instanceCount: 1,
       },
       { id: 'cls-group', name: '组织', parentId: null, kind: 'group', properties: [], rules: [] },
       {
@@ -98,10 +99,25 @@ describe('toGraphElements', () => {
     expect(g.edges.map((e) => e.data.id)).toEqual(['e-belong', 'e-retract'])
   })
 
-  it('边标签用中文谓词；虚拟/废止带标记', () => {
+  it('边标签用中文谓词；虚拟/废止/实例计数带标记', () => {
     const g = toGraphElements(graph())
     expect(g.edges.find((e) => e.data.id === 'e-belong')?.data.label).toBe('隶属')
     expect(g.edges.find((e) => e.data.id === 'e-retract')?.data.retracted).toBe(true)
+    expect(g.nodes.find((n) => n.data.id === 'c1')?.data.virtual).toBe(true)
+    expect(g.nodes.find((n) => n.data.id === 'cls-character')?.data.instanceCount).toBe(1)
+  })
+
+  it('rel:<kind> 边用关系中文名，virtual 透传', () => {
+    const base = graph()
+    const g = toGraphElements({
+      ...base,
+      edges: [
+        ...base.edges,
+        { id: 'e-rel', from: 'c1', predicate: 'rel:master', to: 'grp', virtual: true },
+      ],
+    })
+    expect(g.edges.find((e) => e.data.id === 'e-rel')?.data.label).toBe('师徒')
+    expect(g.edges.find((e) => e.data.id === 'e-rel')?.data.virtual).toBe(true)
   })
 })
 
@@ -115,6 +131,15 @@ describe('filterElements / hops / search', () => {
 
     const noEnemy = filterElements(g, { predicates: new Set(['belongsTo']) })
     expect(noEnemy.edges.map((e) => e.data.id)).toEqual(['e-belong'])
+    // 只给谓词过滤不该收窄节点
+    expect(noEnemy.nodes.map((n) => n.data.id)).toEqual([
+      'cls-character',
+      'cls-sect',
+      'cls-concept',
+      'c1',
+      'grp',
+      'l1',
+    ])
   })
 
   it('★ N 跳邻居含锚点本身', () => {
@@ -123,10 +148,12 @@ describe('filterElements / hops / search', () => {
     expect([...nodesWithinHops(g, 'c1', 0)]).toEqual(['c1'])
   })
 
-  it('搜名字与 id，大小写不敏感', () => {
+  it('搜名字与 id，大小写不敏感；类节点不参与', () => {
     const g = toGraphElements(graph())
     expect(searchNodes(g, '青云')).toEqual(['grp'])
     expect(searchNodes(g, 'C1')).toEqual(['c1'])
     expect(searchNodes(g, '')).toEqual([])
+    expect(searchNodes(g, '宗门')).toEqual([])
+    expect(searchNodes(g, 'cls-sect')).toEqual([])
   })
 })
