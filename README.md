@@ -19,7 +19,7 @@
 | 模块 | 干什么 |
 |---|---|
 | **概览** | 定稿进度、张力曲线、未兑现线索、生成记录 |
-| **共创** | 和 Agent 对话：它先写计划，你批准后按任务自主执行；需要拍板处停下 |
+| **共创** | 和 Agent 对话：它先写计划，你批准后按任务自主执行；可派只读子智能体考据/核对，任务完成前自动查矛盾；需要拍板处停下 |
 | **世界** | 规则、力量体系、地点与路线（地图上拖拽） |
 | **角色** | 角色卡、关系网络（拖两个节点连线建关系）、形象图 |
 | **故事** | 卷、故事弧、逐章蓝图、线索轨迹 |
@@ -77,11 +77,13 @@
 - **全程可见**：思考折叠、工具卡片与结果、产物一键跳到对应模块
 - **预算**：`80 + 2 × 任务数` 步工具调用保护；章节与形象图不设额度，一个会话可连写多章；用完显示「已暂停」，点「继续执行」接着跑
 - **可联网**：Agent 有 `web_search` / `read_url` / `read_lore`；结果落资料卡，默认未批准，作者批准后才进 prompt。写作页右栏的「资料卡」列表可以直接批准/删除。
+- **多智能体**：主 Agent 用 `delegate` 派只读子智能体——`researcher` 联网考据、`worldbuilder` 梳理设定与图谱、`critic` 核对矛盾、`stylist` 提文风建议。子体只拿到「任务 + 背景」（看不到主对话），卡片上能看到角色、步数、tokens 与每次工具调用。
+- **一致性门禁**：任务 `done` 前自动派 `critic` 核对产物与设定/正文；`error` 级矛盾会拦住完成（任务保持未完成并回传证据），检查器自身出错或超时则放行并标注「检查未完成」。`INKLOOM_CRITIC=off` 可关闭。
 - **技能**：`world` 世界、`characters` 人物、`story` 故事、`chapter` 正文、`review` 审阅、`free` 自由
 
 Agent 侧工具：`read_book`、`read_element`、`web_search`、`read_url`、`read_lore`、
 `write_element`、`write_blueprint`、`write_plan`、`update_plan`、`update_task`、
-`request_review`、`generate_chapter`、`generate_portrait`。
+`request_review`、`generate_chapter`、`generate_portrait`、`delegate`。
 
 计划定义存 `story/plans/<id>.json`（进 Git，可审阅 / 回滚）；执行状态存
 `.inkloom/agent/plans/<id>.state.json`（不进 Git，随运行更新）。
@@ -128,6 +130,7 @@ pnpm web                # → http://localhost:5173
 | `SEARXNG_BASE_URLS` | 可选：SearXNG 实例，逗号分隔（无 key 时仍可用 DuckDuckGo 兜底） |
 | `INKLOOM_LIBRARY` | 书库根目录，默认 `~/inkloom` |
 | `INKLOOM_BOOK` | 可选：启动时直接打开某本书（路径） |
+| `INKLOOM_CRITIC` | 任务完成后的一致性检查，默认 `on`；`off` 关闭（下次会话生效） |
 
 没有 key 也能浏览、导入、编辑、导出与回退，只是不能调模型。
 
@@ -222,7 +225,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 385 单元 + 339 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 428 单元 + 339 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
@@ -238,7 +241,15 @@ pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 - 重定向、IP 变体、5MB 上限、步数耗尽空转、reindex 保留资料卡均有单测/集成覆盖
 - `generate_chapter` 连写 3 章不再被额度拦住（`plan-tools.test.ts` 等价证据）
 
-**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent**。
+**切片 3（多智能体）真机验收**（2026-10-28，书《七霞》）：
+
+![多智能体](docs/screenshots/accept-multi-agent.png)
+
+- 真实会话里主 Agent 调 `delegate('researcher')`：卡片显示角色、步数、tokens 与每次工具调用；展开能看到 `web_search` / `read_url` / `read_lore` 轨迹与资料卡 id（`lr-e59f201f`）；运行中步数实时刷新，触顶显示「未跑完 · 原因：子任务步数上限」
+- 把裴无咎外观改成「双腿齐膝断去」后调 `update_task(done)`：返回 2 处 `error`，任务保持未完成且 `artifacts` 未写入（其中一处是书里原本就有的矛盾：苏婉 22 岁 vs「与父亲三十年只见过三面」）
+- `INKLOOM_CRITIC=off` 重跑同一调用：直接 `done`，子智能体调用 0 次
+
+**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent · 多智能体与一致性门禁**。
 
 **已知缺口**
 
