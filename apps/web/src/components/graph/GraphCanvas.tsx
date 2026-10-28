@@ -100,7 +100,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       runLayout: (name) => {
         const cy = cyRef.current
         if (cy === null) return
-        applyLayout(cy, name)
+        // 换布局后把全局视野收回来（布局自带 fit 的只有 cose/breadthfirst）
+        applyLayout(cy, name, () => cy.fit(undefined, 36))
       },
       focus: (id) => {
         const cy = cyRef.current
@@ -165,12 +166,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       cbRef.current.onContext(e.target.id())
     })
     let saveTimer: number | undefined
+    let pending: Record<string, { x: number; y: number }> | undefined
+    const flush = (): void => {
+      if (pending === undefined) return
+      cbRef.current.onPositions?.(pending)
+      pending = undefined
+    }
     cy.on('dragfree', 'node', () => {
-      // ★ 框选多节点拖拽时 cytoscape 逐元素 emit，会回调 K 次；合并成一次快照再落盘
+      // ★ 框选多节点拖拽时 cytoscape 逐元素 emit，会回调 K 次；
+      //   快照在事件当刻取（元素重建后再取会读到新坐标），只对落盘去抖
+      pending = positionsOf(cy)
       if (saveTimer !== undefined) window.clearTimeout(saveTimer)
       saveTimer = window.setTimeout(() => {
         saveTimer = undefined
-        cbRef.current.onPositions?.(positionsOf(cy))
+        flush()
       }, 150)
     })
 
@@ -180,7 +189,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
     ro.observe(box)
 
     return () => {
+      // 卸载前把还没落盘的拖拽补写一次，别让最后一下拖拽丢掉
       if (saveTimer !== undefined) window.clearTimeout(saveTimer)
+      flush()
       ro.disconnect()
       cy.destroy()
       cyRef.current = null
