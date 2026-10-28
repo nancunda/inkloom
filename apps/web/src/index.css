@@ -91,3 +91,105 @@
   --color-agentprism-badge-unknown-foreground: oklch(var(--agentprism-badge-unknown-foreground));
   --color-agentprism-timeline-unknown: oklch(var(--agentprism-timeline-unknown));
 }
+
+/*
+ * AgentPrism 主题融合（spec §8.3）
+ *
+ * 上游 theme.css 用 @media (prefers-color-scheme) 切深浅色，而 inkloom 没有暗色模式
+ * （外壳全是 bg-neutral-* / bg-white）。这里用同特异度的 :root 覆盖两套值、固定浅色，
+ * 否则系统是深色的用户会在白底应用里看到一块黑面板。
+ *
+ * 上游新增 token 时这里要同步补一行；漏了会退回上游配色。
+ */
+:root {
+  /* 表面、文字、边框、品牌色 → 项目的 neutral-* 阶梯 */
+  --agentprism-background: 100% 0 0; /* white（面板底色，同 AppShell） */
+  --agentprism-foreground: 20.5% 0 0; /* neutral-900 */
+  --agentprism-primary: 20.5% 0 0; /* neutral-900（项目强调色就是黑） */
+  --agentprism-primary-foreground: 100% 0 0; /* white */
+  --agentprism-secondary: 97% 0 0; /* neutral-100 */
+  --agentprism-secondary-foreground: 43.9% 0 0; /* neutral-600 */
+  --agentprism-muted: 98.5% 0 0; /* neutral-50 */
+  --agentprism-muted-foreground: 43.9% 0 0; /* neutral-600 */
+  --agentprism-accent: 97% 0 0; /* neutral-100 */
+  --agentprism-accent-foreground: 20.5% 0 0; /* neutral-900（上游改成与 accent 同值，看不出高亮） */
+  --agentprism-brand: 20.5% 0 0; /* neutral-900 */
+  --agentprism-brand-foreground: 100% 0 0; /* white */
+  --agentprism-brand-secondary: 55.6% 0 0; /* neutral-500 */
+  --agentprism-brand-secondary-foreground: 100% 0 0; /* white */
+  --agentprism-border: 92.2% 0 0; /* neutral-200 */
+  --agentprism-border-subtle: 97% 0 0; /* neutral-100 */
+  --agentprism-border-strong: 87% 0 0; /* neutral-300 */
+  --agentprism-border-inverse: 20.5% 0 0; /* neutral-900 */
+  --agentprism-pending: 58.5% 0.233 277.117; /* indigo-500 */
+  --agentprism-pending-muted: 93% 0.034 272.788; /* indigo-100 */
+  --agentprism-pending-muted-foreground: 51.1% 0.262 276.966; /* indigo-600 */
+  --agentprism-code-base: 43.9% 0 0; /* neutral-600 */
+  --agentprism-code-boolean: 42.4% 0.199 265.638; /* blue-800；上游写死在 TS 里用 tailwindcss/colors，会往包里塞整份调色板 */
+  --agentprism-badge-default: 97% 0 0; /* neutral-100 */
+  --agentprism-badge-default-foreground: 43.9% 0 0; /* neutral-600 */
+
+  /* 状态色与跨度类型色：照抄上游浅色值——它们是数据编码，压平就分不清了 */
+  --agentprism-success: 69.6% 0.17 162.48;
+  --agentprism-success-muted: 97.9% 0.021 166.113;
+  --agentprism-success-muted-foreground: 50.8% 0.118 165.612;
+  --agentprism-error: 63.7% 0.237 25.331;
+  --agentprism-error-muted: 97.1% 0.013 17.38;
+  --agentprism-error-muted-foreground: 57.7% 0.245 27.325;
+  --agentprism-warning: 79.5% 0.184 86.047;
+  --agentprism-warning-muted: 98.7% 0.026 102.212;
+  --agentprism-warning-muted-foreground: 55.4% 0.135 66.442;
+  --agentprism-code-string: 57.7% 0.245 27.325;
+  --agentprism-code-number: 57.7% 0.245 27.325;
+  --agentprism-code-key: 54.6% 0.245 262.881;
+  --agentprism-badge-claude-thinking: 97.7% 0.014 308.299;
+  --agentprism-badge-claude-thinking-foreground: 62.7% 0.265 303.9;
+  --agentprism-context-source-conversation: 60.6% 0.25 292.717;
+  --agentprism-avatar-llm: 62.7% 0.265 303.9;
+  --agentprism-badge-llm: 97.7% 0.014 308.299;
+  --agentprism-badge-llm-foreground: 62.7% 0.265 303.9;
+  --agentprism-timeline-llm: 71.4% 0.203 305.504;
+  --agentprism-avatar-agent: 58.5% 0.233 277.117;
+  --agentprism-badge-agent: 96.2% 0.018 272.314;
+  --agentprism-badge-agent-foreground: 58.5% 0.233 277.117;
+  --agentprism-timeline-agent: 67.3% 0.182 276.935;
+  --agentprism-avatar-tool: 70.5% 0.213 47.604;
+  --agentprism-badge-tool: 98% 0.016 73.684;
+  --agentprism-badge-tool-foreground: 70.5% 0.213 47.604;
+  --agentprism-timeline-tool: 75% 0.183 55.934;
+  --agentprism-avatar-chain: 70.4% 0.14 182.503;
+  --agentprism-badge-chain: 98.4% 0.014 180.72;
+  --agentprism-badge-chain-foreground: 70.4% 0.14 182.503;
+  --agentprism-timeline-chain: 77.7% 0.152 181.912;
+  --agentprism-avatar-retrieval: 71.5% 0.143 215.221;
+  --agentprism-badge-retrieval: 98.4% 0.019 200.873;
+  --agentprism-badge-retrieval-foreground: 71.5% 0.143 215.221;
+  --agentprism-timeline-retrieval: 78.9% 0.154 211.53;
+  --agentprism-avatar-embedding: 69.6% 0.17 162.48;
+  --agentprism-badge-embedding: 97.9% 0.021 166.113;
+  --agentprism-badge-embedding-foreground: 69.6% 0.17 162.48;
+  --agentprism-timeline-embedding: 76.5% 0.177 163.223;
+  --agentprism-avatar-guardrail: 63.7% 0.237 25.331;
+  --agentprism-badge-guardrail: 97.1% 0.013 17.38;
+  --agentprism-badge-guardrail-foreground: 63.7% 0.237 25.331;
+  --agentprism-timeline-guardrail: 70.4% 0.191 22.216;
+  --agentprism-avatar-create-agent: 68.5% 0.169 237.323;
+  --agentprism-badge-create-agent: 97.7% 0.013 236.62;
+  --agentprism-badge-create-agent-foreground: 68.5% 0.169 237.323;
+  --agentprism-timeline-create-agent: 74.6% 0.16 232.661;
+  --agentprism-avatar-span: 71.5% 0.143 215.221;
+  --agentprism-badge-span: 98.4% 0.019 200.873;
+  --agentprism-badge-span-foreground: 71.5% 0.143 215.221;
+  --agentprism-timeline-span: 78.9% 0.154 211.53;
+  --agentprism-avatar-event: 69.6% 0.17 162.48;
+  --agentprism-badge-event: 97.9% 0.021 166.113;
+  --agentprism-badge-event-foreground: 69.6% 0.17 162.48;
+  --agentprism-timeline-event: 76.5% 0.177 163.223;
+  --agentprism-avatar-unknown: 55.1% 0.027 264.364;
+  --agentprism-badge-unknown: 98.5% 0.002 247.839;
+  --agentprism-badge-unknown-foreground: 55.1% 0.027 264.364;
+  --agentprism-timeline-unknown: 70.7% 0.022 261.325;
+}
+
+/* 深色变体改为 class 驱动：项目暂无暗色模式，这样 dark: 工具类不会跟着系统偏好乱亮 */
+@custom-variant dark (&:where(.dark, .dark *));
