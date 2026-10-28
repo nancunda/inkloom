@@ -30,7 +30,9 @@ export default defineConfig({
           ],
           // ★ project 级 exclude 会**完全覆盖**默认值（默认包含 node_modules/dist），
           //   所以必须把默认忽略项也写一遍，否则会把依赖包自带的测试一并跑掉。
-          exclude: ['**/node_modules/**', '**/dist/**', '**/*.int.test.ts'],
+          // ★ http.test.ts 属于集成项目（30s 超时）：Windows 上拍检查点/回退偶尔超过 5s，
+          //   漏在这里会被 unit 的默认超时误杀。
+          exclude: ['**/node_modules/**', '**/dist/**', '**/*.int.test.ts', '**/*.http.test.ts'],
           environment: 'node',
         },
       },
