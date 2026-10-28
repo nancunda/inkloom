@@ -47,6 +47,7 @@ export type AgentStreamPayload =
       type: 'subagent.tool'
       id: string
       role: AgentRoleId
+      toolCallId: string
       toolName: string
       ok: boolean
       summary: string
@@ -636,6 +637,7 @@ export async function startAgentRun(
           type: 'subagent.tool',
           id: e.id,
           role: e.role,
+          toolCallId: e.toolCallId,
           toolName: e.toolName,
           ok: e.ok,
           summary: e.summary,

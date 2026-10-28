@@ -5,6 +5,7 @@ import type {
   AgentGate,
   AgentPlan,
   AgentPlanTask,
+  AgentRoleId,
   AgentRun,
   AgentRunStatus,
   AgentSkill,
@@ -26,6 +27,17 @@ type Block =
       summary: string
     }
   | { kind: 'gate'; id: string; gate: AgentGate; resolved: 'approve' | 'revise' | 'skip' | null }
+  | {
+      kind: 'subagent'
+      id: string
+      role: AgentRoleId
+      task: string
+      status: 'running' | 'done' | 'failed' | 'stopped'
+      steps: number
+      tokens: number
+      tools: { toolCallId: string; name: string; ok: boolean; summary: string }[]
+      summary: string
+    }
   | { kind: 'plan'; id: string; plan: AgentPlan }
   | { kind: 'status'; id: string; text: string; tone: 'info' | 'error' }
 
@@ -46,6 +58,14 @@ const TOOL_LABEL: Record<string, string> = {
   request_review: '请求审阅',
   generate_chapter: '生成章节',
   generate_portrait: '生成形象图',
+  delegate: '派子智能体',
+}
+
+const ROLE_LABEL: Record<AgentRoleId, string> = {
+  researcher: '研究员',
+  worldbuilder: '世界建筑师',
+  critic: '一致性检查员',
+  stylist: '文风顾问',
 }
 
 const SKILL_LABEL: Record<AgentSkill, string> = {
@@ -133,15 +153,19 @@ function summarizeArgs(name: string, args: unknown): string {
  * 停止/失败时真实结果未知，标成「已停止」，不能和状态栏矛盾。
  */
 function settleRunningTools(blocks: Block[]): Block[] {
-  return blocks.map((b) =>
-    b.kind === 'tool' && b.status === 'running'
-      ? {
-          ...b,
-          status: 'stopped' as const,
-          summary: b.summary.length > 0 ? b.summary : '本轮已结束，结果未知',
-        }
-      : b,
-  )
+  return blocks.map((b) => {
+    if (b.kind === 'tool' && b.status === 'running') {
+      return {
+        ...b,
+        status: 'stopped' as const,
+        summary: b.summary.length > 0 ? b.summary : '本轮已结束，结果未知',
+      }
+    }
+    if (b.kind === 'subagent' && b.status === 'running') {
+      return { ...b, status: 'stopped' as const }
+    }
+    return b
+  })
 }
 
 function reduce(blocks: Block[], ev: AgentEvent): Block[] {
@@ -202,6 +226,57 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
       const cur = next[idx] as Extract<Block, { kind: 'tool' }>
       next[idx] = { ...cur, status: ev.isError ? 'error' : 'ok', summary: ev.summary }
       return next
+    }
+    case 'subagent.started': {
+      const last = blocks[blocks.length - 1]
+      const head =
+        last?.kind === 'thinking' ? [...blocks.slice(0, -1), { ...last, done: true }] : blocks
+      return [
+        ...head,
+        {
+          kind: 'subagent',
+          // 加前缀避免与 toolCallId 撞 id
+          id: `sa:${ev.id}`,
+          role: ev.role,
+          task: ev.task,
+          status: 'running',
+          steps: 0,
+          tokens: 0,
+          tools: [],
+          summary: '',
+        },
+      ]
+    }
+    case 'subagent.tool': {
+      return blocks.map((b) =>
+        b.kind === 'subagent' && b.id === `sa:${ev.id}`
+          ? {
+              ...b,
+              tools: [
+                ...b.tools,
+                {
+                  toolCallId: ev.toolCallId,
+                  name: ev.toolName,
+                  ok: ev.ok,
+                  summary: ev.summary,
+                },
+              ],
+            }
+          : b,
+      )
+    }
+    case 'subagent.ended': {
+      return blocks.map((b) =>
+        b.kind === 'subagent' && b.id === `sa:${ev.id}`
+          ? {
+              ...b,
+              status: ev.ok ? ('done' as const) : ('failed' as const),
+              steps: ev.steps,
+              tokens: ev.tokens,
+              summary: ev.summary,
+            }
+          : b,
+      )
     }
     case 'plan.updated':
       return [...blocks, { kind: 'plan', id: `p${ev.seq}`, plan: ev.plan }]
@@ -686,8 +761,8 @@ export function AgentPage() {
           {run !== null ? (
             <>
               <p>
-                步数 {run.budget.steps}/{run.budget.maxSteps} · 章节 {run.budget.chapterCalls} · 图{' '}
-                {run.budget.portraitCalls}
+                步数 {run.budget.steps}/{run.budget.maxSteps} · 子智能体 {run.budget.subagentCalls}{' '}
+                次 · 章节 {run.budget.chapterCalls} · 图 {run.budget.portraitCalls}
               </p>
               <p className="mt-0.5">{run.tokens.toLocaleString()} tokens</p>
             </>
@@ -846,6 +921,51 @@ export function AgentPage() {
                         </details>
                       )}
                     </div>
+                  )
+                }
+                if (b.kind === 'subagent') {
+                  const tone =
+                    b.status === 'running'
+                      ? 'border-sky-200 bg-sky-50'
+                      : b.status === 'failed'
+                        ? 'border-rose-200 bg-rose-50'
+                        : 'border-neutral-200 bg-white'
+                  return (
+                    <details key={b.id} className={`rounded border px-3 py-2 ${tone}`}>
+                      <summary className="flex cursor-pointer items-center gap-2 text-[12px]">
+                        <span className="shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-800">
+                          {ROLE_LABEL[b.role]}
+                        </span>
+                        <span className="truncate text-neutral-700">{b.task}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-neutral-500">
+                          {b.status === 'running'
+                            ? '执行中…'
+                            : b.status === 'stopped'
+                              ? '已停止'
+                              : b.status === 'failed'
+                                ? '失败'
+                                : '完成'}
+                          {` · ${b.steps} 步 · ${b.tokens.toLocaleString()} tokens`}
+                        </span>
+                      </summary>
+                      {b.tools.length > 0 && (
+                        <ul className="mt-2 space-y-1">
+                          {b.tools.map((t) => (
+                            <li key={t.toolCallId} className="text-[11px] text-neutral-600">
+                              <span className={t.ok ? 'text-emerald-700' : 'text-rose-700'}>
+                                {TOOL_LABEL[t.name] ?? t.name}
+                              </span>
+                              {t.summary.length > 0 && ` · ${t.summary}`}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {b.summary.length > 0 && (
+                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-neutral-50 p-2 text-[11px] leading-5 text-neutral-600">
+                          {b.summary}
+                        </pre>
+                      )}
+                    </details>
                   )
                 }
                 if (b.kind === 'status') {

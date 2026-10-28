@@ -21,6 +21,7 @@ const WRITABLE = [
   'DEEPSEEK_BASE_URL',
   'INKLOOM_JUDGE',
   'INKLOOM_JUDGE_MODEL',
+  'INKLOOM_CRITIC',
   'SILICONFLOW_API_KEY',
   'SILICONFLOW_IMAGE_MODEL',
   'TYPESAFE_API_KEY',
@@ -41,6 +42,7 @@ const DEFAULTS: Record<string, string> = {
   DEEPSEEK_BASE_URL: 'https://api.deepseek.com',
   INKLOOM_JUDGE: 'off',
   INKLOOM_JUDGE_MODEL: 'deepseek-ai/DeepSeek-V4.1-Flash',
+  INKLOOM_CRITIC: 'on',
   SILICONFLOW_IMAGE_MODEL: 'Kwai-Kolors/Kolors',
   INKLOOM_WORDS_PER_CHAPTER: '3000',
 }
@@ -121,6 +123,9 @@ settings.put('/settings', async (c) => {
     }
     if (k === 'INKLOOM_JUDGE' && !['off', 'mock', 'openai', 'typesafe'].includes(v)) {
       throw new InkloomError('INVALID_INPUT', 'INKLOOM_JUDGE 只能是 off / mock / openai / typesafe')
+    }
+    if (k === 'INKLOOM_CRITIC' && !['on', 'off'].includes(v)) {
+      throw new InkloomError('INVALID_INPUT', 'INKLOOM_CRITIC 只能是 on / off')
     }
     updates.push([k, v])
   }

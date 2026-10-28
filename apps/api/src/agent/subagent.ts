@@ -28,7 +28,15 @@ export interface SubagentResult {
 
 export type SubagentEvent =
   | { type: 'started'; id: string; role: AgentRoleId; task: string }
-  | { type: 'tool'; id: string; role: AgentRoleId; toolName: string; ok: boolean; summary: string }
+  | {
+      type: 'tool'
+      id: string
+      role: AgentRoleId
+      toolCallId: string
+      toolName: string
+      ok: boolean
+      summary: string
+    }
   | {
       type: 'ended'
       id: string
@@ -153,6 +161,7 @@ export function createSubagentRunner(
           type: 'tool',
           id,
           role: role.id,
+          toolCallId: e.toolCallId,
           toolName: e.toolName,
           ok: e.isError !== true,
           summary: clip(raw.length === 0 ? '(无输出)' : raw),

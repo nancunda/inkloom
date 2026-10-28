@@ -22,6 +22,11 @@ const GROUPS: { title: string; hint: string; keys: string[] }[] = [
     ],
   },
   {
+    title: '共创',
+    hint: '一致性检查默认开：每个任务 done 前让 critic 核对一次，发现矛盾会挡住完成。改设置对已开启的会话不生效，下次会话生效。',
+    keys: ['INKLOOM_CRITIC'],
+  },
+  {
     title: '写作参数',
     hint: '目标字数只影响提示与进度，不截断模型输出。',
     keys: ['INKLOOM_WORDS_PER_CHAPTER'],
@@ -33,6 +38,7 @@ const LABEL: Record<string, string> = {
   DEEPSEEK_MODEL: '生成模型',
   DEEPSEEK_BASE_URL: '接口地址',
   INKLOOM_JUDGE: '判断层',
+  INKLOOM_CRITIC: '任务后一致性检查',
   SILICONFLOW_API_KEY: '硅基流动 API Key',
   INKLOOM_JUDGE_MODEL: '判断模型',
   SILICONFLOW_IMAGE_MODEL: '生图模型',
@@ -154,6 +160,7 @@ function Field({
 }) {
   const [reveal, setReveal] = useState(false)
   const isJudge = field.key === 'INKLOOM_JUDGE'
+  const isCritic = field.key === 'INKLOOM_CRITIC'
   const value = draft ?? ''
 
   return (
@@ -173,6 +180,16 @@ function Field({
           <option value="mock">mock（只验管线）</option>
           <option value="openai">siliconflow（硅基流动）</option>
           <option value="typesafe">typesafe（JEV 官方）</option>
+        </select>
+      ) : isCritic ? (
+        <select
+          id={field.key}
+          value={value !== '' ? value : field.value || 'on'}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-56 rounded border border-neutral-300 px-2 py-1 text-[12px]"
+        >
+          <option value="on">on（每个任务检查一次）</option>
+          <option value="off">off（关闭，省 token）</option>
         </select>
       ) : (
         <input

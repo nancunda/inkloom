@@ -413,11 +413,14 @@ export interface AgentPlan {
   tasks: AgentPlanTask[]
 }
 
+export type AgentRoleId = 'researcher' | 'worldbuilder' | 'critic' | 'stylist'
+
 export interface AgentRunBudget {
   steps: number
   maxSteps: number
   chapterCalls: number
   portraitCalls: number
+  subagentCalls: number
 }
 
 export type AgentEvent =
@@ -452,6 +455,36 @@ export type AgentEvent =
       feedback: string | null
     }
   | { seq: number; at: string; type: 'plan.updated'; plan: AgentPlan }
+  | {
+      seq: number
+      at: string
+      type: 'subagent.started'
+      id: string
+      role: AgentRoleId
+      task: string
+    }
+  | {
+      seq: number
+      at: string
+      type: 'subagent.tool'
+      id: string
+      role: AgentRoleId
+      toolCallId: string
+      toolName: string
+      ok: boolean
+      summary: string
+    }
+  | {
+      seq: number
+      at: string
+      type: 'subagent.ended'
+      id: string
+      role: AgentRoleId
+      ok: boolean
+      steps: number
+      tokens: number
+      summary: string
+    }
   | { seq: number; at: string; type: 'run.finished' }
   | { seq: number; at: string; type: 'run.paused'; reason: string }
   | { seq: number; at: string; type: 'run.failed'; error: string }
