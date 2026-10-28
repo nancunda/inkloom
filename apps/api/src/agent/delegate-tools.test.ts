@@ -332,8 +332,23 @@ describe('update_task(done) 的 critic 门禁', () => {
     })
     expect(r.isError).toBe(true)
     expect(textOf(r)).toContain('artifacts')
+    // 必须给出出口，否则只读任务会永久卡在 doing
+    expect(textOf(r)).toContain('review')
     const state = await readPlanState(root, planId as string)
     expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('doing')
+  })
+
+  it('★ review 任务错传 artifacts → 指出契约错误，不带着文件去检查', async () => {
+    await startDoingTask('review')
+    tools = buildTools(async () => ({ kind: 'passed', warnings: [], suggestions: [] }))
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      artifacts: ['world/note.md'],
+      note: '结论',
+    })
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toContain('artifacts=[]')
   })
 
   it('★ critic 检查期间被停止 → 返回后不写 done（覆盖最长 120s 的窗口）', async () => {

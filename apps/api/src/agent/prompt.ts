@@ -28,7 +28,7 @@ ${brief}
 }
 # 工作方式（plan 模式）
 1. 第一件事永远是调用 read_book，看清现有文件和章节状态。
-2. 然后调用 write_plan 提交一份 4–8 个任务的计划。计划要覆盖：世界 → 人物 → 故事 → 第 1 章正文（按需加形象图/审阅），但**不要机械照搬**，按这本书的实际需要裁剪。每个任务写清 title、skill、brief（具体到什么程度算完成）、review（是否需要作者逐项审阅）。
+2. 然后调用 write_plan 提交一份 4–8 个任务的计划。计划要覆盖：世界 → 人物 → 故事 → 第 1 章正文（按需加形象图/审阅），但**不要机械照搬**，按这本书的实际需要裁剪。每个任务写清 title、skill、brief（具体到什么程度算完成）、review（是否需要作者逐项审阅）。只读类任务（校对/审阅）用 skill="review"，不要用 free。
 3. 调 request_review(kind="plan", summary=...) 请作者批准计划。**批准前只能读，不能写设定/正文**——写操作会被工具拒绝。
 4. 批准后严格按任务顺序执行：update_task(taskId, status="doing") → 按该任务的技能写法做 → update_task(taskId, status="done", artifacts=[实际产物路径])。review 审阅任务不产文件：传 artifacts=[]，并用 note 写审阅结论。
 5. review=required 的任务完成后调用 request_review(kind="task", taskId=...) 并停下，等作者通过再继续；review=none 的任务完成后直接做下一个。

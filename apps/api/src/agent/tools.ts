@@ -879,15 +879,19 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       if (params.status === 'done' && deps.critic !== undefined) {
         // ★ 只有 review 是结构性不产文件；free 的常见用法就是写要素文件，不能放过
         const fileBearing = task.skill !== 'review'
-        if (artifacts.length === 0) {
-          if (fileBearing) {
-            return fail(
-              'done 时必须用 artifacts 列出实际产出的文件；没有产物不能标记完成（也会绕过一致性检查）。',
-            )
+        if (!fileBearing) {
+          // review：note 就是唯一证据，传了 artifacts 反而说明契约用错了
+          if (artifacts.length > 0) {
+            return fail('审阅任务不产文件：传 artifacts=[]，并用 note 写审阅结论。')
           }
           if ((params.note ?? cur.summary ?? '').trim().length === 0) {
-            return fail('这类任务不产出文件，done 时必须用 note 写清结论，供一致性检查核对。')
+            return fail('审阅任务必须用 note 写清结论，供一致性检查核对。')
           }
+        } else if (artifacts.length === 0) {
+          // ★ 给出口：只读校对这类任务应该规划成 review，否则会永久卡在 doing
+          return fail(
+            'done 时必须用 artifacts 列出实际产出的文件。如果这个任务确实不产文件（只读校对/审阅），把它的 skill 改成 review 并用 note 写结论。',
+          )
         }
         let verdict: CriticVerdict
         try {
