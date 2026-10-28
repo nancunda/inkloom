@@ -25,7 +25,7 @@ interface Props {
   layout: GraphLayoutName
   preset?: Record<string, { x: number; y: number }> | undefined
   onSelect: (id: string | null) => void
-  onContext: (id: string) => void
+  onContext: (id: string, at: { x: number; y: number }) => void
   onPositions?: (positions: Record<string, { x: number; y: number }>) => void
 }
 
@@ -80,6 +80,22 @@ function applyLayout(cy: Core, name: GraphLayoutName, onStop?: () => void): void
   layout.run()
 }
 
+/** 压暗全图、高亮命中集合；fit=false 用于元素重建后的静默重放 */
+function applyHighlight(cy: Core, ids: string[], fit: boolean): void {
+  const picked = cy.collection()
+  for (const id of ids) {
+    const el = cy.getElementById(id)
+    if (!el.empty()) picked.merge(el)
+  }
+  // ★ 先判空再压暗：否则整图变淡又没有高亮，看起来像「图没了」
+  if (picked.length === 0) return
+  cy.batch(() => {
+    cy.elements().addClass('dimmed').removeClass('hl')
+    picked.removeClass('dimmed').addClass('hl')
+  })
+  if (fit) cy.animate({ fit: { eles: picked, padding: 60 } }, { duration: 200 })
+}
+
 export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCanvas(
   { elements, layout, preset, onSelect, onContext, onPositions },
   ref,
@@ -92,6 +108,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   layoutRef.current = layout
   const presetRef = useRef(preset)
   presetRef.current = preset
+  /** 本次会话里已经拖过/布局过的坐标：筛选导致元素重建时用它复位 */
+  const posRef = useRef<Record<string, { x: number; y: number }>>({})
+  /** 当前高亮集合：元素重建会携 class 一起丢掉，重建后靠它重放 */
+  const hlRef = useRef<string[]>([])
 
   useImperativeHandle(
     ref,
@@ -100,8 +120,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       runLayout: (name) => {
         const cy = cyRef.current
         if (cy === null) return
-        // 换布局后把全局视野收回来（布局自带 fit 的只有 cose/breadthfirst）
-        applyLayout(cy, name, () => cy.fit(undefined, 36))
+        // 用户主动换布局 = 坐标全变：布局完就把新坐标记下来并落盘
+        applyLayout(cy, name, () => {
+          posRef.current = positionsOf(cy)
+          cbRef.current.onPositions?.(posRef.current)
+          cy.fit(undefined, 36)
+        })
       },
       focus: (id) => {
         const cy = cyRef.current
@@ -112,23 +136,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1.1) }, { duration: 200 })
       },
       highlight: (ids) => {
+        hlRef.current = ids
         const cy = cyRef.current
         if (cy === null) return
-        const picked = cy.collection()
-        for (const id of ids) {
-          const el = cy.getElementById(id)
-          if (!el.empty()) picked.merge(el)
-        }
-        // ★ 先判空再压暗：否则整图变淡又没有高亮，看起来像「图没了」
-        if (picked.length === 0) return
-        cy.batch(() => {
-          cy.elements().addClass('dimmed').removeClass('hl')
-          picked.removeClass('dimmed').addClass('hl')
-        })
-        cy.animate({ fit: { eles: picked, padding: 60 } }, { duration: 200 })
+        applyHighlight(cy, ids, true)
       },
       resetHighlight: () => {
         const cy = cyRef.current
+        hlRef.current = []
         if (cy === null) return
         cy.batch(() => {
           cy.elements().removeClass('dimmed').removeClass('hl')
@@ -160,10 +175,19 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       if (e.target === cy) cbRef.current.onSelect(null)
     })
     cy.on('dbltap', 'node', (e: EventObject) => {
-      cy.animate({ center: { eles: e.target }, zoom: Math.max(cy.zoom(), 1.2) }, { duration: 200 })
+      const node = e.target
+      if (node.data('kind') === 'class') {
+        // 类分组框双击折叠：隐藏/显示所有后代，框自己留下当标题
+        const collapsed = node.data('collapsed') === true
+        node.data('collapsed', !collapsed)
+        node.descendants().style('display', collapsed ? 'element' : 'none')
+        return
+      }
+      cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1.2) }, { duration: 200 })
     })
     cy.on('cxttap', 'node', (e: EventObject) => {
-      cbRef.current.onContext(e.target.id())
+      const at = e.target.renderedPosition() as { x: number; y: number }
+      cbRef.current.onContext(e.target.id(), at)
     })
     let saveTimer: number | undefined
     let pending: Record<string, { x: number; y: number }> | undefined
@@ -176,6 +200,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       // ★ 框选多节点拖拽时 cytoscape 逐元素 emit，会回调 K 次；
       //   快照在事件当刻取（元素重建后再取会读到新坐标），只对落盘去抖
       pending = positionsOf(cy)
+      posRef.current = pending
       if (saveTimer !== undefined) window.clearTimeout(saveTimer)
       saveTimer = window.setTimeout(() => {
         saveTimer = undefined
@@ -206,21 +231,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       cy.add(elementDefs(elements))
     })
 
-    // ★ 先跑布局给新节点占位，再把已知坐标搬回去；顺序反了会把作者的拖拽位置冲掉
-    const saved = presetRef.current
-    applyLayout(
-      cy,
-      layoutRef.current === 'preset' && saved === undefined ? 'cose' : layoutRef.current,
-    )
-    if (saved !== undefined) {
-      cy.batch(() => {
-        cy.nodes().forEach((n) => {
-          const p = saved[n.id()]
-          if (p !== undefined) n.position(p)
-        })
+    // ★ 过滤只该增减元素，不该把作者拖好的图推倒重来：跑完布局再把已知坐标覆盖回去
+    const known = { ...(presetRef.current ?? {}), ...posRef.current }
+    const hasKnown = Object.keys(known).length > 0
+    applyLayout(cy, layoutRef.current === 'preset' && !hasKnown ? 'cose' : layoutRef.current)
+    cy.batch(() => {
+      cy.nodes().forEach((n) => {
+        const p = known[n.id()]
+        if (p !== undefined) n.position(p)
       })
-    }
+    })
+    posRef.current = positionsOf(cy)
     cy.fit(undefined, 36)
+    // 重建会把 class 一起清掉：把当前高亮静默重放回去（不抢镜头）
+    applyHighlight(cy, hlRef.current, false)
   }, [elements])
 
   return <div ref={boxRef} className="h-full w-full" data-testid="graph-canvas" />

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { OntologyGraphData } from '../api/types'
-import { filterElements, nodesWithinHops, searchNodes, toGraphElements } from './graph-elements'
+import {
+  filterElements,
+  inducedIds,
+  nodesWithinHops,
+  searchNodes,
+  toGraphElements,
+} from './graph-elements'
 
 function graph(over: Partial<OntologyGraphData> = {}): OntologyGraphData {
   return {
@@ -155,5 +161,10 @@ describe('filterElements / hops / search', () => {
     expect(searchNodes(g, '')).toEqual([])
     expect(searchNodes(g, '宗门')).toEqual([])
     expect(searchNodes(g, 'cls-sect')).toEqual([])
+  })
+
+  it('★ inducedIds 带出节点与两端都在的边', () => {
+    const g = toGraphElements(graph())
+    expect(inducedIds(g, new Set(['c1', 'grp'])).sort()).toEqual(['c1', 'e-belong', 'grp'])
   })
 })

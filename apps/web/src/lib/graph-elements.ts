@@ -203,6 +203,15 @@ export function nodesWithinHops(
   return seen
 }
 
+/** 高亮用：给定节点集合，返回节点本身 + 两端都在集合内的边；其余元素交给画布淡出 */
+export function inducedIds(elements: GraphElements, nodeIds: ReadonlySet<string>): string[] {
+  const out = new Set<string>(nodeIds)
+  for (const e of elements.edges) {
+    if (nodeIds.has(e.data.source) && nodeIds.has(e.data.target)) out.add(e.data.id)
+  }
+  return [...out]
+}
+
 /** 按名字/ID 搜实例节点（类节点不参与，避免把整个分组框高亮） */
 export function searchNodes(elements: GraphElements, text: string): string[] {
   const q = text.trim().toLowerCase()

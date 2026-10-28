@@ -591,6 +591,13 @@ export interface OntologyClassesData {
   predicates: OntologyPredicateRow[]
 }
 
+/** GET /api/ontology/path 的响应：found=false 时 nodes/edges 为空数组 */
+export interface OntologyPathData {
+  found: boolean
+  nodes: OntologyNodeRow[]
+  edges: OntologyEdgeRow[]
+}
+
 /** 资料卡：Agent 搜到/抓到的外部材料（默认未批准） */
 export interface LoreItem {
   id: string

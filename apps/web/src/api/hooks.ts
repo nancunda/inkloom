@@ -19,6 +19,7 @@ import type {
   OntologyClassesData,
   OntologyDetailData,
   OntologyGraphData,
+  OntologyPathData,
   OverviewData,
   PowerSystem,
   ProposeResult,
@@ -582,6 +583,19 @@ export function useOntologyClasses() {
   return useQuery({
     queryKey: ['ontology', 'classes'],
     queryFn: () => api<OntologyClassesData>('/ontology/classes'),
+  })
+}
+
+/** 两个端点都选好才开始查；maxDepth 默认 4（与 core 默认一致） */
+export function useOntologyPath(from: string | null, to: string | null, maxDepth = 4) {
+  const search = new URLSearchParams()
+  if (from !== null) search.set('from', from)
+  if (to !== null) search.set('to', to)
+  search.set('maxDepth', String(maxDepth))
+  return useQuery({
+    queryKey: ['ontology', 'path', from, to, maxDepth],
+    queryFn: () => api<OntologyPathData>(`/ontology/path?${search.toString()}`),
+    enabled: from !== null && to !== null,
   })
 }
 

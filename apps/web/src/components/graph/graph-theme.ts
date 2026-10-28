@@ -57,6 +57,10 @@ export const GRAPH_STYLE = [
     style: { 'border-style': 'dashed' },
   },
   {
+    selector: 'node[kind="class"][?collapsed]',
+    style: { 'border-style': 'solid', 'background-opacity': 0.9 },
+  },
+  {
     selector: 'edge',
     style: {
       width: 1.2,
