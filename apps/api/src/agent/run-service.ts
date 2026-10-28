@@ -191,6 +191,19 @@ export function hasLiveAgentRun(): boolean {
   return false
 }
 
+/** 这个会话在本进程里是否真有正在跑/等审批的 run（meta 里的状态不算数：可能是崩溃残留） */
+export function hasLiveAgentRunFor(sessionId: string): boolean {
+  for (const run of runs.values()) {
+    if (
+      run.sessionId === sessionId &&
+      (run.status === 'running' || run.status === 'waiting_review')
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 /**
  * 清空已结束的 run。
  *
@@ -677,7 +690,7 @@ export async function startAgentRun(
   const { root, project } = getContext()
   // ★ legacy 会话只读：放进来会写到一个永远读不回来的 journal
   if (options.sessionId !== undefined && isLegacyId(options.sessionId)) {
-    throw new InkloomError('INVALID_INPUT', '历史会话只读，不能续接；请新建会话')
+    throw new InkloomError('CONFLICT', '历史会话只读，不能续接；请新建会话')
   }
   if (activeRunId !== null) {
     const active = runs.get(activeRunId)
@@ -924,18 +937,26 @@ export async function startAgentRun(
     // 上次正等作者批准：不叫模型，直接把门禁恢复出来
     if (resumable.status === 'awaiting_approval') {
       const gate = deriveGate(resumable)
-      if (gate !== null) {
+      // ★ 作者带话进来时不能把话吞掉：本轮先跑他的话，门禁下次再请
+      if (gate !== null && options.prompt === undefined) {
         run.gate = gate
         run.status = 'waiting_review'
         emit(run, { type: 'gate.waiting', gate })
-        void persistSessionMeta(run)
+        await persistSessionMeta(run)
         return snapshot(run)
       }
     }
   }
 
   let initialPrompt = buildAgentPrompt(project, goal)
-  if (mode === 'replan' && priorToClose !== null) {
+  if (options.prompt !== undefined) {
+    // ★ 续接以作者这句话为主语：不能再拼「继续做任务 X」的命令式提示，否则会盖过他的指令
+    const planHint =
+      resumable === null
+        ? ''
+        : `\n\n（上次会话留下计划《${resumable.title}》id=${resumable.id}；先按作者这句话行事，需要时再 update_plan。）`
+    initialPrompt = `${initialPrompt}\n\n# 作者刚说\n${options.prompt}${planHint}`
+  } else if (mode === 'replan' && priorToClose !== null) {
     initialPrompt = `${buildAgentPrompt(project, goal)}
 
 # 重新规划
@@ -953,13 +974,9 @@ export async function startAgentRun(
 上一次会话留下了未完成的计划《${resumable.title}》（id=${resumable.id}）。请 read_book 后继续：用 update_plan 修订并 request_review(kind="plan")，不要重新 write_plan。`
   }
 
-  void drive(
-    run,
-    options.prompt === undefined
-      ? initialPrompt
-      : `${initialPrompt}\n\n# 作者刚说\n${options.prompt}`,
-  )
+  // ★ 先记作者这句话，再开跑：与 sendAgentMessage 的顺序一致，前端不会错位
   if (options.prompt !== undefined) emit(run, { type: 'user.message', text: options.prompt })
+  void drive(run, initialPrompt)
   return snapshot(run)
 }
 
@@ -986,14 +1003,12 @@ export async function resumeSession(sessionId: string, text: string): Promise<Ag
   if (isLegacyId(sessionId)) {
     throw new InkloomError('CONFLICT', '历史记录只读，不能续接')
   }
-  if (hasLiveAgentRun()) {
-    throw new InkloomError('CONFLICT', '还有进行中的会话，先停止再继续别的会话')
+  // ★ 只看内存里的 live run：meta 里的 running/waiting_review 可能是进程崩溃后的残留
+  if (hasLiveAgentRunFor(sessionId)) {
+    throw new InkloomError('CONFLICT', '会话还在运行或等待审批，先在原会话里处理')
   }
   const meta = await readSessionMeta(root, sessionId)
   if (meta === null) throw new InkloomError('NOT_FOUND', `会话 ${sessionId} 不存在`)
-  if (meta.status === 'running' || meta.status === 'waiting_review') {
-    throw new InkloomError('CONFLICT', '会话还在运行或等待审批，先在原会话里处理')
-  }
   const snapshot = await loadMessageSnapshot(root, sessionId)
   if (snapshot === null) {
     throw new InkloomError('CONFLICT', '这个会话没有可续接的记录（消息快照缺失）')

@@ -13,14 +13,17 @@ import { getContext } from '../services/context.js'
 
 export const sessionRoutes = new Hono()
 
-function num(value: string | undefined, fallback: number): number {
-  const parsed = Number(value ?? fallback)
-  return Number.isFinite(parsed) ? parsed : fallback
+/** 统一 limit 语义：0/负数 = 空，非法 = 默认值，避免两个端点各解释一套 */
+function clampLimit(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim().length === 0) return fallback
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(0, Math.trunc(parsed))
 }
 
 sessionRoutes.get('/agent/sessions', async (c) => {
   const { root } = getContext()
-  const limit = Math.max(1, num(c.req.query('limit'), 50))
+  const limit = clampLimit(c.req.query('limit'), 50)
   return c.json({ sessions: (await listSessions(root)).slice(0, limit) })
 })
 
@@ -31,7 +34,7 @@ sessionRoutes.get('/agent/sessions/:id', async (c) => {
     ? await readLegacySession(root, id.slice('lg_'.length))
     : await readSessionMeta(root, id)
   if (meta === null) throw new InkloomError('NOT_FOUND', `会话 ${id} 不存在`)
-  const limit = num(c.req.query('limit'), 2000)
+  const limit = clampLimit(c.req.query('limit'), 2000)
   return c.json({ meta, events: await readSessionEvents(root, id, limit) })
 })
 
@@ -44,6 +47,7 @@ sessionRoutes.patch('/agent/sessions/:id', async (c) => {
   return c.json({ meta: await renameSession(root, c.req.param('id'), body.title) })
 })
 
+/** 幂等：不存在的会话也返回 200（前端列表过期时重试不会报错） */
 sessionRoutes.delete('/agent/sessions/:id', async (c) => {
   const { root } = getContext()
   await removeSession(root, c.req.param('id'))

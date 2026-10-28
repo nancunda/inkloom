@@ -11,7 +11,7 @@ import {
   writePlanDef,
   writePlanState,
 } from '../storage/plans.js'
-import { loadMessageSnapshot } from './history.js'
+import { loadMessageSnapshot, saveMessageSnapshot } from './history.js'
 import { readSessionMeta, writeSessionMeta } from './session-store.js'
 
 interface FakeEvent {
@@ -853,10 +853,12 @@ describe('会话绑定', () => {
     ).toBe(true)
     const events = getAgentRun(resumed.id)?.events ?? []
     expect(events.some((e) => e.type === 'user.message' && e.text === '接着写第二段')).toBe(true)
+    // 作者的话必须真的进了 prompt，而不是被「继续做任务 X」盖过去
+    expect(after.prompts.at(-1)).toContain('接着写第二段')
     stopAgentRun(resumed.id)
   })
 
-  it('★ 等审批的会话不能走续接（要在原 run 上处理）', async () => {
+  it('★ 等审批的会话在无 live run 时可以续接（重启后能救回来）', async () => {
     await writeSessionMeta(h.root, {
       id: 'cs_wait000000',
       title: '等审批',
@@ -874,7 +876,17 @@ describe('会话绑定', () => {
       runIds: [],
       resumable: false,
     })
-    await expect(resumeSession('cs_wait000000', '继续')).rejects.toThrow(/等待审批/)
+    await saveMessageSnapshot(h.root, 'cs_wait000000', {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      sessionId: 'cs_wait000000',
+      runId: 'ar_old',
+      messages: [{ role: 'user', content: '旧话', timestamp: 1 } as unknown as AgentMessage],
+    })
+    const resumed = await resumeSession('cs_wait000000', '继续')
+    expect(resumed.sessionId).toBe('cs_wait000000')
+    lastAgent().done()
+    stopAgentRun(resumed.id)
   })
 
   it('★ 续接 run 一开跑就把 meta 置为 running（否则会被当成可删除）', async () => {

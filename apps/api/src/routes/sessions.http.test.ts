@@ -113,6 +113,18 @@ describe('会话接口', () => {
     )
   })
 
+  it('★ 运行中的会话不能删除（409）', async () => {
+    const server = await app()
+    await writeSessionMeta(root, {
+      ...meta('cs_run123', '运行中'),
+      status: 'running',
+      updatedAt: new Date().toISOString(),
+    })
+    expect(
+      (await server.request('/api/agent/sessions/cs_run123', { method: 'DELETE' })).status,
+    ).toBe(409)
+  })
+
   it('★ legacy 会话出现在列表里并能回放（runId 自动补齐）', async () => {
     const server = await app()
     const runs = join(root, '.inkloom', 'agent', 'runs')
