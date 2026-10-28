@@ -61,14 +61,15 @@ export const AGENT_ROLES: Record<AgentRoleId, AgentRole> = {
       READ_ONLY,
       '只报矛盾，不报审美偏好：人物/地点/规则/时间线/境界/称谓前后不符才算矛盾。',
       '每条矛盾必须给 evidence（文件相对路径或节点 id）；给不出 evidence 的不要写。',
+      '章节定稿的路径在快照的 chapters[].file 里（形如 chapters/ch-004.md），读正文用它，不要自己猜文件名。',
       '没有矛盾时 conflicts 为空数组（suggestions 也可为空），但外层始终是上面那个对象。',
       '只输出 JSON，不要任何解释文字，格式：',
       '{"conflicts":[{"severity":"error","message":"…","evidence":["characters/index.json"]}],"suggestions":["…"]}',
       'severity 用 error 表示「必须修」，warning 表示「建议修」。',
     ].join('\n'),
     tools: ['read_book', 'read_element', 'query_graph', 'find_path', 'explain_fact'],
-    // 要读正文 + 逐个核对设定，给到 8 步；检查器本身不用搜外网
-    maxSteps: 8,
+    // 要读正文 + 逐个核对设定；验收里 8 步会因路径错误白白浪费，给到 10 步
+    maxSteps: 10,
     output: 'json',
   },
   stylist: {

@@ -32,6 +32,8 @@ export interface ChapterSummary {
   title: string | null
   status: string
   wordCount: number
+  /** 定稿文件相对路径（chapters/ch-004.md）；只有候选场景时为 null。★ 给路径而不是让模型猜文件名 */
+  file: string | null
   scenes: SceneSummary[]
 }
 
@@ -109,6 +111,7 @@ export async function readChapters(root: string): Promise<ChapterSummary[]> {
       title: /^#\s+(.+?)\s*$/m.exec(raw)?.[1] ?? null,
       status: 'finalized',
       wordCount: countWords(raw),
+      file: `chapters/${e.name}`,
       scenes: [],
     })
   }
@@ -134,6 +137,7 @@ export async function readChapters(root: string): Promise<ChapterSummary[]> {
       title: existing?.title ?? null,
       status: existing?.status ?? 'draft',
       wordCount: existing?.wordCount ?? scenes.reduce((n, s) => n + s.chars, 0),
+      file: existing?.file ?? null,
       scenes,
     })
   }

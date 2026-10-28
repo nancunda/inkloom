@@ -38,6 +38,7 @@ describe('readChapters', () => {
 
     expect(chapters).toHaveLength(1)
     expect(chapters[0]?.status).toBe('draft')
+    expect(chapters[0]?.file).toBeNull()
     expect(chapters[0]?.scenes).toEqual([
       { sceneNo: 1, latestVersion: 2, chars: 5 },
       { sceneNo: 2, latestVersion: 1, chars: 5 },
@@ -64,6 +65,8 @@ describe('readChapters', () => {
       chapterNo: 1,
       title: '七斤四两',
       status: 'finalized',
+      // ★ 验收发现：critic 猜成 chapters/ch04.md，两次读空；快照必须直接给真实路径
+      file: 'chapters/ch-001.md',
     })
     expect(chapters[0]?.scenes).toHaveLength(1)
   })
