@@ -490,7 +490,7 @@ export type AgentEvent =
       text: string
       /** true = 结论可用但不完整（步数触顶/超时） */
       partial: boolean
-      /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null */
+      /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null，partial 时也有值 */
       error: string | null
     }
   | { seq: number; at: string; type: 'run.finished' }

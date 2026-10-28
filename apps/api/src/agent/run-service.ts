@@ -20,7 +20,7 @@ import {
 import { deriveGate } from './plan-gate.js'
 import { buildAgentPrompt, buildPlanRevisePrompt, buildTaskPrompt } from './prompt.js'
 import type { AgentRoleId } from './roles.js'
-import { createSubagentRunner } from './subagent.js'
+import { createSubagentRunner, type SubagentResult } from './subagent.js'
 import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
 
 export type AgentRunStatus = 'running' | 'waiting_review' | 'paused' | 'done' | 'failed' | 'stopped'
@@ -143,6 +143,17 @@ function planSignature(plan: Plan | null): string {
   if (plan === null) return 'none'
   const tasks = plan.tasks.map((t) => `${t.id}:${t.status}:${t.reviewed ? 1 : 0}`).join(',')
   return `${plan.status}|${tasks}`
+}
+
+/**
+ * 何时不该让 critic 的结论进一致性门禁（返回跳过理由）。
+ * ★ 被步数/超时截断的 JSON 不完整：交给解析器只会得到误导的「不是合法 JSON」。
+ */
+export function criticSkipReason(r: SubagentResult): string | null {
+  if (!r.ok) return (r.error ?? '').trim() || '子智能体失败'
+  if (r.partial) return `一致性检查未跑完（${r.error ?? '中断'}）`
+  if (r.text.trim().length === 0) return '子智能体没有给出检查结论'
+  return null
 }
 
 /** 是否还有占用中的 run：切书前必须拒绝，避免把进度留在一个已关闭的 context 里 */
@@ -661,8 +672,8 @@ export async function startAgentRun(
         steps: e.steps,
         tokens: e.tokens,
         summary: e.summary,
-        // ★ 完整结论进事件（trace 详情要读全文）；6000 字上限防 journal 膨胀
-        text: clip(e.text, 6000),
+        // ★ 不能用 clip：它会压平换行，结论文本里的段落/列表会全毁；这里只截长
+        text: e.text.length <= 6000 ? e.text : `${e.text.slice(0, 6000)}…`,
         error: e.error,
       })
     },
@@ -691,11 +702,8 @@ export async function startAgentRun(
           '先用 read_book 看设定全貌，需要时用 query_graph / explain_fact 核对具体关系。',
         ].join('\n')
         const r = await subagent({ role: 'critic', task })
-        if (!r.ok) return { kind: 'skipped', reason: (r.error ?? '').trim() || '子智能体失败' }
-        // 空文本不是「JSON 不合法」：如实说子体没给结论
-        if (r.text.trim().length === 0) {
-          return { kind: 'skipped', reason: '子智能体没有给出检查结论' }
-        }
+        const skip = criticSkipReason(r)
+        if (skip !== null) return { kind: 'skipped', reason: skip }
         return decideCritic(parseCriticReport(r.text))
       }
     : undefined

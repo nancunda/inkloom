@@ -60,7 +60,7 @@ export type SubagentEvent =
       text: string
       /** true = 结论可用但不完整（步数触顶/超时） */
       partial: boolean
-      /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null */
+      /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null，partial 时也有值 */
       error: string | null
     }
 
@@ -193,7 +193,7 @@ export function createSubagentRunner(
       agent = new Agent({
         initialState: {
           // ★ 子体不知道自己有多少预算，会把步数撞在上限上；把纪律写进 systemPrompt
-          systemPrompt: `${role.systemPrompt}\n\n${stepDiscipline(role.maxSteps)}`,
+          systemPrompt: `${role.systemPrompt}\n\n${stepDiscipline(role)}`,
           model: deps.model,
           thinkingLevel: 'low',
           tools: toolsForRole(role, deps.getTools()),
@@ -265,8 +265,10 @@ export function createSubagentRunner(
     const trimmed =
       text.length <= MAX_TEXT ? text : `${text.slice(0, MAX_TEXT)}…（共 ${text.length} 字符）`
     const ok = error === null
-    // ★ 上限/超时截断时，已产出的结论仍然有价值：放行成 partial，别让主 Agent 白重派
-    const salvaged = !externalStop && text.trim().length > 0 && (limitReason !== null || timedOut)
+    // ★ 只有「最终结算的原因就是上限/超时」才放行：上限标记写过之后模型再报错，不能当 partial
+    const limitHit = limitReason !== null && error === limitReason
+    const timeoutHit = timedOut && error === `子任务超时（${timeoutMs}ms）`
+    const salvaged = !externalStop && text.trim().length > 0 && (limitHit || timeoutHit)
     const partial = !ok && salvaged
     const finalOk = ok || partial
     deps.onEvent({

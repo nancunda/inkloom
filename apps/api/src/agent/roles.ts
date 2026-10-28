@@ -91,17 +91,21 @@ export const AGENT_ROLES: Record<AgentRoleId, AgentRole> = {
 export const AGENT_ROLE_IDS = Object.keys(AGENT_ROLES) as readonly AgentRoleId[]
 
 /**
- * ★ 子体不知道自己有多少预算，会在 read_url 上反复撞墙直到被强制中断。
- *   把上限与止损规则写进 systemPrompt，让它用满前先给出结论。
+ * ★ 子体不知道自己有多少预算，会在工具上反复撞墙直到被强制中断。
+ *   纪律必须按角色生成：给 critic 说「改用 web_search」既无效又诱导它不输出 JSON。
  */
-export function stepDiscipline(maxSteps: number): string {
-  return [
-    '# 步数纪律',
-    `你最多能调用 ${maxSteps} 次工具。每次工具失败也算一步：`,
-    '- read_url 连续失败 2 次就停止读网页，改用 web_search 的摘要。',
-    '- web_search 连续失败 2 次就停止检索，直接说明拿不到资料。',
-    '- 步数用满前必须先给出结论：宁可结论短、带「未核实」标注，也不要空手结束。',
-  ].join('\n')
+export function stepDiscipline(role: AgentRole): string {
+  const lines = ['# 步数纪律', `你最多能调用 ${role.maxSteps} 次工具。每次工具失败也算一步。`]
+  if (role.tools.includes('read_url')) lines.push('- read_url 连续失败 2 次就停止读网页。')
+  if (role.tools.includes('web_search')) {
+    lines.push('- web_search 连续失败 2 次就停止检索，直接说明拿不到资料。')
+  }
+  lines.push(
+    role.output === 'json'
+      ? '- 步数用满前必须输出既定 JSON；未核对到的项放进 suggestions 并注明「未核实」，不要输出 JSON 以外的文字。'
+      : '- 步数用满前必须先给出结论：宁可结论短、带「未核实」标注，也不要空手结束。',
+  )
+  return lines.join('\n')
 }
 
 export function isAgentRoleId(v: unknown): v is AgentRoleId {

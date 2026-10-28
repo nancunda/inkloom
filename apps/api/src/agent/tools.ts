@@ -590,7 +590,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             ? r.text
             : `${r.text.slice(0, 4000)}…（已截断，共 ${r.text.length} 字符）`
         return ok(
-          `[${r.role}] 未跑完（${r.error ?? '中断'}），以下结论可能不完整；需要更多信息就再派一次更窄的任务：\n${part}`,
+          `[${r.role}] 未跑完（${r.error ?? '中断'}），用了 ${r.steps} 步、${r.tokens.toLocaleString()} tokens。以下结论可能不完整；需要更多信息就再派一次更窄的任务：\n${part}`,
           { role: r.role, ok: r.ok, partial: true, steps: r.steps, tokens: r.tokens },
         )
       }

@@ -51,6 +51,8 @@ vi.mock('@earendil-works/pi-agent-core', () => {
       if (h.throwOnPrompt !== null) throw h.throwOnPrompt
       if (h.stateError !== null) this.state.errorMessage = h.stateError
       if (h.hang) {
+        // ★ 允许「先产出文本再挂住」：超时 partial 的判定需要这种时序
+        for (const e of h.script) for (const l of this.listeners) l(e)
         await new Promise<void>((resolve) => {
           this.abortResolve = resolve
         })
@@ -206,6 +208,45 @@ describe('createSubagentRunner', () => {
     const r = await d.run({ role: 'stylist', task: 'x' })
     expect(r.ok).toBe(false)
     expect(r.partial).toBe(false)
+  })
+
+  it('★ 超时但已有结论 → partial（不是失败）', async () => {
+    vi.useFakeTimers()
+    try {
+      h.hang = true
+      h.script = [
+        {
+          type: 'message_end',
+          message: { role: 'assistant', content: [{ type: 'text', text: '先给一条结论' }] },
+        },
+      ]
+      const d = deps()
+      const pending = d.run({ role: 'researcher', task: 'x' })
+      await vi.advanceTimersByTimeAsync(60)
+      const r = await pending
+      expect(r.ok).toBe(true)
+      expect(r.partial).toBe(true)
+      expect(r.error).toBe('子任务超时（50ms）')
+      expect(r.text).toContain('先给一条结论')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('★ 触顶标记之后模型又报错 → 不得当 partial（结论可能不可信）', async () => {
+    h.callToolCalls = 9
+    h.stateError = '模型挂了'
+    h.script = [
+      {
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'text', text: '半截话' }] },
+      },
+    ]
+    const d = deps()
+    const r = await d.run({ role: 'stylist', task: 'x' })
+    expect(r.ok).toBe(false)
+    expect(r.partial).toBe(false)
+    expect(r.error).toBe('模型挂了')
   })
 
   it('★ 主预算用尽 → 第一个工具调用就被挡', async () => {

@@ -182,6 +182,9 @@ describe('delegate', () => {
     expect(textOf(r)).toContain('未跑完')
     expect(textOf(r)).toContain('子任务步数上限（12 步）')
     expect(textOf(r)).toContain('查到三条')
+    // 主 Agent 要靠步数/token 决定是否再派一次
+    expect(textOf(r)).toContain('12 步')
+    expect(textOf(r)).toContain('900 tokens')
   })
 
   it('★ 子体失败时返回 fail，并带上已产出的部分结论', async () => {

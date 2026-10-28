@@ -115,6 +115,7 @@ vi.mock('../services/context.js', () => ({
 
 const {
   clearRuns,
+  criticSkipReason,
   getAgentRun,
   hasLiveAgentRun,
   resetRunsForTest,
@@ -752,5 +753,44 @@ describe('子智能体事件', () => {
     expect(result.isError).toBe(true)
     expect(h.agents).toHaveLength(1)
     stopAgentRun(started.id)
+  })
+})
+
+describe('criticSkipReason', () => {
+  const base = {
+    id: 'sa_1',
+    role: 'critic' as const,
+    steps: 3,
+    tokens: 100,
+    text: '{"verdict":"passed"}',
+  }
+
+  it('★ partial 的 critic → 跳过并说明未跑完（不交给 JSON 解析器）', () => {
+    const reason = criticSkipReason({
+      ...base,
+      ok: true,
+      partial: true,
+      error: '子任务步数上限（10 步）',
+    })
+    expect(reason).toBe('一致性检查未跑完（子任务步数上限（10 步））')
+  })
+
+  it('失败时用 error 当理由；无 error 时给兜底文案', () => {
+    expect(criticSkipReason({ ...base, ok: false, partial: false, error: '连接超时' })).toBe(
+      '连接超时',
+    )
+    expect(criticSkipReason({ ...base, ok: false, partial: false, error: null })).toBe(
+      '子智能体失败',
+    )
+  })
+
+  it('空文本单独说明，不报「不是合法 JSON」', () => {
+    expect(criticSkipReason({ ...base, ok: true, partial: false, error: null, text: '   ' })).toBe(
+      '子智能体没有给出检查结论',
+    )
+  })
+
+  it('完整结论 → 不跳过（返回 null）', () => {
+    expect(criticSkipReason({ ...base, ok: true, partial: false, error: null })).toBeNull()
   })
 })

@@ -37,6 +37,8 @@ type Block =
       tokens: number
       tools: { toolCallId: string; name: string; ok: boolean; summary: string }[]
       summary: string
+      /** true = 有结论但被上限/超时截断（琥珀色，不当作失败） */
+      partial: boolean
       /** 未完成的原因（步数上限/超时/抛错）；完成时为空串 */
       error: string
     }
@@ -246,6 +248,7 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
           tokens: 0,
           tools: [],
           summary: '',
+          partial: false,
           error: '',
         },
       ]
@@ -279,6 +282,7 @@ function reduce(blocks: Block[], ev: AgentEvent): Block[] {
               steps: ev.steps,
               tokens: ev.tokens,
               summary: ev.summary,
+              partial: ev.partial,
               error: ev.error ?? '',
             }
           : b,
@@ -943,8 +947,9 @@ export function AgentPage() {
                   )
                 }
                 if (b.kind === 'subagent') {
-                  const tone =
-                    b.status === 'running'
+                  const tone = b.partial
+                    ? 'border-amber-200 bg-amber-50'
+                    : b.status === 'running'
                       ? 'border-sky-200 bg-sky-50'
                       : b.status === 'failed'
                         ? 'border-rose-200 bg-rose-50'
@@ -961,9 +966,11 @@ export function AgentPage() {
                             ? '执行中…'
                             : b.status === 'stopped'
                               ? '已停止'
-                              : b.status === 'failed'
-                                ? '未跑完'
-                                : '完成'}
+                              : b.partial
+                                ? '已收尾 · 未跑完'
+                                : b.status === 'failed'
+                                  ? '未跑完'
+                                  : '完成'}
                           {` · ${b.steps} 步 · ${b.tokens.toLocaleString()} tokens`}
                         </span>
                       </summary>
