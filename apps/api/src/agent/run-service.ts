@@ -672,7 +672,7 @@ export async function startAgentRun(
         steps: e.steps,
         tokens: e.tokens,
         summary: e.summary,
-        // ★ 不能用 clip：它会压平换行，结论文本里的段落/列表会全毁；这里只截长
+        // ★ subagent 已按 6000 字截断；这里只是防止异常长文本进 journal，保持原文换行
         text: e.text.length <= 6000 ? e.text : `${e.text.slice(0, 6000)}…`,
         error: e.error,
       })
