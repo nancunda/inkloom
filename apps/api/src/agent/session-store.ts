@@ -27,6 +27,16 @@ export interface AgentSessionMeta {
 }
 
 const SESSION_ID = /^(cs_[A-Za-z0-9]+|lg_ar_[A-Za-z0-9]+)$/
+const RUN_ID = /^ar_[A-Za-z0-9]+$/
+const STATUSES = new Set([
+  'running',
+  'waiting_review',
+  'paused',
+  'done',
+  'failed',
+  'stopped',
+  'legacy',
+])
 /** 超过这个时长仍停在 running 的会话视为崩溃残留，允许改名/删除 */
 const STALE_MS = 10 * 60 * 1000
 
@@ -69,22 +79,32 @@ function isMeta(value: unknown): value is AgentSessionMeta {
   const m = value as Record<string, unknown>
   return (
     typeof m['id'] === 'string' &&
+    /^cs_[A-Za-z0-9]+$/.test(m['id']) &&
     typeof m['title'] === 'string' &&
     typeof m['goal'] === 'string' &&
     typeof m['status'] === 'string' &&
+    STATUSES.has(m['status']) &&
+    typeof m['createdAt'] === 'string' &&
     typeof m['updatedAt'] === 'string' &&
+    typeof m['tokens'] === 'number' &&
+    typeof m['steps'] === 'number' &&
+    typeof m['subagentCalls'] === 'number' &&
+    typeof m['planDone'] === 'number' &&
+    typeof m['planTotal'] === 'number' &&
+    typeof m['resumable'] === 'boolean' &&
     Array.isArray(m['runIds'])
   )
 }
 
-async function writeMetaNow(root: string, meta: AgentSessionMeta): Promise<void> {
+async function writeMetaNow(root: string, id: string, meta: AgentSessionMeta): Promise<void> {
   await mkdir(sessionDir(root), { recursive: true })
-  await atomicWrite(sessionMetaPath(root, meta.id), `${JSON.stringify(meta, null, 2)}\n`)
+  // ★ 用入参 id 拼路径：meta.id 写错时不能把别的会话覆盖掉
+  await atomicWrite(sessionMetaPath(root, id), `${JSON.stringify(meta, null, 2)}\n`)
 }
 
 export async function writeSessionMeta(root: string, meta: AgentSessionMeta): Promise<void> {
   // ★ 文件系统没有事务：run 收尾与重命名可能同时读改写同一份 meta，必须串行
-  await writeQueue.run(() => writeMetaNow(root, meta))
+  await writeQueue.run(() => writeMetaNow(root, meta.id, meta))
 }
 
 export async function readSessionMeta(root: string, id: string): Promise<AgentSessionMeta | null> {
@@ -94,7 +114,8 @@ export async function readSessionMeta(root: string, id: string): Promise<AgentSe
   if (raw === null) return null
   try {
     const parsed: unknown = JSON.parse(raw)
-    return isMeta(parsed) ? parsed : null
+    // ★ 文件内 id 与文件名不一致的一律当坏数据，避免张冠李戴
+    return isMeta(parsed) && parsed.id === id ? parsed : null
   } catch {
     return null
   }
@@ -104,12 +125,17 @@ export async function readSessionMeta(root: string, id: string): Promise<AgentSe
 async function readFirstLine(file: string): Promise<string | null> {
   const handle = await open(file, 'r')
   try {
+    let text = ''
     const buffer = Buffer.alloc(16 * 1024)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    const text = buffer.subarray(0, bytesRead).toString('utf8')
+    // fs.read 允许短读：最多读四轮，直到遇见换行或 EOF
+    for (let round = 0; round < 4; round += 1) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, text.length)
+      if (bytesRead === 0) break
+      text += buffer.subarray(0, bytesRead).toString('utf8')
+      if (text.includes('\n')) break
+    }
     const nl = text.indexOf('\n')
-    if (nl >= 0) return text.slice(0, nl)
-    return bytesRead < buffer.length ? text : null
+    return (nl >= 0 ? text.slice(0, nl) : text) || null
   } finally {
     await handle.close()
   }
@@ -123,7 +149,9 @@ async function legacySession(root: string, fileName: string): Promise<AgentSessi
   if (info === null) return null
   const first = await readFirstLine(file).catch(() => null)
   let goal = runId
-  let createdAt = info.birthtime.toISOString()
+  // ★ birthtime 在部分 Linux 文件系统上是 0 或等于 ctime；不能直接信
+  const born = info.birthtimeMs > 0 && info.birthtime <= info.mtime ? info.birthtime : info.mtime
+  let createdAt = born.toISOString()
   if (first !== null) {
     try {
       const event = JSON.parse(first) as { type?: string; goal?: string; at?: string }
@@ -159,6 +187,8 @@ export async function readLegacySession(
   root: string,
   runId: string,
 ): Promise<AgentSessionMeta | null> {
+  // ★ runId 也来自 URL path，同样要防 `../`
+  if (!RUN_ID.test(runId)) throw new InkloomError('INVALID_INPUT', `非法 run id：${runId}`)
   return legacySession(root, `${runId}.jsonl`)
 }
 
@@ -219,7 +249,8 @@ export async function readSessionEvents(
 }
 
 function isStale(meta: AgentSessionMeta): boolean {
-  if (meta.status !== 'running' && meta.status !== 'waiting_review') return false
+  // ★ 只有 running 才是崩溃残留候选；waiting_review 本来就在等人审批，不能动
+  if (meta.status !== 'running') return false
   const updated = Date.parse(meta.updatedAt)
   return Number.isNaN(updated) || Date.now() - updated > STALE_MS
 }
@@ -249,7 +280,7 @@ export async function renameSession(
       status: isStale(meta) ? 'stopped' : meta.status,
       updatedAt: new Date().toISOString(),
     }
-    await writeMetaNow(root, next)
+    await writeMetaNow(root, id, next)
     return next
   })
 }
@@ -257,9 +288,11 @@ export async function renameSession(
 export async function removeSession(root: string, id: string): Promise<void> {
   if (isLegacyId(id)) throw new InkloomError('CONFLICT', '历史记录只读，不能删除')
   assertSessionId(id)
-  const meta = await readSessionMeta(root, id)
-  if (meta !== null) requireWritableMeta(meta, id)
-  await rm(sessionMetaPath(root, id), { force: true })
-  await rm(sessionJournalPath(root, id), { force: true })
-  await rm(messageSnapshotPath(root, id), { force: true })
+  await writeQueue.run(async () => {
+    const meta = await readSessionMeta(root, id)
+    if (meta !== null) requireWritableMeta(meta, id)
+    await rm(sessionMetaPath(root, id), { force: true })
+    await rm(sessionJournalPath(root, id), { force: true })
+    await rm(messageSnapshotPath(root, id), { force: true })
+  })
 }

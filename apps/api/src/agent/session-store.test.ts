@@ -6,11 +6,13 @@ import { readIfExists } from '../storage/atomic-write.js'
 import { messageSnapshotPath } from './history.js'
 import {
   listSessions,
+  readLegacySession,
   readSessionEvents,
   readSessionMeta,
   removeSession,
   renameSession,
   sessionJournalPath,
+  sessionMetaPath,
   writeSessionMeta,
 } from './session-store.js'
 
@@ -156,6 +158,27 @@ describe('session store', () => {
     })
     const next = await renameSession(root, 'cs_stale', '救回来')
     expect(next.status).toBe('stopped')
+  })
+
+  it('★ waiting_review 无论多久都不许改删（它在等人审批，不是崩溃）', async () => {
+    await writeSessionMeta(root, {
+      ...meta('cs_wait', '等审批'),
+      status: 'waiting_review',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    await expect(renameSession(root, 'cs_wait', '改名')).rejects.toThrow(/运行中/)
+    await expect(removeSession(root, 'cs_wait')).rejects.toThrow(/运行中/)
+  })
+
+  it('★ legacy 单条查询也拒绝非法 runId', async () => {
+    await expect(readLegacySession(root, 'ar_../../evil')).rejects.toThrow(/非法 run id/)
+  })
+
+  it('★ 文件内 id 与文件名不一致 → 当坏数据', async () => {
+    const file = sessionMetaPath(root, 'cs_x')
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, JSON.stringify(meta('cs_other', '别的')), 'utf8')
+    expect(await readSessionMeta(root, 'cs_x')).toBeNull()
   })
 
   it('★ legacy 会话只读', async () => {
