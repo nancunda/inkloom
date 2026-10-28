@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { PlanDef, PlanStatus, TaskStatus } from '@inkloom/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -24,7 +25,10 @@ interface FakeTool {
 }
 
 interface FakeAgent {
-  opts: { initialState: { tools: FakeTool[] } }
+  opts: {
+    initialState: { tools: FakeTool[]; messages?: { role?: string }[] }
+    transformContext?: (messages: unknown[]) => Promise<unknown[]>
+  }
   state: { errorMessage?: string; messages: unknown[] }
   promptCalls: number
   prompts: string[]
@@ -43,7 +47,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@earendil-works/pi-agent-core', () => {
   class FakeAgentImpl {
-    opts: { initialState: { tools: FakeTool[] } }
+    opts: {
+      initialState: { tools: FakeTool[]; messages?: { role?: string }[] }
+      transformContext?: (messages: unknown[]) => Promise<unknown[]>
+    }
     state: { errorMessage?: string; messages: unknown[] } = { messages: [] }
     promptCalls = 0
     prompts: string[] = []
@@ -785,6 +792,52 @@ describe('会话绑定', () => {
     })
     const snap = await loadMessageSnapshot(h.root, started.sessionId)
     expect(snap?.messages.length).toBeGreaterThan(0)
+  })
+
+  it('★ 续接时历史消息进入 Agent，旧 system 被剥掉', async () => {
+    const started = await startAgentRun('续', {
+      mode: 'resume',
+      sessionId: 'cs_abc123def456',
+      messages: [
+        { role: 'system', content: '旧提示词', timestamp: 0 } as unknown as AgentMessage,
+        { role: 'user', content: '上一轮', timestamp: 1 } as unknown as AgentMessage,
+      ],
+    })
+    const agent = lastAgent()
+    expect(agent.opts.initialState.messages?.[0]?.role).toBe('user')
+    stopAgentRun(started.id)
+  })
+
+  it('★ transformContext 只保留一份 system', async () => {
+    const started = await startAgentRun('目标', { mode: 'new' })
+    const agent = lastAgent()
+    const out = await agent.opts.transformContext?.([
+      { role: 'system', content: 'sys', timestamp: 0 },
+      { role: 'user', content: 'u', timestamp: 1 },
+    ])
+    const systems = (out ?? []).filter((m) => (m as { role?: string }).role === 'system')
+    expect(systems).toHaveLength(1)
+    stopAgentRun(started.id)
+  })
+
+  it('★ legacy 会话不能续接', async () => {
+    await expect(startAgentRun('x', { sessionId: 'lg_ar_abc' })).rejects.toThrow(/只读/)
+  })
+
+  it('★ 同一会话两次运行会累积 runIds（旧 run 不覆盖新状态的前提）', async () => {
+    const first = await startAgentRun('第一段', { mode: 'new' })
+    lastAgent().done()
+    await vi.waitFor(async () => {
+      const meta = await readSessionMeta(h.root, first.sessionId)
+      expect(meta?.status).toBe('done')
+    })
+    const second = await startAgentRun('第二段', { mode: 'new', sessionId: first.sessionId })
+    lastAgent().done()
+    await vi.waitFor(async () => {
+      const meta = await readSessionMeta(h.root, first.sessionId)
+      expect(meta?.runIds).toEqual([first.id, second.id])
+    })
+    stopAgentRun(second.id)
   })
 })
 

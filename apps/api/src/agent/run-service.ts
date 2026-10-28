@@ -27,6 +27,7 @@ import type { AgentRoleId } from './roles.js'
 import {
   type AgentSessionMeta,
   defaultTitle,
+  isLegacyId,
   newSessionId,
   sessionJournalPath,
   updateSessionMeta,
@@ -136,6 +137,8 @@ interface AgentRun {
   childAborts: Set<() => void>
   /** 上一次写 meta 的时间：长 run 靠它节流刷新，避免被当成崩溃残留 */
   metaAt: number
+  /** true = 续接的旧会话（会话被删后不能再写回去复活它） */
+  adopted: boolean
 }
 
 const runs = new Map<string, AgentRun>()
@@ -276,7 +279,7 @@ function emit(run: AgentRun, event: AgentStreamPayload, journal = true): void {
     }
   }
   // ★ 长 run 中途也要刷 meta：超过 10 分钟没更新会被当成崩溃残留，允许被改名/删除
-  if (journal && Date.now() - run.metaAt > 30_000) {
+  if (Date.now() - run.metaAt > 30_000) {
     run.metaAt = Date.now()
     void persistSessionMeta(run)
   }
@@ -550,12 +553,17 @@ async function persistSessionMeta(run: AgentRun): Promise<void> {
     const done = plan?.tasks.filter((t) => t.status === 'done').length ?? 0
     // ★ 队列内读改写：直接覆盖会抹掉同一时刻用户刚改的标题
     const meta = await updateSessionMeta(run.root, run.sessionId, (prev) => {
+      // ★ 续接的会话已被删：不复活（否则列表里会冒出一个打不开的空会话）
+      if (prev === null && run.adopted) return null
       const now = new Date().toISOString()
+      // ★ 同一会话可能先后有过多个 run：只有最后一个 run 有权改状态，
+      //    否则旧 run 的收尾会把新 run 的 running 覆盖成 done
+      const ownsStatus = prev === null || prev.runIds.at(-1) === run.id
       return {
         id: run.sessionId,
         title: prev?.title ?? defaultTitle(run.goal),
         goal: run.goal,
-        status: run.status,
+        status: ownsStatus ? run.status : prev.status,
         createdAt: prev?.createdAt ?? run.startedAt,
         updatedAt: now,
         tokens: run.tokens,
@@ -566,9 +574,12 @@ async function persistSessionMeta(run: AgentRun): Promise<void> {
         planDone: done,
         planTotal: plan?.tasks.length ?? 0,
         runIds: [...new Set([...(prev?.runIds ?? []), run.id])],
-        resumable: run.status !== 'running' && run.status !== 'waiting_review',
+        resumable: ownsStatus
+          ? run.status !== 'running' && run.status !== 'waiting_review'
+          : prev.resumable,
       }
     })
+    if (meta === null) return
     await saveMessageSnapshot(run.root, run.sessionId, {
       version: 1,
       savedAt: meta.updatedAt,
@@ -652,6 +663,10 @@ export async function startAgentRun(
   } = {},
 ): Promise<AgentRunSnapshot> {
   const { root, project } = getContext()
+  // ★ legacy 会话只读：放进来会写到一个永远读不回来的 journal
+  if (options.sessionId !== undefined && isLegacyId(options.sessionId)) {
+    throw new InkloomError('INVALID_INPUT', '历史会话只读，不能续接；请新建会话')
+  }
   if (activeRunId !== null) {
     const active = runs.get(activeRunId)
     if (
@@ -827,8 +842,13 @@ export async function startAgentRun(
     toolExecution: 'sequential',
     // ★ 长会话逐轮裁剪：保留 system，其余按预算压缩（不会拆散 toolCall 配对）
     transformContext: async (current) => {
-      const system = current.filter((m) => (m as { role?: string }).role === 'system')
-      return [...system, ...compactMessages(current)]
+      try {
+        const system = current.filter((m) => (m as { role?: string }).role === 'system')
+        return [...system, ...compactMessages(current)]
+      } catch {
+        // ★ Pi 要求 transformContext 不能抛：抛了 run 会卡在 running，连失败事件都没有
+        return current
+      }
     },
     beforeToolCall: async () => {
       if (budget.steps >= budget.maxSteps) {
@@ -869,13 +889,17 @@ export async function startAgentRun(
     stallTurns: 0,
     childAborts,
     metaAt: Date.now(),
+    adopted: options.sessionId !== undefined,
   }
 
   agent.subscribe((e) => handlePiEvent(run, e))
   runs.set(id, run)
   activeRunId = id
   emit(run, { type: 'run.started', goal })
-  void persistSessionMeta(run)
+  // ★ 只给了 sessionId 却没给 messages：不能拿空快照覆盖掉已有历史
+  if (!(options.sessionId !== undefined && options.messages === undefined)) {
+    void persistSessionMeta(run)
+  }
 
   if (resumable !== null) {
     // 中止的计划：作者点「继续执行」就是显式恢复，先把状态救回来再续跑

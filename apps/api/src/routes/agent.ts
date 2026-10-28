@@ -123,7 +123,13 @@ agentRoutes.get('/agent/runs/:id/events', (c) => {
       await stream.sleep(15_000)
       if (closed) break
       await stream.writeSSE({
-        data: JSON.stringify({ type: 'ping', seq: 0, at: new Date().toISOString() }),
+        data: JSON.stringify({
+          type: 'ping',
+          seq: 0,
+          at: new Date().toISOString(),
+          // 前端按 `${runId}:${seq}` 去重：心跳没有 runId 会与真事件撞键
+          runId: id,
+        }),
       })
     }
   })

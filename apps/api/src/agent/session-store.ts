@@ -70,7 +70,7 @@ export function defaultTitle(goal: string): string {
   return one.length === 0 ? '未命名会话' : clipChars(one, 40)
 }
 
-function isLegacyId(id: string): boolean {
+export function isLegacyId(id: string): boolean {
   return id.startsWith('lg_')
 }
 
@@ -110,16 +110,22 @@ export async function writeSessionMeta(root: string, meta: AgentSessionMeta): Pr
 /**
  * 队列内读改写：调用方拿到的是队首那一刻的 meta，改完立刻写回。
  * ★ 用 writeSessionMeta 直接覆盖会把并发发生的改名冲掉。
+ * ★ 回调返回 null = 放弃本次写入（例如续接的会话已被删掉）。
+ * ⚠️ 严禁在回调里调用 writeSessionMeta / removeSession / renameSession：
+ *    writeQueue 不可重入，会永久挂死。
  */
 export async function updateSessionMeta(
   root: string,
   id: string,
-  update: (prev: AgentSessionMeta | null) => AgentSessionMeta | Promise<AgentSessionMeta>,
-): Promise<AgentSessionMeta> {
+  update: (
+    prev: AgentSessionMeta | null,
+  ) => AgentSessionMeta | null | Promise<AgentSessionMeta | null>,
+): Promise<AgentSessionMeta | null> {
   assertSessionId(id)
   return writeQueue.run(async () => {
     const prev = await readSessionMeta(root, id)
     const next = await update(prev)
+    if (next === null) return null
     await writeMetaNow(root, id, next)
     return next
   })
@@ -251,7 +257,8 @@ export async function readSessionEvents(
   // ★ 回放要的是「最近 N 条」；读到的是开头，长会话就永远看不到最新对话
   const cap = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : 2000
   if (cap === 0) return []
-  const file = isLegacyId(id)
+  const legacy = isLegacyId(id)
+  const file = legacy
     ? join(agentRunDir(root), `${id.slice('lg_'.length)}.jsonl`)
     : sessionJournalPath(root, id)
   const raw = await readIfExists(file)
@@ -260,7 +267,11 @@ export async function readSessionEvents(
   for (const line of raw.split('\n')) {
     if (line.trim().length === 0) continue
     try {
-      out.push(JSON.parse(line) as AgentStreamEvent)
+      const event = JSON.parse(line) as AgentStreamEvent
+      // ★ legacy journal 是旧代码写的，没有 runId；前端去重需要它
+      out.push(
+        legacy && event.runId === undefined ? { ...event, runId: id.slice('lg_'.length) } : event,
+      )
     } catch {}
   }
   return out.slice(-cap)
@@ -298,6 +309,9 @@ export async function renameSession(
       status: isStale(meta) ? 'stopped' : meta.status,
       updatedAt: new Date().toISOString(),
     }
+  }).then((meta) => {
+    if (meta === null) throw new InkloomError('NOT_FOUND', `会话 ${id} 不存在`)
+    return meta
   })
 }
 
