@@ -13,6 +13,7 @@ import {
 
 interface FakeEvent {
   type: string
+  message?: unknown
 }
 
 interface FakeTool {
@@ -234,10 +235,14 @@ beforeEach(async () => {
   h.root = await mkdtemp(join(tmpdir(), 'inkloom-agent-unit-'))
   h.currentRoot = h.root
   process.env['DEEPSEEK_API_KEY'] = 'sk-test'
+  // 默认 critic=on 会真的起一个子 Agent（FakeAgent 永不自动结束），这里统一关掉；
+  // 需要 critic 的用例自己打开。
+  process.env['INKLOOM_CRITIC'] = 'off'
 })
 
 afterEach(async () => {
   delete process.env['DEEPSEEK_API_KEY']
+  delete process.env['INKLOOM_CRITIC']
   await new Promise((r) => setTimeout(r, 20))
   resetRunsForTest()
   await rm(h.root, { recursive: true, force: true }).catch(() => undefined)
@@ -692,5 +697,60 @@ describe('sendAgentMessage（对话式共创）', () => {
     await tick()
     expect(getAgentRun(started.id)?.status).toBe('failed')
     expect(() => sendAgentMessage(started.id, '再试一次')).toThrow('失败了')
+  })
+})
+
+describe('子智能体事件', () => {
+  it('★ delegate 的子体事件进 run 事件流，token 与调用次数都记账', async () => {
+    await seedPlan('approved', [{ id: 't1', status: 'doing' }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    const pending = findTool(agent, 'delegate').execute('c1', {
+      role: 'researcher',
+      task: '查唐代驿站制度',
+    })
+    await tick()
+
+    const child = lastAgent()
+    expect(child).not.toBe(agent)
+    child.emit({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: '查到 2 条资料' }],
+        usage: { input: 10, output: 5 },
+      },
+    })
+    child.emit({ type: 'agent_end' })
+    child.done()
+
+    const result = (await pending) as { isError?: boolean }
+    expect(result.isError).toBeFalsy()
+
+    const snap = getAgentRun(started.id)
+    const types = (snap?.events ?? []).map((e) => e.type).filter((t) => t.startsWith('subagent.'))
+    expect(types).toEqual(['subagent.started', 'subagent.ended'])
+    expect(snap?.tokens).toBe(15)
+    expect(snap?.budget.subagentCalls).toBe(1)
+    stopAgentRun(started.id)
+  })
+
+  it('★ INKLOOM_CRITIC=on 时空产物被门禁拦下（不创建子体）', async () => {
+    process.env['INKLOOM_CRITIC'] = 'on'
+    await seedPlan('approved', [{ id: 't1', status: 'doing', review: 'none' }])
+    const started = await startAgentRun('继续')
+    const agent = lastAgent()
+    const pending = findTool(agent, 'update_task').execute('c1', {
+      taskId: 't1',
+      status: 'done',
+      artifacts: [],
+    })
+    await tick()
+
+    // 没有产物 → 门禁直接拦下，不创建子体
+    const result = (await pending) as { isError?: boolean }
+    expect(result.isError).toBe(true)
+    expect(h.agents).toHaveLength(1)
+    stopAgentRun(started.id)
   })
 })

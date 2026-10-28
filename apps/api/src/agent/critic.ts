@@ -97,3 +97,8 @@ export function decideCritic(report: CriticReport | null): CriticVerdict {
   if (errors.length > 0) return { kind: 'blocked', errors, warnings }
   return { kind: 'passed', warnings, suggestions: report.suggestions ?? [] }
 }
+
+/** 默认开：不设置就检查；只有显式 off 才关（与设置页的 on/off 一致） */
+export function criticEnabled(raw: string | undefined): boolean {
+  return (raw ?? 'on').trim().toLowerCase() !== 'off'
+}

@@ -10,8 +10,17 @@ import { getContext, peekContext } from '../services/context.js'
 import { clearCurrentPlan, loadPlan, readCurrentPlan, writePlanState } from '../storage/plans.js'
 import { writeQueue } from '../storage/queue.js'
 import { agentRunDir } from './book-snapshot.js'
+import {
+  type CriticInput,
+  type CriticVerdict,
+  criticEnabled,
+  decideCritic,
+  parseCriticReport,
+} from './critic.js'
 import { deriveGate } from './plan-gate.js'
 import { buildAgentPrompt, buildPlanRevisePrompt, buildTaskPrompt } from './prompt.js'
+import type { AgentRoleId } from './roles.js'
+import { createSubagentRunner } from './subagent.js'
 import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
 
 export type AgentRunStatus = 'running' | 'waiting_review' | 'paused' | 'done' | 'failed' | 'stopped'
@@ -33,6 +42,24 @@ export type AgentStreamPayload =
   | { type: 'gate.waiting'; gate: AgentGate }
   | { type: 'gate.resolved'; decision: 'approve' | 'revise' | 'skip'; feedback: string | null }
   | { type: 'plan.updated'; plan: Plan }
+  | { type: 'subagent.started'; id: string; role: AgentRoleId; task: string }
+  | {
+      type: 'subagent.tool'
+      id: string
+      role: AgentRoleId
+      toolName: string
+      ok: boolean
+      summary: string
+    }
+  | {
+      type: 'subagent.ended'
+      id: string
+      role: AgentRoleId
+      ok: boolean
+      steps: number
+      tokens: number
+      summary: string
+    }
   | { type: 'run.finished' }
   | { type: 'run.paused'; reason: string }
   | { type: 'run.failed'; error: string }
@@ -580,6 +607,62 @@ export async function startAgentRun(
   await mkdir(agentRunDir(root), { recursive: true })
 
   let run!: AgentRun
+  // ★ runner 需要「工具全集」，工具又需要 runner：用惰性 getter 打破构造期循环。
+  //   只有 delegate / critic 执行时才会读到 allTools，那时它已经赋值。
+  let allTools: AgentTool[] = []
+  const subagent = createSubagentRunner({
+    model,
+    streamFn: models().streamSimple.bind(models()),
+    getTools: () => allTools,
+    budget,
+    onEvent: (e) => {
+      if (e.type === 'started') {
+        emit(run, { type: 'subagent.started', id: e.id, role: e.role, task: e.task })
+        return
+      }
+      if (e.type === 'tool') {
+        emit(run, {
+          type: 'subagent.tool',
+          id: e.id,
+          role: e.role,
+          toolName: e.toolName,
+          ok: e.ok,
+          summary: e.summary,
+        })
+        return
+      }
+      emit(run, {
+        type: 'subagent.ended',
+        id: e.id,
+        role: e.role,
+        ok: e.ok,
+        steps: e.steps,
+        tokens: e.tokens,
+        summary: e.summary,
+      })
+    },
+    onTokens: (n) => {
+      run.tokens += n
+    },
+  })
+
+  const critic = criticEnabled(process.env['INKLOOM_CRITIC'])
+    ? async (input: CriticInput): Promise<CriticVerdict> => {
+        const task = [
+          '# 任务',
+          `检查任务 ${input.taskId}「${input.title}」的完成情况是否与本书设定矛盾。`,
+          `任务要求：${input.brief.length === 0 ? '（未填）' : input.brief}`,
+          `本次产物：${input.artifacts.length === 0 ? '（未填）' : input.artifacts.join('、')}`,
+          `主 Agent 的完成说明：${input.summary ?? '（无）'}`,
+          '',
+          '先用 read_book 看设定全貌，需要时用 query_graph / explain_fact 核对具体关系。',
+        ].join('\n')
+        const r = await subagent({ role: 'critic', task })
+        if (!r.ok) return { kind: 'skipped', reason: r.error ?? '子智能体失败' }
+        return decideCritic(parseCriticReport(r.text))
+      }
+    : undefined
+
   const tools = createAgentTools({
     apiKey,
     imageApiKey: imageApiKey === null || imageApiKey.length === 0 ? null : imageApiKey,
@@ -600,7 +683,10 @@ export async function startAgentRun(
     },
     // ★ run 在下面才赋值，工具执行时一定已赋值（同 getPlanId 的闭包写法）
     getRunId: () => run.id,
+    subagent,
+    ...(critic === undefined ? {} : { critic }),
   })
+  allTools = tools
 
   const agent = new Agent({
     initialState: {

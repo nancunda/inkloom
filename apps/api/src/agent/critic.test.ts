@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decideCritic, parseCriticReport } from './critic.js'
+import { criticEnabled, decideCritic, parseCriticReport } from './critic.js'
 
 describe('parseCriticReport', () => {
   it('★ 纯 JSON 与 ```json 围栏都能解析', () => {
@@ -96,5 +96,12 @@ describe('decideCritic', () => {
       conflicts: [{ severity: 'error', message: '境界矛盾', evidence: ['characters/index.json'] }],
     })
     expect(decideCritic(parseCriticReport(text)).kind).toBe('blocked')
+  })
+
+  it('★ 默认开；只有显式 off 才关', () => {
+    expect(criticEnabled(undefined)).toBe(true)
+    expect(criticEnabled('')).toBe(true)
+    expect(criticEnabled('on')).toBe(true)
+    expect(criticEnabled('OFF')).toBe(false)
   })
 })
