@@ -1,0 +1,250 @@
+import type {
+  DeepReadonly,
+  TraceSpan,
+  TraceSpanAttribute,
+} from "@evilmartians/agent-prism-types";
+import type { ReactElement } from "react";
+
+import {
+  getAttributeNumber,
+  getTokenUsageEntries,
+  getTotalCost,
+  getTotalTokens,
+  hasReportedCost,
+} from "@evilmartians/agent-prism-data";
+
+import type { ReadonlyProps } from "../ReadonlyProps";
+
+import { DetailsViewContextWindowBar } from "./DetailsViewContextWindowBar";
+import { DetailsViewStatGrid, type StatRowData } from "./DetailsViewStatGrid";
+
+type Attributes = DeepReadonly<TraceSpanAttribute[]> | undefined;
+
+type DetailsViewContextTabProps = {
+  data: TraceSpan;
+};
+
+function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+  return String(tokens);
+}
+
+function getNumberAttr(
+  attributes: Attributes,
+  key: string,
+): number | undefined {
+  return getAttributeNumber(attributes?.find((a) => a.key === key)?.value);
+}
+
+function getStringAttr(
+  attributes: Attributes,
+  key: string,
+): string | undefined {
+  const value = attributes?.find((a) => a.key === key)?.value.stringValue;
+
+  return value === "" ? undefined : value;
+}
+
+const smallCostFormat = new Intl.NumberFormat("en-US", {
+  currency: "USD",
+  maximumSignificantDigits: 2,
+  style: "currency",
+});
+
+function formatCost(cost: number): string {
+  return cost !== 0 && Math.abs(cost) < 0.0001
+    ? smallCostFormat.format(cost)
+    : `$${cost.toFixed(4)}`;
+}
+
+const TOKEN_TYPE_LABELS: Record<string, string> = {
+  cache_read: "Cache read",
+  cache_write: "Cache write",
+  input: "Input tokens",
+  output: "Output tokens",
+};
+
+const clampPercent = (value: number): number =>
+  Math.min(Math.max(value, 0), 100);
+
+const getBarFill = (
+  cappedFill: number | undefined,
+  cumulativeTokens: number | undefined,
+  limit: number | undefined,
+): number | undefined => {
+  if (cappedFill !== undefined) return cappedFill;
+  if (cumulativeTokens === undefined || limit === undefined) return undefined;
+
+  return clampPercent((cumulativeTokens / limit) * 100);
+};
+
+const getContextRows = ({
+  cacheHitRatio,
+  cappedFill,
+  cumulativeTokens,
+  limit,
+}: Readonly<{
+  cacheHitRatio: number | undefined;
+  cappedFill: number | undefined;
+  cumulativeTokens: number | undefined;
+  limit: number | undefined;
+}>): StatRowData[] => {
+  const contextRows: StatRowData[] = [];
+  if (cumulativeTokens !== undefined) {
+    contextRows.push({
+      label: "Cumulative tokens",
+      sub: limit !== undefined ? `of ${formatTokens(limit)}` : undefined,
+      value: formatTokens(cumulativeTokens),
+    });
+  }
+  if (cappedFill !== undefined) {
+    contextRows.push({
+      label: "Context fill",
+      value: `${cappedFill.toFixed(1)}%`,
+    });
+  }
+  if (cacheHitRatio !== undefined) {
+    contextRows.push({
+      label: "Cache hit ratio",
+      sub: cacheHitRatio > 0.9 ? "mostly cached" : undefined,
+      value: `${(cacheHitRatio * 100).toFixed(0)}%`,
+    });
+  }
+
+  return contextRows;
+};
+
+/**
+ * Context window position and token breakdown of a span.
+ *
+ * - The context limit is used only when the span reports a positive one:
+ *   windows differ by model, so an unknown limit is never guessed.
+ * - Costs show four decimals; smaller non-zero costs keep two significant
+ *   digits, so a real charge never reads as $0.0000.
+ * - The `total` usage entry holds what the source did not break down by type,
+ *   so it has no row of its own: it is already part of the Total row.
+ */
+export function DetailsViewContextTab({
+  data,
+}: ReadonlyProps<DetailsViewContextTabProps>): ReactElement {
+  const cumulativeTokens = getNumberAttr(
+    data.attributes,
+    "claude_code.cumulative_tokens",
+  );
+  const contextLimit = getNumberAttr(
+    data.attributes,
+    "claude_code.context_limit",
+  );
+  const fillPercent = getNumberAttr(
+    data.attributes,
+    "claude_code.context_fill_percent",
+  );
+  const cacheHitRatio = getNumberAttr(
+    data.attributes,
+    "claude_code.cache_hit_ratio",
+  );
+  const model = getStringAttr(data.attributes, "gen_ai.request.model");
+  const speed = getStringAttr(data.attributes, "claude_code.usage.speed");
+
+  const usage = data.tokenUsage;
+
+  const hasContextData =
+    cumulativeTokens !== undefined || fillPercent !== undefined;
+  const hasTokenBreakdown = usage !== undefined;
+
+  if (!hasContextData && !hasTokenBreakdown) {
+    return (
+      <div className="border-agentprism-border rounded-md border p-4">
+        <p className="text-agentprism-muted-foreground text-sm">
+          No context data for this span.
+        </p>
+        <p className="text-agentprism-muted-foreground mt-1 text-xs">
+          Context tracking is available on LLM call spans with cumulative token
+          attributes.
+        </p>
+      </div>
+    );
+  }
+
+  const cappedFill =
+    fillPercent !== undefined ? clampPercent(fillPercent) : undefined;
+  const limit =
+    contextLimit !== undefined && contextLimit > 0 ? contextLimit : undefined;
+  const barFill = getBarFill(cappedFill, cumulativeTokens, limit);
+
+  const contextRows = getContextRows({
+    cacheHitRatio,
+    cappedFill,
+    cumulativeTokens,
+    limit,
+  });
+
+  const breakdownRows: StatRowData[] = getTokenUsageEntries(usage)
+    .filter(
+      (entry) =>
+        entry.type !== "total" && (entry.tokens !== 0 || entry.cost !== 0),
+    )
+    .map((entry) => ({
+      label: TOKEN_TYPE_LABELS[entry.type] ?? entry.type,
+      sub: entry.cost !== 0 ? formatCost(entry.cost) : undefined,
+      value: formatTokens(entry.tokens),
+    }));
+  breakdownRows.push({
+    label: "Total",
+    value: formatTokens(getTotalTokens(usage)),
+  });
+
+  return (
+    <div className="space-y-4">
+      {model !== undefined ? (
+        <div className="flex items-center gap-2">
+          <span className="bg-agentprism-secondary text-agentprism-secondary-foreground rounded px-2 py-0.5 text-xs font-medium">
+            {model}
+          </span>
+          {speed !== undefined ? (
+            <span className="text-agentprism-muted-foreground text-[10px]">
+              {speed}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {hasContextData ? (
+        <div className="border-agentprism-border rounded-md border p-3">
+          <h4 className="text-agentprism-muted-foreground mb-2 text-xs font-medium">
+            Context Window Position
+          </h4>
+
+          {barFill === undefined ? null : (
+            <DetailsViewContextWindowBar
+              fill={barFill}
+              limitLabel={limit === undefined ? undefined : formatTokens(limit)}
+            />
+          )}
+
+          <div className="mt-2">
+            <DetailsViewStatGrid rows={contextRows} />
+          </div>
+        </div>
+      ) : null}
+
+      {hasTokenBreakdown ? (
+        <div className="border-agentprism-border rounded-md border p-3">
+          <h4 className="text-agentprism-muted-foreground mb-2 text-xs font-medium">
+            Token Breakdown
+          </h4>
+          <DetailsViewStatGrid rows={breakdownRows} />
+        </div>
+      ) : null}
+
+      {hasReportedCost(usage) && (
+        <div className="border-agentprism-border rounded-md border p-3">
+          <DetailsViewStatGrid
+            rows={[{ label: "Cost", value: formatCost(getTotalCost(usage)) }]}
+          />
+        </div>
+      )}
+    </div>
+  );
+}

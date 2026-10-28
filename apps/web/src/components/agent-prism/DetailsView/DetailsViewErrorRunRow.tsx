@@ -1,0 +1,62 @@
+import type { RunErrorEntry } from "@evilmartians/agent-prism-data";
+import type { ReactElement } from "react";
+
+import { formatSpanErrorForAgent } from "@evilmartians/agent-prism-data";
+import { useMemo } from "react";
+
+import type { ReadonlyProps } from "../ReadonlyProps";
+
+import { CopyButton } from "../CopyButton";
+import { ErrorStatusCircle } from "../ErrorStatusCircle";
+
+type DetailsViewErrorRunRowProps = {
+  entry: RunErrorEntry;
+};
+
+/**
+ * A single failed-span card: error dot + node title + message (+ stack when
+ * present), with a button to copy the error formatted for an AI agent. The
+ * title carries a visually hidden "Error:" prefix, since the red color and the
+ * decorative dot are the only other error signals.
+ */
+export const DetailsViewErrorRunRow = ({
+  entry,
+}: ReadonlyProps<DetailsViewErrorRunRowProps>): ReactElement => {
+  const { details } = entry;
+  const title = details.nodeName;
+  const agentContent = useMemo(
+    () => formatSpanErrorForAgent(details),
+    [details],
+  );
+
+  return (
+    <article className="border-agentprism-border rounded-md border p-4">
+      <div className="flex items-start gap-2">
+        <span className="flex size-5 shrink-0 items-center justify-center">
+          <ErrorStatusCircle />
+        </span>
+
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex items-start justify-between gap-2">
+            <h4 className="text-agentprism-error line-clamp-3 min-w-0 flex-1 text-sm font-medium leading-5">
+              <span className="sr-only">Error: </span>
+              {title}
+            </h4>
+
+            <CopyButton content={agentContent} label="error for agent" />
+          </div>
+
+          <p className="text-agentprism-foreground whitespace-pre-wrap break-words text-sm">
+            {details.message}
+          </p>
+
+          {details.stack !== undefined && details.stack !== "" ? (
+            <pre className="text-agentprism-muted-foreground overflow-x-auto whitespace-pre-wrap break-words text-xs">
+              {details.stack}
+            </pre>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+};

@@ -9,13 +9,21 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@evilmartians/agent-prism-data": "^1.0.0",
+    "@evilmartians/agent-prism-types": "^1.0.0",
+    "@radix-ui/react-collapsible": "^1.2.1",
+    "@radix-ui/react-tabs": "^1.2.1",
     "@tanstack/react-query": "^5.104.5",
     "@xyflow/react": "^12.12.0",
+    "classnames": "^2.5.1",
     "cytoscape": "^3.34.4",
     "cytoscape-fcose": "^2.2.0",
     "dagre": "^0.8.5",
+    "lucide-react": "^1.62.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-json-pretty": "^2.2.0",
+    "react-resizable-panels": "^2.1.9",
     "zustand": "^5.0.16"
   },
   "devDependencies": {
