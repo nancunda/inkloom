@@ -53,6 +53,19 @@ const TASK_STATUS: Record<AgentPlanTask['status'], TraceSpan['status']> = {
   blocked: 'error',
 }
 
+/**
+ * 切片 3 落盘的 journal 里没有 `text`/`partial`/`error`（切片 4 才加的字段），
+ * 而 legacy 会话是只读支持的：缺字段不能直接炸掉整棵树。
+ * 接受 unknown 是因为这些值在旧 journal 上确实是 undefined。
+ */
+function textOf(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function boolOf(value: unknown): boolean {
+  return value === true
+}
+
 function spanOf(
   id: string,
   title: string,
@@ -134,9 +147,10 @@ export function toTraceData(
   const children: TraceSpan[] = []
   root.children = children
 
-  // 同一 toolCallId 的 started/ended 配对；子体按 id 归并
+  // 同一 toolCallId 的 started/ended 配对；子体按 id 归并；计划按 plan.id 原地更新
   const openTools = new Map<string, TraceSpan>()
   const openSubagents = new Map<string, TraceSpan>()
+  const plans = new Map<string, TraceSpan>()
   let runCount = 0
   // 流式增量先攒在一个 llm span 上，遇到下一条「新动作」就换新的
   let llm: TraceSpan | null = null
@@ -185,8 +199,10 @@ export function toTraceData(
         // message_end）。有增量时它只是「权威全文」，收尾覆盖到已有的 llm span 上，
         // 否则每轮都会在时间线上多出一行重复的「模型」。
         if (llm !== null) {
-          if (e.text.length > 0) llm.output = e.text
-          if (e.thinking.length > 0) llm.reasoning = { content: e.thinking }
+          const text = textOf(e.text)
+          const thinking = textOf(e.thinking)
+          if (text.length > 0) llm.output = text
+          if (thinking.length > 0) llm.reasoning = { content: thinking }
           llm.endTime = new Date(endAt)
           // 保留权威全文事件，否则这个 span 的 RAW tab 是空的
           llm.raw = [JSON.stringify(e)]
@@ -194,8 +210,8 @@ export function toTraceData(
           break
         }
         const s = spanOf(`am:${e.runId}:${e.seq}`, '模型', 'llm_call', at, endAt)
-        s.output = e.text
-        if (e.thinking.length > 0) s.reasoning = { content: e.thinking }
+        s.output = textOf(e.text)
+        if (textOf(e.thinking).length > 0) s.reasoning = { content: textOf(e.thinking) }
         s.raw = [JSON.stringify(e)]
         children.push(s)
         break
@@ -263,11 +279,13 @@ export function toTraceData(
       case 'subagent.ended': {
         const s = openSubagents.get(e.id)
         if (s !== undefined) {
-          s.status = !e.ok ? 'error' : e.partial ? 'warning' : 'success'
+          const text = textOf(e.text)
+          const partial = boolOf(e.partial)
+          const reason = textOf(e.error)
+          s.status = !e.ok ? 'error' : partial ? 'warning' : 'success'
           // partial 时 text 仍是可用结论，比 summary 更有价值
-          s.output = e.text.length > 0 ? e.text : e.summary
-          if (e.error !== null && e.error.length > 0)
-            s.attributes = [{ key: 'error', value: { stringValue: e.error } }]
+          s.output = text.length > 0 ? text : textOf(e.summary)
+          if (reason.length > 0) s.attributes = [{ key: 'error', value: { stringValue: reason } }]
           s.endTime = new Date(at)
           s.tokenUsage = { total: { tokens: e.tokens } }
           openSubagents.delete(e.id)
@@ -275,11 +293,25 @@ export function toTraceData(
         break
       }
       case 'plan.updated': {
-        // 服务端每次 update_task 都会发一遍 plan.updated，同一份计划会被快照 N 次；
-        // id 必须带上事件身份（runId+seq），否则 SpanCard 按 id 比对选中态时会一次命中多处。
-        const planId = `plan:${e.runId}:${e.seq}`
-        const s = spanOf(planId, `计划《${e.plan.title}》`, 'chain_operation', at, endAt)
-        s.output = `${e.plan.tasks.filter((t) => t.status === 'done').length}/${e.plan.tasks.length} 完成`
+        // 服务端每次 update_task 都会发一遍 plan.updated，同一份计划会被快照 N 次。
+        // spec §6.1 的树只画一个「计划」节点、子节点是任务——按 plan.id 原地更新，
+        // 否则树里会堆出十几行同名、同 1ms 宽的计划快照，选中态也会一次命中多处。
+        const planId = `plan:${e.plan.id}`
+        const done = e.plan.tasks.filter((t) => t.status === 'done').length
+        let s = plans.get(planId)
+        if (s === undefined) {
+          s = spanOf(planId, `计划《${e.plan.title}》`, 'chain_operation', at, endAt)
+          plans.set(planId, s)
+          children.push(s)
+        }
+        s.title = `计划《${e.plan.title}》`
+        s.endTime = new Date(endAt)
+        s.status = e.plan.tasks.some((t) => t.status === 'blocked')
+          ? 'error'
+          : e.plan.tasks.every((t) => t.status === 'done' || t.status === 'skipped')
+            ? 'success'
+            : 'pending'
+        s.output = `${done}/${e.plan.tasks.length} 完成`
         s.children = e.plan.tasks.map((t) => {
           const task = spanOf(
             `${planId}:${t.id}`,
@@ -295,7 +327,6 @@ export function toTraceData(
         })
         s.raw = [JSON.stringify(e)]
         llm = null
-        children.push(s)
         break
       }
       case 'gate.waiting': {

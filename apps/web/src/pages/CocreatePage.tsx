@@ -105,8 +105,60 @@ function toTraceRecordLite(meta: AgentSessionMeta): TraceRecord {
   }
 }
 
+/**
+ * 会话 meta 的「新鲜视图」：盘上 meta 走 30 秒节流落盘（服务端 persistSessionMeta），
+ * 而内存里的 run 才是实时值。状态/步数/tokens 这类会变的量一律以 run 为准。
+ */
+function withLiveRun(meta: AgentSessionMeta, run: AgentRun | null): AgentSessionMeta {
+  if (run === null || run.sessionId !== meta.id) return meta
+  return {
+    ...meta,
+    status: run.status,
+    steps: run.budget.steps,
+    subagentCalls: run.budget.subagentCalls,
+    tokens: run.tokens,
+  }
+}
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
+}
+
+function eventKey(e: AgentEvent): string {
+  return `${e.runId}:${e.seq}`
+}
+
+/**
+ * 事件合并：按「runId 首次出现的顺序 + 组内 seq」排序，后到的同 key 覆盖先到的。
+ *
+ * ★ 为什么要合并而不是直接替换成服务端快照：journal 不记录 delta 流（emit 的
+ *   `persist=false`），而 SSE 建连时会从头回放整段 run.events（含 delta）。
+ *   只拿 journal 当真相会两个方向都错：整体替换会抹掉刚 append 的 delta，
+ *   重新追加又会把回放的 delta 堆到树尾。按 key 合并两种来源都能存在。
+ */
+function mergeEvents(prev: readonly AgentEvent[], incoming: readonly AgentEvent[]): AgentEvent[] {
+  const map = new Map<string, AgentEvent>()
+  const runOrder: string[] = []
+  for (const e of [...prev, ...incoming]) {
+    if (!runOrder.includes(e.runId)) runOrder.push(e.runId)
+    map.set(eventKey(e), e)
+  }
+  const rank = new Map(runOrder.map((id, i) => [id, i]))
+  return [...map.values()].sort((a, b) => {
+    const ra = rank.get(a.runId) ?? 0
+    const rb = rank.get(b.runId) ?? 0
+    return ra === rb ? a.seq - b.seq : ra - rb
+  })
+}
+
+/** 在 span 树里按 id 找节点（选中态只存 id，避免存住过期对象） */
+function findSpan(spans: readonly TraceSpan[], id: string): TraceSpan | undefined {
+  for (const span of spans) {
+    if (span.id === id) return span
+    const hit = findSpan(span.children ?? [], id)
+    if (hit !== undefined) return hit
+  }
+  return undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +207,14 @@ function PlanTab({
                   </button>
                 ))}
               </div>
+            )}
+            {t.brief.length > 0 && (
+              <p className="mt-1 ml-[18px] text-[10px] leading-4 text-neutral-500">{t.brief}</p>
+            )}
+            {t.feedback !== null && t.feedback.length > 0 && (
+              <p className="mt-1 ml-[18px] rounded bg-rose-50 px-1.5 py-1 text-[10px] leading-4 text-rose-700">
+                打回：{t.feedback}
+              </p>
             )}
           </li>
         ))}
@@ -209,10 +269,12 @@ function GateBanner({
   gate,
   busy,
   onDecide,
+  onOpenArtifact,
 }: {
   gate: AgentGate
   busy: boolean
   onDecide: (decision: 'approve' | 'revise' | 'skip', feedback?: string) => void
+  onOpenArtifact: (path: string) => void
 }) {
   const [feedback, setFeedback] = useState('')
   const [revising, setRevising] = useState(false)
@@ -225,13 +287,23 @@ function GateBanner({
         </span>
         <span className="text-[11px] text-neutral-500">需要你拍板，Agent 停在这里等你</span>
       </div>
-      <p className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-neutral-700">
+      {/* 摘要可能很长（模型会把整份核对报告贴进来），超屏就内部滚，别把下面的树挤没 */}
+      <p className="mt-2 max-h-[40vh] overflow-y-auto whitespace-pre-wrap text-[12px] leading-6 text-neutral-700">
         {gate.summary}
       </p>
       {gate.artifacts.length > 0 && (
-        <p className="mt-1 break-all text-[10px] text-neutral-500">
-          产物：{gate.artifacts.join('、')}
-        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {gate.artifacts.map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => onOpenArtifact(a)}
+              className="break-all rounded border border-neutral-300 bg-white px-2 py-0.5 text-[10px] text-neutral-600 hover:bg-neutral-100"
+            >
+              {a} ↗
+            </button>
+          ))}
+        </div>
       )}
       {revising && (
         <textarea
@@ -297,7 +369,10 @@ export function CocreatePage() {
   const [meta, setMeta] = useState<AgentSessionMeta | null>(null)
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [run, setRun] = useState<AgentRun | null>(null)
-  const [selectedSpan, setSelectedSpan] = useState<TraceSpan | undefined>()
+  /** 服务端说这个会话在跑，但内存里已经没有对应的 run（服务重启）——单独记一笔，否则页面上没任何出口 */
+  const [runMissing, setRunMissing] = useState(false)
+  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
+  const [detailsTab, setDetailsTab] = useState<string>('input-output')
   const [expandedSpansIds, setExpandedSpansIds] = useState<string[]>(['root'])
   const [draft, setDraft] = useState('')
   const [goal, setGoal] = useState(DEFAULT_GOAL)
@@ -306,6 +381,8 @@ export function CocreatePage() {
   const [streamNote, setStreamNote] = useState<string | null>(null)
   /** SSE 与初载可能重复投递同一事件；按 runId+seq 去重 */
   const seen = useRef<Set<string>>(new Set())
+  /** 已落盘的标题：与输入框里的值分开跟，否则 onBlur 永远判等 */
+  const savedTitle = useRef('')
 
   const refreshSessions = useCallback(async (): Promise<AgentSessionMeta[]> => {
     const data = await api<{ sessions: AgentSessionMeta[] }>('/agent/sessions?limit=100')
@@ -320,24 +397,32 @@ export function CocreatePage() {
     )
     setSelectedId(id)
     setMeta(detail.meta)
+    savedTitle.current = detail.meta.title
     setEvents(detail.events)
-    seen.current = new Set(detail.events.map((e) => `${e.runId}:${e.seq}`))
-    setSelectedSpan(undefined)
+    seen.current = new Set(detail.events.map(eventKey))
+    setSelectedSpanId(null)
+    setDetailsTab('input-output')
     setExpandedSpansIds(['root'])
+    setRunMissing(false)
     // 会话可能是崩溃残留的 running：只有内存里真有 live run 才算在跑
     if (detail.meta.status === 'running' || detail.meta.status === 'waiting_review') {
       const lastRunId = detail.meta.runIds.at(-1)
-      if (lastRunId !== undefined) {
-        try {
-          const { run: live } = await api<{ run: AgentRun }>(`/agent/runs/${lastRunId}`)
-          setRun(live)
-        } catch {
-          setRun(null)
-        }
+      if (lastRunId === undefined) {
+        setRun(null)
+        setRunMissing(true)
+        return
       }
-    } else {
-      setRun(null)
+      try {
+        const { run: live } = await api<{ run: AgentRun }>(`/agent/runs/${lastRunId}`)
+        setRun(live)
+      } catch {
+        // 服务重启：run 不在了，但会话快照还在，可以续接
+        setRun(null)
+        setRunMissing(true)
+      }
+      return
     }
+    setRun(null)
   }, [])
 
   // 挂载：拉会话列表；有正在跑的会话就自动选中它
@@ -364,27 +449,53 @@ export function CocreatePage() {
     if (run === null) return
     if (run.status !== 'running' && run.status !== 'waiting_review') return
     const runId = run.id
+    const sessionId = run.sessionId
     const es = new EventSource(`/api/agent/runs/${runId}/events`)
     let closed = false
+
+    // ★ 门禁与终态都要重拉：run.gate / run.status 只存在服务端，
+    //   而 meta.status / meta.resumable 又决定「能不能接着说」——不刷就是死路。
+    const pullRun = (): void => {
+      void api<{ run: AgentRun }>(`/agent/runs/${runId}`)
+        .then(({ run: next }) => setRun(next))
+        .catch(() => undefined)
+    }
+
+    const sync = (): void => {
+      pullRun()
+      void api<{ meta: AgentSessionMeta; events: AgentEvent[] }>(
+        `/agent/sessions/${sessionId}?limit=2000`,
+      )
+        .then((detail) => {
+          setMeta(detail.meta)
+          setEvents((prev) => mergeEvents(prev, detail.events))
+          for (const e of detail.events) seen.current.add(eventKey(e))
+        })
+        .catch(() => undefined)
+      void refreshSessions().catch(() => undefined)
+    }
+
     es.onopen = () => setStreamNote(null)
     es.onmessage = (m) => {
       if (closed) return
       const ev = JSON.parse(m.data) as AgentEvent
       if (ev.type === 'ping') return
-      const key = `${ev.runId}:${ev.seq}`
+      const key = eventKey(ev)
       if (seen.current.has(key)) return
       seen.current.add(key)
-      setEvents((prev) => [...prev, ev])
+      setEvents((prev) => mergeEvents(prev, [ev]))
+      // 步数/tokens 只在内存 run 里：工具与子体收尾后刷一下，否则顶栏一直停在旧数字
+      if (ev.type === 'tool.ended' || ev.type === 'subagent.ended') pullRun()
       if (
+        ev.type === 'gate.waiting' ||
+        ev.type === 'gate.resolved' ||
+        ev.type === 'plan.updated' ||
         ev.type === 'run.finished' ||
         ev.type === 'run.paused' ||
         ev.type === 'run.failed' ||
         ev.type === 'run.stopped'
       ) {
-        void api<{ run: AgentRun }>(`/agent/runs/${runId}`)
-          .then(({ run: next }) => setRun(next))
-          .catch(() => undefined)
-        void refreshSessions().catch(() => undefined)
+        sync()
       }
     }
     es.onerror = () => {
@@ -398,56 +509,95 @@ export function CocreatePage() {
 
   const trace = useMemo(() => (meta === null ? null : toTraceData(meta, events)), [meta, events])
   const planTasks = useMemo(() => planTasksFrom(events), [events])
-  const traces = useMemo(() => sessions.map(toTraceRecordLite), [sessions])
-  const selectedTrace = useMemo(() => (meta === null ? undefined : toTraceRecordLite(meta)), [meta])
+
+  // ★ 顶栏与会话行都必须看 run，不能只看 meta：门禁等待审阅时 meta.status 还停在
+  //   running（节流没落盘），顶栏会一直写「运行中」，计划计数也停在 0/0。
+  const displayStatus: AgentSessionStatus = run?.status ?? meta?.status ?? 'done'
+  const stepCount = run?.budget.steps ?? meta?.steps ?? 0
+  const subagentCalls = run?.budget.subagentCalls ?? meta?.subagentCalls ?? 0
+  const tokenCount = run?.tokens ?? meta?.tokens ?? 0
+  // 计划计数从事件流里的计划快照派生：meta 上的数字同样是上次落盘时的旧值
+  const planDone =
+    planTasks.length > 0
+      ? planTasks.filter((t) => t.status === 'done').length
+      : (meta?.planDone ?? 0)
+  const planTotal = planTasks.length > 0 ? planTasks.length : (meta?.planTotal ?? 0)
+
+  const traces = useMemo(
+    () => sessions.map((s) => toTraceRecordLite(withLiveRun(s, run))),
+    [sessions, run],
+  )
+  const selectedTrace = useMemo(
+    () => (meta === null ? undefined : toTraceRecordLite(withLiveRun(meta, run))),
+    [meta, run],
+  )
+
+  const openArtifact = useCallback(
+    (path: string) => {
+      const mod = moduleFor(path)
+      if (mod !== null) setModule(mod)
+    },
+    [setModule],
+  )
 
   const extraTabs = useMemo(
     () => [
       {
         key: 'plan',
         title: '计划',
-        content: (
-          <PlanTab
-            onOpenArtifact={(path) => {
-              const mod = moduleFor(path)
-              if (mod !== null) setModule(mod)
-            }}
-            tasks={planTasks}
-          />
-        ),
+        content: <PlanTab onOpenArtifact={openArtifact} tasks={planTasks} />,
       },
       { key: 'chapter', title: '正文', content: <ChapterTab chapterNo={chapterNo} /> },
     ],
-    [planTasks, chapterNo, setModule],
+    [planTasks, chapterNo, openArtifact],
   )
 
   const live = isLive(run)
-  const resumable = meta?.resumable === true && !meta.id.startsWith('lg_')
+  const runSettled = run !== null && run.status !== 'running' && run.status !== 'waiting_review'
+  // meta.resumable 只在服务端刷新后才更新；run 已收尾时先按同一公式放行，
+  // 否则「一轮刚跑完」的窗口里页面会变成只读
+  const resumable = meta !== null && !meta.id.startsWith('lg_') && (meta.resumable || runSettled)
+  const ended =
+    run !== null && (run.status === 'paused' || run.status === 'stopped' || run.status === 'failed')
+  const canResume = !live && (resumable || runMissing)
 
   const gate = live ? (run?.gate ?? null) : null
 
   const adoptRun = useCallback(async (next: AgentRun): Promise<void> => {
     setRun(next)
-    // 服务端是真相：拉一遍会话，把本地增量换成完整事件序列（顺序、去重都以它为准）
+    setRunMissing(false)
+    // 服务端是真相：拉一遍会话把 meta 与事件对齐；事件用合并，不能整体替换（见 mergeEvents）
     await api<{ meta: AgentSessionMeta; events: AgentEvent[] }>(
       `/agent/sessions/${next.sessionId}?limit=2000`,
     )
       .then((detail) => {
         setSelectedId(detail.meta.id)
         setMeta(detail.meta)
-        setEvents(detail.events)
-        seen.current = new Set(detail.events.map((e) => `${e.runId}:${e.seq}`))
+        savedTitle.current = detail.meta.title
+        setEvents((prev) => mergeEvents(prev, detail.events))
+        for (const e of detail.events) seen.current.add(eventKey(e))
       })
       .catch(() => undefined)
   }, [])
 
-  const startNew = async (text: string): Promise<void> => {
+  const startNew = async (text: string, mode: 'new' | 'replan' = 'new'): Promise<void> => {
+    // new / replan 都会把书里现有的计划标记为中止，不能静默做掉
+    const atRisk = sessions.find((s) => s.planId !== null && s.planTotal > s.planDone)
+    if (
+      mode === 'new' &&
+      atRisk !== undefined &&
+      !window.confirm(
+        `开始新会话会把「${atRisk.planTitle ?? '现有计划'}」标记为中止（${atRisk.planDone}/${atRisk.planTotal}），继续？`,
+      )
+    ) {
+      return
+    }
     setError(null)
     setBusy(true)
     try {
       const { run: started } = await post<{ run: AgentRun; meta: AgentSessionMeta }>(
         '/agent/sessions',
-        { goal: text, mode: 'new' },
+        { goal: text, mode },
       )
       setDraft('')
       setGoal(text)
@@ -458,6 +608,11 @@ export function CocreatePage() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const replan = (): void => {
+    if (meta === null) return
+    void startNew(meta.goal, 'replan')
   }
 
   const send = async (): Promise<void> => {
@@ -569,6 +724,7 @@ export function CocreatePage() {
         body: JSON.stringify({ title: trimmed }),
       })
       setSessions((prev) => prev.map((s) => (s.id === id ? next : s)))
+      savedTitle.current = next.title
       if (meta?.id === id) setMeta(next)
     } catch (e) {
       setError(errorText(e))
@@ -598,13 +754,19 @@ export function CocreatePage() {
     }
   }
 
-  const newConversation = (): void => {
-    if (live && !window.confirm('当前会话还在跑。开新会话不会停止它，继续？')) return
+  const newConversation = async (): Promise<void> => {
+    // 服务端同一时刻只允许一个 live run：不先停掉，紧接着的「新建会话」会 409
+    if (live) {
+      if (!window.confirm('当前会话还在跑。先停止它再开新会话，继续？')) return
+      await stop()
+    }
     setSelectedId(null)
     setMeta(null)
     setEvents([])
     setRun(null)
-    setSelectedSpan(undefined)
+    setRunMissing(false)
+    setSelectedSpanId(null)
+    setDetailsTab('input-output')
     setExpandedSpansIds(['root'])
     setDraft('')
     setError(null)
@@ -620,9 +782,11 @@ export function CocreatePage() {
         : live
           ? '发送（当前步骤后送达）'
           : '接着说'
-  const ended =
-    run !== null && (run.status === 'paused' || run.status === 'stopped' || run.status === 'failed')
-  const canResume = !live && (resumable || ended)
+  const selectedSpan = useMemo(
+    () =>
+      selectedSpanId === null || trace === null ? undefined : findSpan(trace.spans, selectedSpanId),
+    [selectedSpanId, trace],
+  )
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-white">
@@ -631,27 +795,68 @@ export function CocreatePage() {
           value={meta?.title ?? ''}
           onChange={(e) => setMeta(meta === null ? meta : { ...meta, title: e.target.value })}
           onBlur={(e) => {
-            if (meta !== null && e.target.value.trim() !== '' && e.target.value !== meta.title) {
-              void renameSession(meta.id, e.target.value)
-            }
+            // ★ 不能拿 meta.title 比：onChange 已经把它改成新值了，比就恒等
+            const next = e.target.value.trim()
+            if (meta === null || next === '' || next === savedTitle.current) return
+            void renameSession(meta.id, next)
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') return
+            // Esc = 放弃这次编辑（输入框是即时回写的，不还原就会出现「看着改了实际没存」）
+            setMeta(meta === null ? meta : { ...meta, title: savedTitle.current })
+            e.currentTarget.blur()
           }}
           placeholder="未命名会话"
           disabled={meta === null}
+          readOnly={
+            meta !== null && (live || meta.status === 'running' || meta.id.startsWith('lg_'))
+          }
+          title={
+            meta === null
+              ? undefined
+              : meta.id.startsWith('lg_')
+                ? '历史会话是只读的'
+                : live || meta.status === 'running'
+                  ? '运行中的会话不能改名'
+                  : undefined
+          }
           className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-neutral-900 placeholder:text-neutral-400 focus:outline-none disabled:text-neutral-400"
         />
         <span
-          className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${
-            STATUS_TONE[meta?.status ?? 'done']
-          }`}
+          className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${STATUS_TONE[displayStatus]}`}
         >
-          {STATUS_LABEL[meta?.status ?? 'done']}
+          {STATUS_LABEL[displayStatus]}
         </span>
         <span className="shrink-0 text-[11px] text-neutral-500">
-          步数 {meta?.steps ?? 0}
-          {run === null ? '' : `/${run.budget.maxSteps}`} · 子智能体 {meta?.subagentCalls ?? 0} ·{' '}
-          {(meta?.tokens ?? 0).toLocaleString()} tokens
+          步数 {stepCount}
+          {run === null ? '' : `/${run.budget.maxSteps}`} · 子智能体 {subagentCalls} ·{' '}
+          {tokenCount.toLocaleString()} tokens
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {meta !== null && (
+            <button
+              type="button"
+              onClick={() => {
+                setDetailsTab('plan')
+                if (selectedSpanId === null) setSelectedSpanId('root')
+              }}
+              className="rounded border border-neutral-300 px-2.5 py-1 text-[11px] text-neutral-600 hover:bg-neutral-100"
+              title="在右侧打开计划"
+            >
+              计划 {planDone}/{planTotal}
+            </button>
+          )}
+          {meta !== null && (ended || canResume) && !live && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={replan}
+              className="rounded border border-neutral-300 px-2.5 py-1 text-[11px] text-neutral-600 hover:bg-neutral-100 disabled:opacity-40"
+              title="把现有计划标记为中止，按同一个目标重新规划"
+            >
+              重新规划
+            </button>
+          )}
           {canResume && (
             <button
               type="button"
@@ -673,7 +878,7 @@ export function CocreatePage() {
           )}
           <button
             type="button"
-            onClick={newConversation}
+            onClick={() => void newConversation()}
             className="rounded border border-neutral-300 px-2.5 py-1 text-[11px] text-neutral-600 hover:bg-neutral-100"
           >
             新会话
@@ -687,6 +892,7 @@ export function CocreatePage() {
           gate={gate}
           key={`${gate.kind}:${gate.title}`}
           onDecide={(d, f) => void review(d, f)}
+          onOpenArtifact={openArtifact}
         />
       )}
 
@@ -730,7 +936,7 @@ export function CocreatePage() {
             <TreeView
               expandedSpansIds={expandedSpansIds}
               onExpandSpansIdsChange={(ids) => setExpandedSpansIds([...ids])}
-              onSpanSelect={(span) => setSelectedSpan(span as unknown as TraceSpan)}
+              onSpanSelect={(span) => setSelectedSpanId(span.id)}
               selectedSpan={selectedSpan}
               spanCardViewOptions={{ expandButton: 'inside' }}
               spans={trace.spans}
@@ -738,13 +944,20 @@ export function CocreatePage() {
           )}
         </section>
 
-        <aside className="w-[420px] shrink-0 overflow-auto border-l border-neutral-200 bg-white p-2">
+        <aside className="w-[480px] shrink-0 overflow-auto border-l border-neutral-200 bg-white p-2">
           {selectedSpan === undefined || trace === null ? (
             <div className="p-3 text-[11px] leading-5 text-neutral-500">
               点左边任意一个节点看细节：输入输出、思考过程、计划、这一章的正文。
             </div>
           ) : (
-            <DetailsView allSpans={trace.spans} data={selectedSpan} extraTabs={extraTabs} />
+            <DetailsView
+              allSpans={trace.spans}
+              data={selectedSpan}
+              extraTabs={extraTabs}
+              // tab 由顶栏的「计划 N/M」按钮驱动，所以要受控
+              onTabChange={(next) => setDetailsTab(next)}
+              tab={detailsTab}
+            />
           )}
         </aside>
       </div>

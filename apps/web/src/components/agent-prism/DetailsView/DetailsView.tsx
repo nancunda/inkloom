@@ -65,9 +65,15 @@ export type DetailsViewProps = {
   data: TraceSpan;
 
   /**
-   * The initially selected tab
+   * The initially selected tab. Ignored when `tab` is provided.
    */
   defaultTab?: DetailsViewTab | undefined;
+
+  /**
+   * The selected tab, when the caller controls it (e.g. a toolbar button that
+   * jumps straight to the "plan" tab). Omit to keep the tab internal.
+   */
+  tab?: DetailsViewTab | undefined;
 
   /**
    * Extra tabs appended after the built-in ones, before RAW. Used by inkloom
@@ -176,22 +182,22 @@ export const DetailsView = ({
   extraTabs = [],
   headerActions,
   onTabChange,
+  tab: controlledTab,
 }: ReadonlyProps<DetailsViewProps>): ReactElement => {
-  const [tab, setTab] = useState<DetailsViewTab>(defaultTab);
+  const [innerTab, setInnerTab] = useState<DetailsViewTab>(defaultTab);
+  const tab = controlledTab ?? innerTab;
 
   const tabItems = useMemo(() => getTabItems(data, extraTabs), [data, extraTabs]);
 
   useEffect(() => {
-    if (!tabItems.some((item) => item.value === tab)) {
-      const fallbackTab = tabItems[0]?.value ?? defaultTab;
-
-      setTab(fallbackTab);
-      onTabChange?.(fallbackTab);
-    }
-  }, [tabItems, tab, defaultTab, onTabChange]);
+    if (tabItems.some((item) => item.value === tab)) return;
+    const fallbackTab = tabItems[0]?.value ?? defaultTab;
+    if (controlledTab === undefined) setInnerTab(fallbackTab);
+    onTabChange?.(fallbackTab);
+  }, [tabItems, tab, defaultTab, controlledTab, onTabChange]);
 
   const handleTabChange = (tabValue: DetailsViewTab) => {
-    setTab(tabValue);
+    if (controlledTab === undefined) setInnerTab(tabValue);
     onTabChange?.(tabValue);
   };
 

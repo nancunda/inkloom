@@ -27,8 +27,10 @@ const THEMES = {
       dark:data-[state=active]:shadow-none`,
   },
   underline: {
-    list: "h-9 flex border-b border-agentprism-border",
-    trigger: `w-full justify-center px-3 ${BASE_TRIGGER} 
+    // inkloom：详情栏常驻 480px，5 个 tab 平分宽度时标签会被截成「In/...」；
+    // 改成按内容宽度排、放不下就横向滚动（见 NOTICE.md）
+    list: "h-9 flex overflow-x-auto border-b border-agentprism-border",
+    trigger: `shrink-0 whitespace-nowrap justify-center px-3 ${BASE_TRIGGER} 
       text-agentprism-secondary-foreground data-[state=active]:text-agentprism-foreground
       border-b-2 border-transparent data-[state=active]:border-agentprism-border-inverse
       -mb-[2px]
@@ -136,6 +138,7 @@ export const Tabs = <T extends string = string>({
             )}
             disabled={item.disabled}
             key={item.value}
+            title={item.label}
             value={item.value}
           >
             {Boolean(item.icon) && (

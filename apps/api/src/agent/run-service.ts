@@ -369,7 +369,22 @@ function handlePiEvent(run: AgentRun, e: PiEvent): void {
   }
 }
 
+/**
+ * 所有调用方都是 fire-and-forget（`void drive(...)`），所以这里必须**永不 reject**：
+ * 一轮结束后还要落盘计划/写会话索引，磁盘写失败（如测试 teardown 删了临时目录）
+ * 一旦冒出去就是未处理的 Promise rejection，会让整轮测试以非零码退出。
+ */
 async function drive(run: AgentRun, prompt: string): Promise<void> {
+  try {
+    await driveTurn(run, prompt)
+  } catch (e) {
+    if (run.stopped) return
+    // failRun 自己也会落盘：二次失败只能咽下，否则又变回未处理 rejection
+    await failRun(run, (e as Error).message).catch(() => undefined)
+  }
+}
+
+async function driveTurn(run: AgentRun, prompt: string): Promise<void> {
   if (run.stopped) return
   // 新一轮开始：上一轮残留的门禁请求作废
   run.gateBox.current = null
@@ -1064,7 +1079,10 @@ export function resumeAgentRun(id: string): AgentRunSnapshot {
     }
     const { project } = getContext()
     void drive(run, buildTaskPrompt(project, plan, next))
-  })()
+    // 同上：这个 IIFE 是 fire-and-forget，落盘失败不能变成未处理 rejection
+  })().catch((e: unknown) => {
+    if (!run.stopped) void failRun(run, (e as Error).message).catch(() => undefined)
+  })
 
   return snapshot(run)
 }

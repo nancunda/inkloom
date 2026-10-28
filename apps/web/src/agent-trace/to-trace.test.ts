@@ -124,7 +124,7 @@ describe('toTraceData', () => {
     expect(llmSpans[0]?.reasoning?.content).toBe('想一想')
   })
 
-  it('★ 两次 plan.updated 的计划与任务 id 互不相同', () => {
+  it('★ 同一计划的多次 plan.updated 合并成一个节点，任务态取最后一次', () => {
     const plan = (tasks: { id: string; status: string }[]) => ({
       version: 1,
       id: 'p1',
@@ -150,16 +150,26 @@ describe('toTraceData', () => {
     const { spans } = toTraceData(meta, [
       ev({ type: 'run.started', goal: 'g' }),
       ev({ type: 'plan.updated', seq: 2, plan: plan([{ id: 't1', status: 'todo' }]) }),
-      ev({ type: 'plan.updated', seq: 3, plan: plan([{ id: 't1', status: 'done' }]) }),
+      ev({
+        type: 'plan.updated',
+        seq: 3,
+        at: '2026-10-28T10:00:05.000Z',
+        plan: plan([{ id: 't1', status: 'done' }]),
+      }),
     ])
     const plans = spans[0]?.children?.filter((c) => c.title.startsWith('计划')) ?? []
-    expect(plans).toHaveLength(2)
-    const ids = plans.flatMap((p) => [p.id, ...(p.children ?? []).map((c) => c.id)])
-    expect(new Set(ids).size).toBe(ids.length)
-    // 同一毫秒的两个事件不能互相拉长（否则瞬时事件会变成一条假的长条）
-    for (const p of plans) {
-      expect(p.endTime.getTime() - p.startTime.getTime()).toBe(1)
-    }
+    // 同一份计划的 N 次快照只占一个节点：否则树里会堆出十几行同名计划、选中态一次命中多处
+    expect(plans).toHaveLength(1)
+    expect(plans[0]?.id).toBe('plan:p1')
+    expect(plans[0]?.status).toBe('success')
+    expect(plans[0]?.output).toBe('1/1 完成')
+    expect(plans[0]?.children?.map((c) => c.id)).toEqual(['plan:p1:t1'])
+    expect(plans[0]?.children?.[0]?.status).toBe('success')
+    // 节点从第一次快照活到最后一次快照的右边界
+    expect(plans[0]?.startTime.toISOString()).toBe('2026-10-28T10:00:00.000Z')
+    expect(plans[0]?.endTime.getTime()).toBeGreaterThanOrEqual(
+      new Date('2026-10-28T10:00:05.000Z').getTime(),
+    )
   })
 
   it('★ ping 不建 span，事件型 span 的时长取下一事件', () => {

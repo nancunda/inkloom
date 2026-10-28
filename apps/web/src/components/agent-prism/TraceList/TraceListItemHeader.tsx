@@ -31,12 +31,14 @@ export const TraceListItemHeader = ({
 
       <div className="flex items-center gap-2">
         {actions}
-        <Badge
-          label={
-            trace.spansCount === 1 ? "1 span" : `${trace.spansCount} spans`
-          }
-          size="4"
-        />
+        {trace.spansCount > 0 ? (
+          <Badge
+            label={
+              trace.spansCount === 1 ? "1 span" : `${trace.spansCount} spans`
+            }
+            size="4"
+          />
+        ) : null}
       </div>
     </div>
   );

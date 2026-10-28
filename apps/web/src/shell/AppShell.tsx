@@ -13,6 +13,7 @@ import { StoryPage } from '../pages/StoryPage'
 import { WorldPage } from '../pages/WorldPage'
 import { WritingPage } from '../pages/WritingPage'
 import { type ModuleId, useSessionStore } from '../stores/session'
+import { ErrorBoundary } from './ErrorBoundary'
 
 /**
  * 共创页懒加载：它拖着整套 AgentPrism（radix×2 + resizable-panels + json-pretty），
@@ -186,11 +187,13 @@ export function AppShell() {
         <main className="flex min-w-0 flex-1">
           {module === 'overview' && <OverviewPage />}
           {module === 'agent' && (
-            <Suspense
-              fallback={<p className="p-6 text-[12px] text-neutral-500">正在载入共创面板…</p>}
-            >
-              <CocreatePage />
-            </Suspense>
+            <ErrorBoundary label="共创面板">
+              <Suspense
+                fallback={<p className="p-6 text-[12px] text-neutral-500">正在载入共创面板…</p>}
+              >
+                <CocreatePage />
+              </Suspense>
+            </ErrorBoundary>
           )}
           {module === 'world' && <WorldPage />}
           {module === 'cast' && <CastPage />}
