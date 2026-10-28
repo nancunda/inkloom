@@ -10,11 +10,14 @@ import type { ReadonlyProps } from "../ReadonlyProps";
 import { Badge } from "../Badge";
 import { IconButton } from "../IconButton";
 import { TraceListItem } from "./TraceListItem";
+import { TraceListItemMenu } from "./TraceListItemMenu";
 
 type TraceListProps = {
   className?: string | undefined;
   expanded: boolean;
+  onDelete?: ((trace: TraceRecord) => void) | undefined;
   onExpandStateChange: (expanded: boolean) => void;
+  onRename?: ((trace: TraceRecord) => void) | undefined;
   onTraceSelect?: ((trace: Readonly<TraceRecord>) => void) | undefined;
   selectedTrace?: TraceRecord | undefined;
   traces: TraceRecordWithBadges[];
@@ -27,7 +30,9 @@ type TraceRecordWithBadges = TraceRecord & {
 export const TraceList = ({
   className,
   expanded,
+  onDelete,
   onExpandStateChange,
+  onRename,
   onTraceSelect,
   selectedTrace,
   traces,
@@ -71,7 +76,7 @@ export const TraceList = ({
           <ul className="flex-1 overflow-y-auto">
             {traces.map((trace) => (
               <li
-                className="border-agentprism-border w-full list-none border-b [&:not(:last-child)]:border-b"
+                className="border-agentprism-border group relative w-full list-none border-b [&:not(:last-child)]:border-b"
                 key={trace.id}
               >
                 <TraceListItem
@@ -81,6 +86,15 @@ export const TraceList = ({
                   showDescription={false}
                   trace={trace}
                 />
+                {onRename !== undefined || onDelete !== undefined ? (
+                  <div className="absolute top-2 right-2">
+                    <TraceListItemMenu
+                      onDelete={onDelete ?? (() => undefined)}
+                      onRename={onRename ?? (() => undefined)}
+                      trace={trace}
+                    />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

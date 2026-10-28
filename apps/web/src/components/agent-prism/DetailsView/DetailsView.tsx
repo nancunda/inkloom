@@ -13,7 +13,7 @@ import {
   SquareTerminal,
   Tags,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 import type { AvatarProps } from "../Avatar";
 import type { ReadonlyProps } from "../ReadonlyProps";
@@ -70,6 +70,12 @@ export type DetailsViewProps = {
   defaultTab?: DetailsViewTab | undefined;
 
   /**
+   * Extra tabs appended after the built-in ones, before RAW. Used by inkloom
+   * to add a per-session "计划" tab.
+   */
+  extraTabs?: DetailsViewExtraTab[] | undefined;
+
+  /**
    * Custom header actions to render
    * Can be a ReactNode or a render function that receives the data
    */
@@ -82,12 +88,26 @@ export type DetailsViewProps = {
   onTabChange?: ((tabValue: DetailsViewTab) => void) | undefined;
 };
 
+export type DetailsViewExtraTab = {
+  /** Stable identifier, also used as the tab value */
+  key: string;
+  title: string;
+  content: ReactNode;
+  icon?: ReactNode | undefined;
+};
+
+/**
+ * Built-in tab ids, plus any id coming from `extraTabs`. The
+ * `(string & {})` branch keeps literal autocomplete for the built-ins while
+ * letting callers pass their own keys.
+ */
 type DetailsViewTab =
   | "attributes"
   | "context"
   | "input-output"
   | "raw"
-  | "thinking";
+  | "thinking"
+  | (string & {});
 
 type ReadonlySpan = DeepReadonly<TraceSpan>;
 
@@ -96,7 +116,10 @@ type ReadonlySpan = DeepReadonly<TraceSpan>;
  * reasoning, whatever the vendor, even when only a reasoning-token count is
  * known.
  */
-const getTabItems = (data: ReadonlySpan): TabItem<DetailsViewTab>[] => [
+const getTabItems = (
+  data: ReadonlySpan,
+  extraTabs: readonly DetailsViewExtraTab[],
+): TabItem<DetailsViewTab>[] => [
   {
     icon: <ArrowRightLeft className="size-4" />,
     label: "In/Out",
@@ -125,6 +148,11 @@ const getTabItems = (data: ReadonlySpan): TabItem<DetailsViewTab>[] => [
     label: "Attributes",
     value: "attributes",
   },
+  ...extraTabs.map((tab) => ({
+    ...(tab.icon === undefined ? {} : { icon: tab.icon }),
+    label: tab.title,
+    value: tab.key,
+  })),
   {
     icon: <SquareTerminal className="size-4" />,
     label: "RAW",
@@ -140,12 +168,13 @@ export const DetailsView = ({
   customHeader,
   data,
   defaultTab = "input-output",
+  extraTabs = [],
   headerActions,
   onTabChange,
 }: ReadonlyProps<DetailsViewProps>): ReactElement => {
   const [tab, setTab] = useState<DetailsViewTab>(defaultTab);
 
-  const tabItems = useMemo(() => getTabItems(data), [data]);
+  const tabItems = useMemo(() => getTabItems(data, extraTabs), [data, extraTabs]);
 
   useEffect(() => {
     if (!tabItems.some((item) => item.value === tab)) {
@@ -206,6 +235,11 @@ export const DetailsView = ({
         {tab === "context" && <DetailsViewContextTab data={data} />}
         {tab === "attributes" && <DetailsViewAttributesTab data={data} />}
         {tab === "raw" && <DetailsViewRawDataTab data={data} />}
+        {extraTabs
+          .filter((item) => item.key === tab)
+          .map((item) => (
+            <Fragment key={item.key}>{item.content}</Fragment>
+          ))}
       </div>
     </div>
   );

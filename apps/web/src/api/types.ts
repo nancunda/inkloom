@@ -516,6 +516,30 @@ export interface AgentRun {
   events: AgentEvent[]
 }
 
+/** 会话索引（落盘在 .inkloom/agent/sessions/*.meta.json）：一个会话跨多次 run */
+export type AgentSessionStatus =
+  | AgentRunStatus
+  /** 切片 3 之前的 runs/*.jsonl，只能看不能改 */
+  | 'legacy'
+
+export interface AgentSessionMeta {
+  id: string
+  title: string
+  goal: string
+  status: AgentSessionStatus
+  createdAt: string
+  updatedAt: string
+  tokens: number
+  steps: number
+  subagentCalls: number
+  planId: string | null
+  planTitle: string | null
+  planDone: number
+  planTotal: number
+  runIds: string[]
+  resumable: boolean
+}
+
 // ---------------------------------------------------------------------------
 // 书库：一个文件夹下每本书是一个一级目录
 // ---------------------------------------------------------------------------
