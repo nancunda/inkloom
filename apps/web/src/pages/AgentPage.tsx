@@ -476,7 +476,20 @@ export function AgentPage() {
     const fresh = events.filter((e) => e.seq > lastSeq.current).sort((a, b) => a.seq - b.seq)
     if (fresh.length === 0) return
     lastSeq.current = fresh[fresh.length - 1]?.seq ?? lastSeq.current
-    for (const e of fresh) if (e.type === 'plan.updated') setDiskPlan(e.plan)
+    for (const e of fresh) {
+      if (e.type === 'plan.updated') setDiskPlan(e.plan)
+      // ★ 子智能体次数在运行中就要动：否则整段 delegate 期间预算行一直停在旧值
+      if (e.type === 'subagent.started') {
+        setRun((prev) =>
+          prev === null
+            ? prev
+            : {
+                ...prev,
+                budget: { ...prev.budget, subagentCalls: prev.budget.subagentCalls + 1 },
+              },
+        )
+      }
+    }
     setBlocks((prev) => fresh.reduce(reduce, prev))
   }
 

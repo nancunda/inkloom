@@ -40,8 +40,18 @@ describe('readChapters', () => {
     expect(chapters[0]?.status).toBe('draft')
     expect(chapters[0]?.file).toBeNull()
     expect(chapters[0]?.scenes).toEqual([
-      { sceneNo: 1, latestVersion: 2, chars: 5 },
-      { sceneNo: 2, latestVersion: 1, chars: 5 },
+      {
+        sceneNo: 1,
+        latestVersion: 2,
+        chars: 5,
+        file: 'chapters/ch-001/scenes/s1.v2.md',
+      },
+      {
+        sceneNo: 2,
+        latestVersion: 1,
+        chars: 5,
+        file: 'chapters/ch-001/scenes/s2.v1.md',
+      },
     ])
     expect(chapters[0]?.wordCount).toBe(10)
   })

@@ -254,4 +254,25 @@ describe('章节与形象图额度', () => {
     expect(budget.chapterCalls).toBe(3)
     expect(vi.mocked(generateChapter)).toHaveBeenCalledTimes(3)
   })
+
+  it('★ 返回候选稿路径：产物必填后模型不能靠猜文件名', async () => {
+    await submitPlan()
+    await approvePlan()
+    vi.mocked(generateChapter).mockResolvedValueOnce({
+      runId: 'run_1',
+      chapterNo: 1,
+      scenes: [
+        {
+          sceneNo: 1,
+          version: 2,
+          relPath: 'chapters/ch-001/scenes/s1.v2.md',
+          wordCount: 10,
+        },
+      ],
+      warnings: [],
+    } as never)
+    const r = await tool('generate_chapter').execute('c1', { chapterNo: 1 })
+    expect(r.isError).toBeFalsy()
+    expect(textOf(r)).toContain('chapters/ch-001/scenes/s1.v2.md')
+  })
 })

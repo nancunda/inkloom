@@ -258,7 +258,10 @@ function handlePiEvent(run: AgentRun, e: PiEvent): void {
           emit(run, { type: 'assistant.message', text, thinking })
         }
         const usage = msg.usage
-        if (usage !== undefined) run.tokens += (usage.input ?? 0) + (usage.output ?? 0)
+        // ★ 与子体 onTokens 一致：停止后不再记账，否则主/子两侧的 tokens 口径对不上
+        if (usage !== undefined && !run.stopped) {
+          run.tokens += (usage.input ?? 0) + (usage.output ?? 0)
+        }
       }
       return
     }
@@ -675,6 +678,7 @@ export async function startAgentRun(
         const task = [
           '# 任务',
           `检查任务 ${input.taskId}「${input.title}」的完成情况是否与本书设定矛盾。`,
+          `计划目标：${input.goal}`,
           `任务要求：${input.brief.length === 0 ? '（未填）' : input.brief}`,
           `本次产物：${input.artifacts.length === 0 ? '（未填）' : input.artifacts.join('、')}`,
           `主 Agent 的完成说明：${input.summary ?? '（无）'}`,

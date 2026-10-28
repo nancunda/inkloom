@@ -5,7 +5,7 @@ import { countWords } from '@inkloom/core'
 import { getContext } from '../services/context.js'
 import { readIfExists } from '../storage/atomic-write.js'
 import { bookPaths } from '../storage/paths.js'
-import { latestSceneVersion, listSceneNos, readSceneFile } from '../storage/scenes.js'
+import { latestSceneVersion, listSceneNos, readSceneFile, sceneRelPath } from '../storage/scenes.js'
 
 /**
  * Agent 的「一次看全」快照。
@@ -18,6 +18,8 @@ export interface SceneSummary {
   sceneNo: number
   latestVersion: number
   chars: number
+  /** 最新候选稿的相对路径（chapters/ch-004/scenes/s1.v2.md） */
+  file: string | null
 }
 
 /**
@@ -128,7 +130,12 @@ export async function readChapters(root: string): Promise<ChapterSummary[]> {
       if (version === null) continue
       const file = await readSceneFile(root, chapterNo, sceneNo, version)
       const chars = file === null ? 0 : countWords(file.segments.map((s) => s.text).join(''))
-      scenes.push({ sceneNo, latestVersion: version, chars })
+      scenes.push({
+        sceneNo,
+        latestVersion: version,
+        chars,
+        file: sceneRelPath(chapterNo, sceneNo, version),
+      })
     }
     if (scenes.length === 0) continue
     const existing = byNo.get(chapterNo)

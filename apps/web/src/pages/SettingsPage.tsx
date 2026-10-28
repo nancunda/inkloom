@@ -81,7 +81,11 @@ export function SettingsPage() {
     save.mutate(Object.fromEntries(changed), {
       onSuccess: (r) => {
         setDraft({})
-        setMsg(`已保存 ${changed.length} 项 · ${r.note}`)
+        // ★ 通用 note 说「即时生效」，但 critic 开关只在下一轮会话求值，必须如实补一句
+        const later = changed.some(([k]) => k === 'INKLOOM_CRITIC')
+          ? '；一致性检查对下次会话生效'
+          : ''
+        setMsg(`已保存 ${changed.length} 项 · ${r.note}${later}`)
       },
       onError: (e) => setMsg(e.message),
     })

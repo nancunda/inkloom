@@ -833,9 +833,12 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     name: 'update_task',
     label: '更新任务状态',
     description:
-      '开始/完成/卡住一个任务。done 时用 artifacts 报实际产出的文件相对路径（会逐个校验存在）。',
+      '开始/完成/卡住一个任务。done 时用 artifacts 报实际产出的文件相对路径（会逐个校验存在）；review/free 这类不产文件的任务用 note 写结论代替。',
     parameters: UPDATE_TASK,
-    execute: async (_id, params) => {
+    execute: async (_id, params, signal) => {
+      // ★ 停止后不能再写任务状态：critic 会把窗口拉长到分钟级，而工具本身不会被执行器取消
+      const aborted = (): boolean => signal?.aborted === true
+      if (aborted()) return fail('运行已停止，没有写入任务状态。')
       const bundle = await loadBundle(deps)
       if (bundle === null) return fail('还没有计划。先调用 write_plan。')
       const task = bundle.plan.tasks.find((t) => t.id === params.taskId)
@@ -856,19 +859,35 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           if (rel.includes('..') || rel.startsWith('/') || rel.startsWith('\\')) {
             return fail(`产物路径不合法：${rel}`)
           }
-          if ((await readIfExists(join(ctx.root, rel))) === null) {
-            return fail(`产物不存在：${rel}。只填实际写出的文件路径。`)
+          try {
+            if ((await readIfExists(join(ctx.root, rel))) === null) {
+              return fail(`产物不存在：${rel}。只填实际写出的文件路径。`)
+            }
+          } catch (e) {
+            // ★ 模型常把目录当文件填（chapters/ch-005、world）；给可执行提示，不报裸 EISDIR
+            const msg = (e as Error).message
+            return fail(
+              msg.includes('EISDIR')
+                ? `产物要填具体文件，不是目录：${rel}。`
+                : `读产物失败：${rel}（${msg}）`,
+            )
           }
         }
       }
 
       let criticNote = ''
       if (params.status === 'done' && deps.critic !== undefined) {
-        // ★ 空产物会绕过检查（模型只要不填 artifacts 就能拿到「通过」），所以直接拦下
+        // ★ review/free 任务按设计不产文件：用 note 当唯一证据，但不能什么都不交
+        const fileBearing = task.skill !== 'review' && task.skill !== 'free'
         if (artifacts.length === 0) {
-          return fail(
-            'done 时必须用 artifacts 列出实际产出的文件；没有产物不能标记完成（也会绕过一致性检查）。',
-          )
+          if (fileBearing) {
+            return fail(
+              'done 时必须用 artifacts 列出实际产出的文件；没有产物不能标记完成（也会绕过一致性检查）。',
+            )
+          }
+          if ((params.note ?? cur.summary ?? '').trim().length === 0) {
+            return fail('这类任务不产出文件，done 时必须用 note 写清结论，供一致性检查核对。')
+          }
         }
         let verdict: CriticVerdict
         try {
@@ -906,6 +925,8 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         }
       }
 
+      // ★ 同一检查窗口内被停止：不写状态，避免把 finalizePlanOnRunEnd 写的 aborted/blocked 覆盖回去
+      if (aborted()) return fail('运行已停止，没有写入任务状态。')
       const next =
         params.status === 'done'
           ? {
@@ -1037,6 +1058,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
               scenes: r.scenes.map((s) => ({
                 sceneNo: s.sceneNo,
                 version: s.version,
+                path: s.relPath,
                 words: s.wordCount,
               })),
               warnings: r.warnings,

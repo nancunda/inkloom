@@ -77,11 +77,11 @@ function buildTools(critic?: (input: CriticInput) => Promise<CriticVerdict>): Ag
 }
 
 /** 提交并批准一份只含一个「无审阅」任务的计划，把任务推到 doing */
-async function startDoingTask(): Promise<void> {
+async function startDoingTask(skill: 'world' | 'review' = 'world'): Promise<void> {
   const written = await tool('write_plan').execute('c1', {
     title: '开篇计划',
     goal: '把骨架搭起来',
-    tasks: [{ id: 'world', title: '世界', skill: 'world', brief: '写规则', review: 'none' }],
+    tasks: [{ id: 'world', title: '世界', skill, brief: '写规则', review: 'none' }],
   })
   expect(written.isError).toBeFalsy()
   const id = planId as string
@@ -268,6 +268,70 @@ describe('update_task(done) 的 critic 门禁', () => {
     expect(textOf(r)).toContain('统一用「掌门」')
     const state = await readPlanState(root, planId as string)
     expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('done')
+  })
+
+  it('★ review 任务不产文件：note 就是可核对的结论，可以完成', async () => {
+    await startDoingTask('review')
+    // 用对象属性而不是局部变量：TS 不会把回调里的赋值当窄化来源
+    const seen: { input: CriticInput | null } = { input: null }
+    tools = buildTools(async (input) => {
+      seen.input = input
+      return { kind: 'passed', warnings: [], suggestions: [] }
+    })
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      note: '通读第 3 章：节奏前松后紧，建议砍掉第二场',
+    })
+    expect(r.isError).toBeFalsy()
+    expect(seen.input?.artifacts).toEqual([])
+    expect(seen.input?.summary).toContain('通读第 3 章')
+    const state = await readPlanState(root, planId as string)
+    expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('done')
+  })
+
+  it('★ review 任务既不产文件也不写 note → 仍然拦住（没有可核对的结论）', async () => {
+    await startDoingTask('review')
+    tools = buildTools(async () => ({ kind: 'passed', warnings: [], suggestions: [] }))
+    const r = await tool('update_task').execute('c1', { taskId: 'world', status: 'done' })
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toContain('note')
+    const state = await readPlanState(root, planId as string)
+    expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('doing')
+  })
+
+  it('★ 运行已停止（signal aborted）→ 不跑 critic、不写状态', async () => {
+    await startDoingTask()
+    const before = await readPlanState(root, planId as string)
+    let called = 0
+    tools = buildTools(async () => {
+      called += 1
+      return { kind: 'passed', warnings: [], suggestions: [] }
+    })
+    const ac = new AbortController()
+    ac.abort()
+    const r = await tool('update_task').execute(
+      'c1',
+      { taskId: 'world', status: 'done', artifacts: ['world/note.md'] },
+      ac.signal,
+    )
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toContain('运行已停止')
+    expect(called).toBe(0)
+    const after = await readPlanState(root, planId as string)
+    expect(after?.updatedAt).toBe(before?.updatedAt)
+  })
+
+  it('★ 产物填成目录 → 给可执行提示，不是裸 EISDIR', async () => {
+    await startDoingTask()
+    tools = buildTools(async () => ({ kind: 'passed', warnings: [], suggestions: [] }))
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      artifacts: ['world'],
+    })
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toContain('不是目录')
   })
 })
 
