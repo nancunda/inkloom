@@ -14,6 +14,7 @@ import { libraryRoutes } from './routes/library.js'
 import { loreRoutes } from './routes/lore.js'
 import { ontologyRoutes } from './routes/ontology.js'
 import { read } from './routes/read.js'
+import { sessionRoutes } from './routes/sessions.js'
 import { settings } from './routes/settings.js'
 
 /**
@@ -38,6 +39,7 @@ export function createApp(deps: ActionDeps = {}): Hono {
   app.route('/api', ontologyRoutes)
   app.route('/api', checkpoints)
   app.route('/api', agentRoutes)
+  app.route('/api', sessionRoutes)
   app.route('/api', settings)
   app.route('/api', createActions(deps))
 

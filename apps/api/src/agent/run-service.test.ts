@@ -12,7 +12,7 @@ import {
   writePlanState,
 } from '../storage/plans.js'
 import { loadMessageSnapshot } from './history.js'
-import { readSessionMeta } from './session-store.js'
+import { readSessionMeta, writeSessionMeta } from './session-store.js'
 
 interface FakeEvent {
   type: string
@@ -129,9 +129,11 @@ const {
   hasLiveAgentRun,
   resetRunsForTest,
   resumeAgentRun,
+  resumeSession,
   reviewAgentRun,
   sendAgentMessage,
   startAgentRun,
+  startSession,
   stopAgentRun,
 } = await import('./run-service.js')
 
@@ -822,6 +824,57 @@ describe('会话绑定', () => {
 
   it('★ legacy 会话不能续接', async () => {
     await expect(startAgentRun('x', { sessionId: 'lg_ar_abc' })).rejects.toThrow(/只读/)
+  })
+
+  it('★ startSession 返回 meta（标题取 goal）', async () => {
+    const { run, meta } = await startSession('写个开头')
+    expect(meta.id).toBe(run.sessionId)
+    expect(meta.title).toBe('写个开头')
+    stopAgentRun(run.id)
+  })
+
+  it('★ resumeSession 用快照重建上下文，并把作者这句话作为本轮输入', async () => {
+    const first = await startAgentRun('写开头', { mode: 'new' })
+    const before = lastAgent()
+    before.state.messages.push({ role: 'user', content: '第一轮的话', timestamp: 1 })
+    before.done()
+    await vi.waitFor(async () => {
+      expect((await readSessionMeta(h.root, first.sessionId))?.status).toBe('done')
+    })
+    const saved = await loadMessageSnapshot(h.root, first.sessionId)
+    expect(saved?.messages.some((m) => JSON.stringify(m).includes('第一轮的话'))).toBe(true)
+
+    // 模拟进程重启：内存里的 run 没了，只能从磁盘续接
+    clearRuns()
+    const resumed = await resumeSession(first.sessionId, '接着写第二段')
+    const after = lastAgent()
+    expect(
+      after.opts.initialState.messages?.some((m) => JSON.stringify(m).includes('第一轮的话')),
+    ).toBe(true)
+    const events = getAgentRun(resumed.id)?.events ?? []
+    expect(events.some((e) => e.type === 'user.message' && e.text === '接着写第二段')).toBe(true)
+    stopAgentRun(resumed.id)
+  })
+
+  it('★ 等审批的会话不能走续接（要在原 run 上处理）', async () => {
+    await writeSessionMeta(h.root, {
+      id: 'cs_wait000000',
+      title: '等审批',
+      goal: 'g',
+      status: 'waiting_review',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      tokens: 0,
+      steps: 0,
+      subagentCalls: 0,
+      planId: null,
+      planTitle: null,
+      planDone: 0,
+      planTotal: 0,
+      runIds: [],
+      resumable: false,
+    })
+    await expect(resumeSession('cs_wait000000', '继续')).rejects.toThrow(/等待审批/)
   })
 
   it('★ 续接 run 一开跑就把 meta 置为 running（否则会被当成可删除）', async () => {

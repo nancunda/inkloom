@@ -20,7 +20,13 @@ import {
   decideCritic,
   parseCriticReport,
 } from './critic.js'
-import { compactMessages, saveMessageSnapshot, sessionDir, stripSystemMessages } from './history.js'
+import {
+  compactMessages,
+  loadMessageSnapshot,
+  saveMessageSnapshot,
+  sessionDir,
+  stripSystemMessages,
+} from './history.js'
 import { deriveGate } from './plan-gate.js'
 import { buildAgentPrompt, buildPlanRevisePrompt, buildTaskPrompt } from './prompt.js'
 import type { AgentRoleId } from './roles.js'
@@ -664,6 +670,8 @@ export async function startAgentRun(
     sessionId?: string
     /** 续接时的历史消息（会自动剥掉旧 system） */
     messages?: AgentMessage[]
+    /** 本轮要跑的作者原话（续接时用，替代默认的开场 prompt） */
+    prompt?: string
   } = {},
 ): Promise<AgentRunSnapshot> {
   const { root, project } = getContext()
@@ -905,7 +913,7 @@ export async function startAgentRun(
   emit(run, { type: 'run.started', goal })
   // ★ 只给了 sessionId 却没给 messages：不能拿空快照覆盖掉已有历史
   if (!(options.sessionId !== undefined && options.messages === undefined)) {
-    void persistSessionMeta(run)
+    await persistSessionMeta(run)
   }
 
   if (resumable !== null) {
@@ -945,8 +953,57 @@ export async function startAgentRun(
 上一次会话留下了未完成的计划《${resumable.title}》（id=${resumable.id}）。请 read_book 后继续：用 update_plan 修订并 request_review(kind="plan")，不要重新 write_plan。`
   }
 
-  void drive(run, initialPrompt)
+  void drive(
+    run,
+    options.prompt === undefined
+      ? initialPrompt
+      : `${initialPrompt}\n\n# 作者刚说\n${options.prompt}`,
+  )
+  if (options.prompt !== undefined) emit(run, { type: 'user.message', text: options.prompt })
   return snapshot(run)
+}
+
+/**
+ * 新建会话：返回 run 与它的会话索引（写盘已在 startAgentRun 里 await 过）。
+ */
+export async function startSession(
+  goal: string,
+  mode: 'new' | 'resume' | 'replan' = 'new',
+): Promise<{ run: AgentRunSnapshot; meta: AgentSessionMeta }> {
+  const run = await startAgentRun(goal, { mode })
+  const { root } = getContext()
+  const meta = await readSessionMeta(root, run.sessionId)
+  if (meta === null) throw new InkloomError('CONFLICT', '会话元信息创建失败')
+  return { run, meta }
+}
+
+/**
+ * 真续接：用 messages 快照重建 Agent，再把作者这句话当作本轮输入。
+ * ★ 正在跑/等审批的会话不走这里（需要在原 run 上处理）。
+ */
+export async function resumeSession(sessionId: string, text: string): Promise<AgentRunSnapshot> {
+  const { root } = getContext()
+  if (isLegacyId(sessionId)) {
+    throw new InkloomError('CONFLICT', '历史记录只读，不能续接')
+  }
+  if (hasLiveAgentRun()) {
+    throw new InkloomError('CONFLICT', '还有进行中的会话，先停止再继续别的会话')
+  }
+  const meta = await readSessionMeta(root, sessionId)
+  if (meta === null) throw new InkloomError('NOT_FOUND', `会话 ${sessionId} 不存在`)
+  if (meta.status === 'running' || meta.status === 'waiting_review') {
+    throw new InkloomError('CONFLICT', '会话还在运行或等待审批，先在原会话里处理')
+  }
+  const snapshot = await loadMessageSnapshot(root, sessionId)
+  if (snapshot === null) {
+    throw new InkloomError('CONFLICT', '这个会话没有可续接的记录（消息快照缺失）')
+  }
+  return startAgentRun(meta.goal, {
+    mode: 'resume',
+    sessionId,
+    messages: snapshot.messages,
+    prompt: text,
+  })
 }
 
 /**
