@@ -423,7 +423,7 @@ export interface AgentRunBudget {
   subagentCalls: number
 }
 
-export type AgentEvent =
+export type AgentEvent = { runId: string } & (
   | { seq: number; at: string; type: 'run.started'; goal: string }
   | { seq: number; at: string; type: 'user.message'; text: string }
   | { seq: number; at: string; type: 'thinking.delta'; text: string }
@@ -498,9 +498,12 @@ export type AgentEvent =
   | { seq: number; at: string; type: 'run.failed'; error: string }
   | { seq: number; at: string; type: 'run.stopped' }
   | { seq: number; at: string; type: 'ping' }
+)
 
 export interface AgentRun {
   id: string
+  /** 所属会话：多次运行共享同一个会话 */
+  sessionId: string
   goal: string
   status: AgentRunStatus
   startedAt: string

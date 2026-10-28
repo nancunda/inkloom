@@ -10,6 +10,8 @@ import {
   writePlanDef,
   writePlanState,
 } from '../storage/plans.js'
+import { loadMessageSnapshot } from './history.js'
+import { readSessionMeta } from './session-store.js'
 
 interface FakeEvent {
   type: string
@@ -23,7 +25,7 @@ interface FakeTool {
 
 interface FakeAgent {
   opts: { initialState: { tools: FakeTool[] } }
-  state: { errorMessage?: string }
+  state: { errorMessage?: string; messages: unknown[] }
   promptCalls: number
   prompts: string[]
   steers: string[]
@@ -42,7 +44,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@earendil-works/pi-agent-core', () => {
   class FakeAgentImpl {
     opts: { initialState: { tools: FakeTool[] } }
-    state: { errorMessage?: string } = {}
+    state: { errorMessage?: string; messages: unknown[] } = { messages: [] }
     promptCalls = 0
     prompts: string[] = []
     steers: string[] = []
@@ -753,6 +755,36 @@ describe('子智能体事件', () => {
     expect(result.isError).toBe(true)
     expect(h.agents).toHaveLength(1)
     stopAgentRun(started.id)
+  })
+})
+
+describe('会话绑定', () => {
+  it('★ 事件带 runId，快照带 sessionId', async () => {
+    const started = await startAgentRun('目标', { mode: 'new' })
+    expect(started.sessionId).toMatch(/^cs_/)
+    const snap = getAgentRun(started.id)
+    expect(snap?.sessionId).toBe(started.sessionId)
+    expect(snap?.events.every((e) => e.runId === started.id)).toBe(true)
+    stopAgentRun(started.id)
+  })
+
+  it('★ 会话在磁盘上留下 meta 与 messages 快照', async () => {
+    const started = await startAgentRun('目标', { mode: 'new' })
+    const agent = lastAgent()
+    agent.state.messages.push({ role: 'user', content: '你好', timestamp: 1 })
+    agent.emit({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'text', text: '收到' }] },
+    })
+    agent.emit({ type: 'agent_end' })
+    agent.done()
+    await vi.waitFor(async () => {
+      const meta = await readSessionMeta(h.root, started.sessionId)
+      expect(meta?.title).toBe('目标')
+      expect(meta?.status).toBe('done')
+    })
+    const snap = await loadMessageSnapshot(h.root, started.sessionId)
+    expect(snap?.messages.length).toBeGreaterThan(0)
   })
 })
 

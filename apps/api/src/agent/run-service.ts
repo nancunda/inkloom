@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
-import { Agent, type AgentTool, type AgentEvent as PiEvent } from '@earendil-works/pi-agent-core'
+import {
+  Agent,
+  type AgentMessage,
+  type AgentTool,
+  type AgentEvent as PiEvent,
+} from '@earendil-works/pi-agent-core'
 import { createModels } from '@earendil-works/pi-ai'
 import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
 import type { Plan } from '@inkloom/shared'
@@ -9,7 +13,6 @@ import { InkloomError, isPlanComplete, nextOpenTask } from '@inkloom/shared'
 import { getContext, peekContext } from '../services/context.js'
 import { clearCurrentPlan, loadPlan, readCurrentPlan, writePlanState } from '../storage/plans.js'
 import { writeQueue } from '../storage/queue.js'
-import { agentRunDir } from './book-snapshot.js'
 import {
   type CriticInput,
   type CriticVerdict,
@@ -17,9 +20,18 @@ import {
   decideCritic,
   parseCriticReport,
 } from './critic.js'
+import { compactMessages, saveMessageSnapshot, sessionDir, stripSystemMessages } from './history.js'
 import { deriveGate } from './plan-gate.js'
 import { buildAgentPrompt, buildPlanRevisePrompt, buildTaskPrompt } from './prompt.js'
 import type { AgentRoleId } from './roles.js'
+import {
+  type AgentSessionMeta,
+  defaultTitle,
+  newSessionId,
+  readSessionMeta,
+  sessionJournalPath,
+  writeSessionMeta,
+} from './session-store.js'
 import { createSubagentRunner, type SubagentResult } from './subagent.js'
 import { type AgentGate, createAgentTools, type RunBudget } from './tools.js'
 
@@ -71,10 +83,12 @@ export type AgentStreamPayload =
   | { type: 'run.stopped' }
   | { type: 'ping' }
 
-export type AgentStreamEvent = AgentStreamPayload & { seq: number; at: string }
+export type AgentStreamEvent = AgentStreamPayload & { seq: number; at: string; runId: string }
 
 export interface AgentRunSnapshot {
   id: string
+  /** 所属会话：多次运行共享同一个会话 */
+  sessionId: string
   goal: string
   status: AgentRunStatus
   startedAt: string
@@ -90,6 +104,8 @@ export interface AgentRunSnapshot {
 
 interface AgentRun {
   id: string
+  /** 所属会话：多次运行共享同一个会话，journal 与快照都按会话落盘 */
+  sessionId: string
   goal: string
   /** 归属：run 只能在创建它的书里被读取、审阅、续聊（切书后不允许跨书写入） */
   root: string
@@ -119,6 +135,8 @@ interface AgentRun {
   stallTurns: number
   /** 正在跑的子体停止钩子：主 Agent.abort() 管不到独立子体 */
   childAborts: Set<() => void>
+  /** 上一次写 meta 的时间：长 run 靠它节流刷新，避免被当成崩溃残留 */
+  metaAt: number
 }
 
 const runs = new Map<string, AgentRun>()
@@ -237,7 +255,12 @@ function messageText(message: unknown): { text: string; thinking: string } {
 
 function emit(run: AgentRun, event: AgentStreamPayload, journal = true): void {
   run.seq += 1
-  const full = { ...event, seq: run.seq, at: new Date().toISOString() } as AgentStreamEvent
+  const full = {
+    ...event,
+    seq: run.seq,
+    at: new Date().toISOString(),
+    runId: run.id,
+  } as AgentStreamEvent
   run.events.push(full)
   if (run.events.length > 5000) run.events.splice(0, run.events.length - 5000)
   if (journal) {
@@ -252,6 +275,11 @@ function emit(run: AgentRun, event: AgentStreamPayload, journal = true): void {
     } catch {
       // 单个订阅者异常不能影响 run
     }
+  }
+  // ★ 长 run 中途也要刷 meta：超过 10 分钟没更新会被当成崩溃残留，允许被改名/删除
+  if (journal && Date.now() - run.metaAt > 30_000) {
+    run.metaAt = Date.now()
+    void persistSessionMeta(run)
   }
 }
 
@@ -336,6 +364,7 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
   // 1. 本轮显式设了门禁（agent_end 已写入 run.gate）→ 等作者
   if (run.gate !== null) {
     run.status = 'waiting_review'
+    void persistSessionMeta(run)
     return
   }
 
@@ -359,6 +388,7 @@ async function drive(run: AgentRun, prompt: string): Promise<void> {
       run.gate = gate
       run.status = 'waiting_review'
       emit(run, { type: 'gate.waiting', gate })
+      void persistSessionMeta(run)
       return
     }
 
@@ -511,6 +541,48 @@ async function revise(run: AgentRun, gate: AgentGate, feedback: string): Promise
 function finishRun(run: AgentRun): void {
   if (activeRunId === run.id) activeRunId = null
   if (run.gate === null) run.finishedAt ??= new Date().toISOString()
+  void persistSessionMeta(run)
+}
+
+/** 把 run 的当前状态写成会话索引；失败不影响 run 收尾 */
+async function persistSessionMeta(run: AgentRun): Promise<void> {
+  try {
+    const plan = run.planId === null ? null : await loadPlan(run.root, run.planId).catch(() => null)
+    const prev = await readSessionMeta(run.root, run.sessionId)
+    const now = new Date().toISOString()
+    const done = plan?.tasks.filter((t) => t.status === 'done').length ?? 0
+    const meta: AgentSessionMeta = {
+      id: run.sessionId,
+      title: prev?.title ?? defaultTitle(run.goal),
+      goal: run.goal,
+      status: run.status,
+      createdAt: prev?.createdAt ?? run.startedAt,
+      updatedAt: now,
+      tokens: run.tokens,
+      steps: run.budget.steps,
+      subagentCalls: run.budget.subagentCalls,
+      planId: run.planId,
+      planTitle: plan?.title ?? prev?.planTitle ?? null,
+      planDone: done,
+      planTotal: plan?.tasks.length ?? 0,
+      runIds: [...new Set([...(prev?.runIds ?? []), run.id])],
+      resumable: run.status !== 'running' && run.status !== 'waiting_review',
+    }
+    await writeSessionMeta(run.root, meta)
+    await saveMessageSnapshot(run.root, run.sessionId, {
+      version: 1,
+      savedAt: now,
+      sessionId: run.sessionId,
+      runId: run.id,
+      messages: run.agent.state.messages ?? [],
+    })
+  } catch (e) {
+    const message = (e as Error).message
+    // 书目录已被删/切走时写不进去是正常的；其余错误才值得告警
+    if (!message.includes('ENOENT')) {
+      console.warn(`[agent] 写会话索引失败：${message}`)
+    }
+  }
 }
 
 /**
@@ -571,7 +643,13 @@ async function reopenAbortedPlan(root: string, plan: Plan): Promise<void> {
 
 export async function startAgentRun(
   goal: string,
-  options: { mode?: 'new' | 'resume' | 'replan' } = {},
+  options: {
+    mode?: 'new' | 'resume' | 'replan'
+    /** 续接时沿用旧会话；不传则新建 */
+    sessionId?: string
+    /** 续接时的历史消息（会自动剥掉旧 system） */
+    messages?: AgentMessage[]
+  } = {},
 ): Promise<AgentRunSnapshot> {
   const { root, project } = getContext()
   if (activeRunId !== null) {
@@ -624,8 +702,9 @@ export async function startAgentRun(
       : null
 
   const id = newRunId()
-  const journal = join(agentRunDir(root), `${id}.jsonl`)
-  await mkdir(agentRunDir(root), { recursive: true })
+  const sessionId = options.sessionId ?? newSessionId()
+  const journal = sessionJournalPath(root, sessionId)
+  await mkdir(sessionDir(root), { recursive: true })
 
   let run!: AgentRun
   // ★ runner 需要「工具全集」，工具又需要 runner：用惰性 getter 打破构造期循环。
@@ -739,9 +818,18 @@ export async function startAgentRun(
       model,
       thinkingLevel: 'low',
       tools: tools as AgentTool[],
+      // ★ 续接：只恢复作者与模型的对话，system 由当前代码重建（工具集会变）
+      ...(options.messages === undefined
+        ? {}
+        : { messages: stripSystemMessages(options.messages) }),
     },
     streamFn: models().streamSimple.bind(models()),
     toolExecution: 'sequential',
+    // ★ 长会话逐轮裁剪：保留 system，其余按预算压缩（不会拆散 toolCall 配对）
+    transformContext: async (current) => {
+      const system = current.filter((m) => (m as { role?: string }).role === 'system')
+      return [...system, ...compactMessages(current)]
+    },
     beforeToolCall: async () => {
       if (budget.steps >= budget.maxSteps) {
         return {
@@ -756,6 +844,7 @@ export async function startAgentRun(
 
   run = {
     id,
+    sessionId,
     goal,
     root,
     projectId: project.id,
@@ -779,12 +868,14 @@ export async function startAgentRun(
     lastPlanSignature: '',
     stallTurns: 0,
     childAborts,
+    metaAt: Date.now(),
   }
 
   agent.subscribe((e) => handlePiEvent(run, e))
   runs.set(id, run)
   activeRunId = id
   emit(run, { type: 'run.started', goal })
+  void persistSessionMeta(run)
 
   if (resumable !== null) {
     // 中止的计划：作者点「继续执行」就是显式恢复，先把状态救回来再续跑
@@ -798,6 +889,7 @@ export async function startAgentRun(
         run.gate = gate
         run.status = 'waiting_review'
         emit(run, { type: 'gate.waiting', gate })
+        void persistSessionMeta(run)
         return snapshot(run)
       }
     }
@@ -1034,6 +1126,7 @@ export function sendAgentMessage(id: string, text: string): AgentRunSnapshot {
 function snapshot(run: AgentRun): AgentRunSnapshot {
   return {
     id: run.id,
+    sessionId: run.sessionId,
     goal: run.goal,
     status: run.status,
     startedAt: run.startedAt,
