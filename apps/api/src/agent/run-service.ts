@@ -29,6 +29,7 @@ import {
   defaultTitle,
   isLegacyId,
   newSessionId,
+  readSessionMeta,
   sessionJournalPath,
   updateSessionMeta,
 } from './session-store.js'
@@ -556,14 +557,19 @@ async function persistSessionMeta(run: AgentRun): Promise<void> {
       // ★ 续接的会话已被删：不复活（否则列表里会冒出一个打不开的空会话）
       if (prev === null && run.adopted) return null
       const now = new Date().toISOString()
-      // ★ 同一会话可能先后有过多个 run：只有最后一个 run 有权改状态，
-      //    否则旧 run 的收尾会把新 run 的 running 覆盖成 done
-      const ownsStatus = prev === null || prev.runIds.at(-1) === run.id
+      if (prev !== null) {
+        // ★ 本 run 首次落盘（还不在 runIds 里）或就是最新 run 时，才有权写状态。
+        //    旧 run 的收尾只登记自己，不改状态与进度，否则会把新 run 的 running 覆盖成 done。
+        const owning = !prev.runIds.includes(run.id) || prev.runIds.at(-1) === run.id
+        if (!owning) {
+          return { ...prev, updatedAt: now, runIds: [...new Set([...prev.runIds, run.id])] }
+        }
+      }
       return {
         id: run.sessionId,
         title: prev?.title ?? defaultTitle(run.goal),
         goal: run.goal,
-        status: ownsStatus ? run.status : prev.status,
+        status: run.status,
         createdAt: prev?.createdAt ?? run.startedAt,
         updatedAt: now,
         tokens: run.tokens,
@@ -574,9 +580,7 @@ async function persistSessionMeta(run: AgentRun): Promise<void> {
         planDone: done,
         planTotal: plan?.tasks.length ?? 0,
         runIds: [...new Set([...(prev?.runIds ?? []), run.id])],
-        resumable: ownsStatus
-          ? run.status !== 'running' && run.status !== 'waiting_review'
-          : prev.resumable,
+        resumable: run.status !== 'running' && run.status !== 'waiting_review',
       }
     })
     if (meta === null) return
@@ -718,6 +722,9 @@ export async function startAgentRun(
 
   const id = newRunId()
   const sessionId = options.sessionId ?? newSessionId()
+  // ★ 只有磁盘上真的存在才算「续接」：客户端传了个新 id 时仍要正常建索引
+  const adopted =
+    options.sessionId !== undefined && (await readSessionMeta(root, sessionId)) !== null
   const journal = sessionJournalPath(root, sessionId)
   await mkdir(sessionDir(root), { recursive: true })
 
@@ -889,7 +896,7 @@ export async function startAgentRun(
     stallTurns: 0,
     childAborts,
     metaAt: Date.now(),
-    adopted: options.sessionId !== undefined,
+    adopted,
   }
 
   agent.subscribe((e) => handlePiEvent(run, e))

@@ -824,6 +824,24 @@ describe('会话绑定', () => {
     await expect(startAgentRun('x', { sessionId: 'lg_ar_abc' })).rejects.toThrow(/只读/)
   })
 
+  it('★ 续接 run 一开跑就把 meta 置为 running（否则会被当成可删除）', async () => {
+    const first = await startAgentRun('第一段', { mode: 'new' })
+    lastAgent().done()
+    await vi.waitFor(async () => {
+      expect((await readSessionMeta(h.root, first.sessionId))?.status).toBe('done')
+    })
+    const second = await startAgentRun('第二段', {
+      mode: 'resume',
+      sessionId: first.sessionId,
+      messages: [{ role: 'user', content: '继续', timestamp: 1 } as unknown as AgentMessage],
+    })
+    await vi.waitFor(async () => {
+      expect((await readSessionMeta(h.root, first.sessionId))?.status).toBe('running')
+    })
+    lastAgent().done()
+    stopAgentRun(second.id)
+  })
+
   it('★ 同一会话两次运行会累积 runIds（旧 run 不覆盖新状态的前提）', async () => {
     const first = await startAgentRun('第一段', { mode: 'new' })
     lastAgent().done()

@@ -127,7 +127,7 @@ agentRoutes.get('/agent/runs/:id/events', (c) => {
           type: 'ping',
           seq: 0,
           at: new Date().toISOString(),
-          // 前端按 `${runId}:${seq}` 去重：心跳没有 runId 会与真事件撞键
+          // 心跳也补齐 runId，保持与其他事件相同的 shape
           runId: id,
         }),
       })
