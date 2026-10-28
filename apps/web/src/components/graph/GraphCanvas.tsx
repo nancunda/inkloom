@@ -14,7 +14,7 @@ export interface GraphCanvasHandle {
   fit(): void
   runLayout(name: GraphLayoutName): void
   focus(id: string): void
-  highlight(ids: string[]): void
+  highlight(ids: string[], fit?: boolean): void
   resetHighlight(): void
   positions(): Record<string, { x: number; y: number }>
 }
@@ -23,6 +23,8 @@ interface Props {
   elements: GraphElements
   /** ★ layout / preset 只在 elements 变化时应用；运行时换布局请调句柄的 runLayout */
   layout: GraphLayoutName
+  /** 书的 content signature：一变就丢本会话坐标与高亮（旧 id 已经没意义） */
+  signature?: string
   preset?: Record<string, { x: number; y: number }> | undefined
   onSelect: (id: string | null) => void
   onContext: (id: string, at: { x: number; y: number }) => void
@@ -97,7 +99,7 @@ function applyHighlight(cy: Core, ids: string[], fit: boolean): void {
 }
 
 export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCanvas(
-  { elements, layout, preset, onSelect, onContext, onPositions },
+  { elements, layout, signature, preset, onSelect, onContext, onPositions },
   ref,
 ) {
   const boxRef = useRef<HTMLDivElement | null>(null)
@@ -112,6 +114,13 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   const posRef = useRef<Record<string, { x: number; y: number }>>({})
   /** 当前高亮集合：元素重建会携 class 一起丢掉，重建后靠它重放 */
   const hlRef = useRef<string[]>([])
+  /** 书内容变了：旧坐标与旧高亮都失效，否则新节点会跟旧位置混搭 */
+  const sigRef = useRef(signature)
+  if (sigRef.current !== signature) {
+    sigRef.current = signature
+    posRef.current = {}
+    hlRef.current = []
+  }
 
   useImperativeHandle(
     ref,
@@ -132,14 +141,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         if (cy === null) return
         const node = cy.getElementById(id)
         if (node.empty()) return
-        node.select()
+        // 只动镜头，不 select：选中态由页面管，否则画布选中块与右栏详情对不上
         cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1.1) }, { duration: 200 })
       },
-      highlight: (ids) => {
+      highlight: (ids, fit = true) => {
         hlRef.current = ids
         const cy = cyRef.current
         if (cy === null) return
-        applyHighlight(cy, ids, true)
+        applyHighlight(cy, ids, fit)
       },
       resetHighlight: () => {
         const cy = cyRef.current
@@ -186,8 +195,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 1.2) }, { duration: 200 })
     })
     cy.on('cxttap', 'node', (e: EventObject) => {
-      const at = e.target.renderedPosition() as { x: number; y: number }
-      cbRef.current.onContext(e.target.id(), at)
+      // 用指针位置而不是节点中心：否则菜单正好盖住被点的节点
+      cbRef.current.onContext(e.target.id(), e.renderedPosition as { x: number; y: number })
     })
     let saveTimer: number | undefined
     let pending: Record<string, { x: number; y: number }> | undefined

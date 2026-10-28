@@ -203,9 +203,13 @@ export function nodesWithinHops(
   return seen
 }
 
-/** 高亮用：给定节点集合，返回节点本身 + 两端都在集合内的边；其余元素交给画布淡出 */
+/**
+ * 高亮用：给定节点集合，返回真实存在的节点 + 两端都在集合内的边；其余元素交给画布淡出。
+ * ★ 集合里可能混进已被筛掉的 id（路径结果、N 跳邻居），这里必须收口，否则高亮落空还压暗全图。
+ */
 export function inducedIds(elements: GraphElements, nodeIds: ReadonlySet<string>): string[] {
-  const out = new Set<string>(nodeIds)
+  const present = new Set(elements.nodes.map((n) => n.data.id))
+  const out = new Set<string>([...nodeIds].filter((id) => present.has(id)))
   for (const e of elements.edges) {
     if (nodeIds.has(e.data.source) && nodeIds.has(e.data.target)) out.add(e.data.id)
   }

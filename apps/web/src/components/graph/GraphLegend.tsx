@@ -1,6 +1,4 @@
-import { TYPE_COLOR, TYPE_LABEL } from './graph-theme'
-
-const NODE_TYPES = ['character', 'group', 'place', 'rule', 'item', 'concept']
+import { NODE_TYPES, TYPE_COLOR, TYPE_LABEL } from './graph-theme'
 
 /** 画布左下角的图例：颜色表达类型，线型表达数据来源 */
 export function GraphLegend() {

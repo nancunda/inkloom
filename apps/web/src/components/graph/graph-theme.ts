@@ -13,6 +13,9 @@ export const TYPE_LABEL: Record<string, string> = {
   class: '类',
 }
 
+/** 可选的实例类型（类节点不算类型）：工具栏 chip 与图例共用这一份 */
+export const NODE_TYPES = Object.keys(TYPE_LABEL).filter((t) => t !== 'class')
+
 /**
  * Cytoscape 样式。
  * ★ cytoscape 自带的 index.d.ts 比运行时保守，个别属性会报类型错；只在字面量上断言，不要改成 any。

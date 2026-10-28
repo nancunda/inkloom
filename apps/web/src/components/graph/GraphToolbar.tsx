@@ -1,5 +1,5 @@
 import type { GraphLayoutName } from './GraphCanvas'
-import { TYPE_LABEL } from './graph-theme'
+import { NODE_TYPES, TYPE_LABEL } from './graph-theme'
 
 export interface PredicateOption {
   id: string
@@ -20,6 +20,8 @@ interface Props {
   hops: number
   onHops: (n: number) => void
   anchorName: string | null
+  /** 类分组框没有可数的邻边，不能当跳数锚点 */
+  anchorKind: 'class' | 'instance' | null
   pathFromName: string | null
   pathToName: string | null
   onClearPath: () => void
@@ -38,7 +40,6 @@ const LAYOUT_LABEL: Record<GraphLayoutName, string> = {
 }
 
 /** 与 TYPE_LABEL 的键保持一致；类节点不参与类型过滤 */
-const NODE_TYPES = ['character', 'group', 'place', 'rule', 'item', 'concept']
 
 const BTN =
   'rounded border border-neutral-300 px-1.5 py-0.5 text-[11px] text-neutral-600 hover:bg-neutral-100'
@@ -117,6 +118,7 @@ export function GraphToolbar(p: Props) {
         <button
           type="button"
           onClick={() => p.onTypes(new Set())}
+          aria-pressed={p.types.size === 0}
           className={chip(p.types.size === 0)}
         >
           全部
@@ -126,6 +128,7 @@ export function GraphToolbar(p: Props) {
             key={t}
             type="button"
             onClick={() => p.onTypes(toggle(p.types, t))}
+            aria-pressed={p.types.has(t)}
             className={chip(p.types.has(t))}
           >
             {TYPE_LABEL[t] ?? t}
@@ -165,7 +168,7 @@ export function GraphToolbar(p: Props) {
           <select
             value={p.hops}
             onChange={(e) => p.onHops(Number(e.target.value))}
-            disabled={p.anchorName === null}
+            disabled={p.anchorName === null || p.anchorKind === 'class'}
             className="rounded border border-neutral-300 bg-white px-1 py-0.5 text-[11px] disabled:opacity-50"
           >
             <option value={0}>不限</option>
@@ -175,7 +178,11 @@ export function GraphToolbar(p: Props) {
           </select>
         </label>
         <span className="text-[10px] text-neutral-400">
-          {p.anchorName === null ? '先点一个节点作为锚点' : `锚点：${p.anchorName}`}
+          {p.anchorKind === 'class'
+            ? '类分组框不能当锚点，点里面的实例'
+            : p.anchorName === null
+              ? '先点一个节点作为锚点'
+              : `锚点：${p.anchorName}`}
         </span>
 
         {(p.pathFromName !== null || p.pathToName !== null) && (

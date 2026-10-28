@@ -39,6 +39,8 @@ export function OntologyPage() {
   const [pathTo, setPathTo] = useState<string | null>(null)
   const [menu, setMenu] = useState<ContextMenu | null>(null)
   const canvasRef = useRef<GraphCanvasHandle | null>(null)
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const setModule = useSessionStore((s) => s.setModule)
 
   const { data: book } = useBook()
@@ -81,11 +83,29 @@ export function OntologyPage() {
   const nameOf = (id: string | null): string =>
     id === null ? '—' : (nodeNames.get(id) ?? classNames.get(id) ?? id)
 
-  // 换了筛选后，右栏不能还停在一个已经不在画布上的节点
+  // 换了筛选后，右栏与右键菜单都不能还停在一个已经不在画布上的节点
   useEffect(() => {
-    if (selected === null || data === undefined) return
-    if (!filtered.nodes.some((n) => n.data.id === selected)) setSelected(null)
-  }, [filtered, selected, data])
+    if (data === undefined) return
+    if (selected !== null && !filtered.nodes.some((n) => n.data.id === selected)) setSelected(null)
+    if (menu !== null && !filtered.nodes.some((n) => n.data.id === menu.id)) setMenu(null)
+  }, [filtered, selected, menu, data])
+
+  // 菜单不只靠点画布关闭：Esc 与点外面都收
+  useEffect(() => {
+    if (menu === null) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    const onPointer = (e: PointerEvent): void => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onPointer)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onPointer)
+    }
+  }, [menu])
 
   const hits = useMemo(() => searchNodes(filtered, search), [filtered, search])
 
@@ -107,13 +127,16 @@ export function OntologyPage() {
     [filtered, highlightNodes],
   )
 
+  // 搜索只靠 focus 运镜，高亮不再抢镜头；路径 / N 跳仍需要 fit 到子图
+  const highlightFit = path.data?.found === true || (hits.length === 0 && hops > 0)
+
   // 元素重建会清掉 class，画布自己会重放；这里只负责高亮集合变化
   useEffect(() => {
     const handle = canvasRef.current
     if (handle === null) return
-    if (highlightIds.length > 0) handle.highlight(highlightIds)
+    if (highlightIds.length > 0) handle.highlight(highlightIds, highlightFit)
     else handle.resetHighlight()
-  }, [highlightIds])
+  }, [highlightIds, highlightFit])
 
   const changeLayout = (name: GraphLayoutName): void => {
     setLayout(name)
@@ -132,9 +155,13 @@ export function OntologyPage() {
     canvasRef.current?.runLayout(layout === 'preset' ? 'cose' : layout)
   }
 
-  // 类节点不是图里的实体，路径端点只能是实例
+  // 类节点不是图里的实体：既不能作路径端点，也没法当 N 跳锚点
   const menuKind =
     menu === null ? undefined : filtered.nodes.find((n) => n.data.id === menu.id)?.data.kind
+  const anchorKind =
+    selected === null
+      ? null
+      : (filtered.nodes.find((n) => n.data.id === selected)?.data.kind ?? null)
 
   return (
     <div className="flex h-full min-h-0 w-full bg-white">
@@ -144,6 +171,7 @@ export function OntologyPage() {
         onPick={setClassId}
         issuesOnly={issuesOnly}
         onIssuesOnly={setIssuesOnly}
+        loading={data === undefined}
         stats={{
           nodes: data?.nodes.length ?? 0,
           total: data?.total ?? 0,
@@ -168,6 +196,7 @@ export function OntologyPage() {
           hops={hops}
           onHops={setHops}
           anchorName={selected === null ? null : nameOf(selected)}
+          anchorKind={anchorKind}
           pathFromName={pathFrom === null ? null : nameOf(pathFrom)}
           pathToName={pathTo === null ? null : nameOf(pathTo)}
           onClearPath={() => {
@@ -180,7 +209,7 @@ export function OntologyPage() {
           onResetPositions={resetPositions}
         />
 
-        <div className="relative min-h-0 flex-1">
+        <div ref={stageRef} className="relative min-h-0 flex-1">
           {isLoading && <p className="p-6 text-sm text-neutral-500">构建图谱…</p>}
           {error !== null && <p className="p-6 text-sm text-rose-700">{error.message}</p>}
 
@@ -221,17 +250,28 @@ export function OntologyPage() {
                 ref={canvasRef}
                 elements={filtered}
                 layout={layout}
+                signature={data.signature}
                 preset={preset}
                 onSelect={(id) => {
                   setSelected(id)
                   setMenu(null)
                 }}
-                onContext={(id, at) => setMenu({ id, x: at.x, y: at.y })}
+                onContext={(id, at) => {
+                  // 菜单宽 176、高约 132：贴边时向内钳制，不要盖到右栏
+                  const w = stageRef.current?.clientWidth ?? 0
+                  const h = stageRef.current?.clientHeight ?? 0
+                  setMenu({
+                    id,
+                    x: Math.max(0, Math.min(at.x, w - 184)),
+                    y: Math.max(0, Math.min(at.y, h - 132)),
+                  })
+                }}
                 onPositions={save}
               />
               <GraphLegend />
               {menu !== null && (
                 <div
+                  ref={menuRef}
                   className="absolute z-10 w-44 rounded border border-neutral-300 bg-white py-1 text-[11px] shadow-md"
                   style={{ left: menu.x, top: menu.y }}
                 >

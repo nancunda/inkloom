@@ -7,6 +7,8 @@ interface Props {
   onPick: (id: string | null) => void
   issuesOnly: boolean
   onIssuesOnly: (value: boolean) => void
+  /** 图谱数据还没到 vs. 真的一本空书，要分开说 */
+  loading: boolean
   stats: { nodes: number; total: number; edges: number; issues: number; truncated: boolean }
 }
 
@@ -84,7 +86,15 @@ function ClassTree({
   )
 }
 
-export function GraphSidebar({ classes, active, onPick, issuesOnly, onIssuesOnly, stats }: Props) {
+export function GraphSidebar({
+  classes,
+  active,
+  onPick,
+  issuesOnly,
+  onIssuesOnly,
+  loading,
+  stats,
+}: Props) {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50/60">
       <div className="border-b border-neutral-200 px-3 py-3">
@@ -102,8 +112,10 @@ export function GraphSidebar({ classes, active, onPick, issuesOnly, onIssuesOnly
         </label>
       </div>
       <div className="flex-1 overflow-y-auto px-2 py-3">
-        {classes.length === 0 ? (
+        {loading ? (
           <p className="px-1 text-[11px] text-neutral-400">读取类表…</p>
+        ) : classes.length === 0 ? (
+          <p className="px-1 text-[11px] text-neutral-400">还没有类。</p>
         ) : (
           <ClassTree classes={classes} active={active} onPick={onPick} />
         )}
