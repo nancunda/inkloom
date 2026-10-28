@@ -1,7 +1,7 @@
 import type { OntologyGraphData, OntologyNodeRow } from '../api/types'
 
-/** rel:<kind> 的中文（与详情栏同一口径） */
-const REL_LABEL: Record<string, string> = {
+/** rel:<kind> 的中文（与详情栏/图例同一口径，只有这一份） */
+export const REL_LABEL: Record<string, string> = {
   master: '师徒',
   disciple: '弟子',
   kin: '亲族',
@@ -11,7 +11,7 @@ const REL_LABEL: Record<string, string> = {
   lover: '情爱',
 }
 
-const TYPE_COLOR: Record<string, string> = {
+export const TYPE_COLOR: Record<string, string> = {
   character: '#1f2937',
   group: '#b45309',
   place: '#0f766e',
@@ -48,7 +48,7 @@ export interface GraphElements {
   edges: { data: GraphElementEdgeData }[]
 }
 
-function predicateLabel(predicate: string, labels: Map<string, string>): string {
+export function predicateLabel(predicate: string, labels: Map<string, string>): string {
   if (predicate.startsWith('rel:')) {
     const kind = predicate.slice(4)
     return REL_LABEL[kind] ?? kind

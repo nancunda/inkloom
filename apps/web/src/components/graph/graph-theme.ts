@@ -1,5 +1,8 @@
 import type { StylesheetJson } from 'cytoscape'
 
+// ★ 颜色与关系名只有一份：投影层写进 node.data.color，图例也读同一份，避免两边漂移
+export { predicateLabel, REL_LABEL, TYPE_COLOR } from '../../lib/graph-elements'
+
 export const TYPE_LABEL: Record<string, string> = {
   character: '人物',
   group: '组织',
@@ -8,35 +11,6 @@ export const TYPE_LABEL: Record<string, string> = {
   item: '物品',
   concept: '概念',
   class: '类',
-}
-
-export const TYPE_COLOR: Record<string, string> = {
-  character: '#1f2937',
-  group: '#b45309',
-  place: '#0f766e',
-  rule: '#be123c',
-  item: '#7c3aed',
-  concept: '#4b5563',
-  class: '#a1a1a1',
-}
-
-export const REL_LABEL: Record<string, string> = {
-  master: '师徒',
-  disciple: '弟子',
-  kin: '亲族',
-  ally: '同盟',
-  enemy: '敌对',
-  rival: '竞争',
-  lover: '情爱',
-}
-
-/** 谓词中文名；rel:* 按 kind 映射，未注册的原样输出 */
-export function predicateLabel(predicate: string, labels: Map<string, string>): string {
-  if (predicate.startsWith('rel:')) {
-    const kind = predicate.slice(4)
-    return REL_LABEL[kind] ?? kind
-  }
-  return labels.get(predicate) ?? predicate
 }
 
 /**

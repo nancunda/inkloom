@@ -39,8 +39,11 @@ export function useGraphLayout(bookId: string, signature: string) {
 
   const save = useCallback(
     (positions: Positions) => {
+      const key = keyOf(bookId, signature)
       try {
-        window.localStorage.setItem(keyOf(bookId, signature), JSON.stringify(positions))
+        // ★ 画布只上报可见节点；合并旧值，否则筛选状态下拖一下就会抹掉其余节点的坐标
+        const prev = parse(window.localStorage.getItem(key)) ?? {}
+        window.localStorage.setItem(key, JSON.stringify({ ...prev, ...positions }))
       } catch {
         // 隐私模式/配额满：布局只是便利，失败不打扰作者
       }
