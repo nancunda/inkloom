@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
+import { InkloomError } from '@inkloom/shared'
 import { atomicWrite, readIfExists } from '../storage/atomic-write.js'
 import { bookPaths } from '../storage/paths.js'
 
@@ -16,6 +17,7 @@ const DEFAULT_BUDGET = 120_000
 const DEFAULT_RECENT = 8
 const TOOL_CLIP = 500
 const ASSISTANT_CLIP = 800
+const SESSION_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /** 会话的落盘目录：`.inkloom/agent/sessions/` */
 export function sessionDir(root: string): string {
@@ -23,6 +25,10 @@ export function sessionDir(root: string): string {
 }
 
 export function messageSnapshotPath(root: string, sessionId: string): string {
+  // ★ sessionId 将来直接来自 URL path；不校验就是任意路径读写
+  if (!SESSION_ID.test(sessionId)) {
+    throw new InkloomError('INVALID_INPUT', `非法会话 id：${sessionId}`)
+  }
   return join(sessionDir(root), `${sessionId}.messages.json`)
 }
 
@@ -31,31 +37,129 @@ export function stripSystemMessages(messages: AgentMessage[]): AgentMessage[] {
   return messages.filter((m) => (m as { role?: string }).role !== 'system')
 }
 
+interface ContentBlock {
+  type?: string
+  text?: string
+  [key: string]: unknown
+}
+
+function blocksOf(message: AgentMessage): ContentBlock[] | null {
+  const content = (message as { content?: unknown }).content
+  return Array.isArray(content) ? (content as ContentBlock[]) : null
+}
+
+/** 字符口径的正文：只用于「这段文本有多长」，不参与体积预算 */
 function textOf(message: AgentMessage): string {
   const content = (message as { content?: unknown }).content
   if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
+  const blocks = blocksOf(message)
+  if (blocks === null) return ''
   let out = ''
-  for (const part of content) {
-    const text = (part as { text?: string }).text
-    if (typeof text === 'string') out += text
+  for (const block of blocks) {
+    if (typeof block.text === 'string') out += block.text
   }
   return out
 }
 
-/** 只负责拼接「截断文本 + 标注」，不判断是否需要截断（调用方已经 slice 过） */
-function withText(message: AgentMessage, clipped: string, note: string): AgentMessage {
-  const body = `${clipped}…${note}`
-  const role = (message as { role?: string }).role
-  if (role === 'toolResult' || Array.isArray((message as { content?: unknown }).content)) {
-    return { ...message, content: [{ type: 'text', text: body }] } as AgentMessage
-  }
-  return { ...message, content: body } as AgentMessage
+/** ★ 预算按整条消息的 JSON 体积算：thinking / details / 图片也占真实空间，只数字会漏 */
+function sizeOf(messages: AgentMessage[]): number {
+  let total = 0
+  for (const message of messages) total += JSON.stringify(message).length
+  return total
+}
+
+function clipText(text: string, max: number, note: string): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…${note}`
 }
 
 /**
- * 从新到旧裁剪上下文。
- * ★ 保留首条 user（作者原始目标）与最后 2 条：丢了它们，续接就接不上话。
+ * 压缩一条旧消息。
+ * ★ assistant 只留 text + toolCall：丢 thinking 是省空间，丢 toolCall 会让配对断裂、续接 400。
+ * ★ toolResult 只截 text 块，图片原样保留。
+ */
+function compressMessage(message: AgentMessage): AgentMessage {
+  const role = (message as { role?: string }).role
+  const blocks = blocksOf(message)
+  if (blocks === null) {
+    const content = (message as { content?: unknown }).content
+    if (role === 'assistant' && typeof content === 'string') {
+      return {
+        ...message,
+        content: clipText(content, ASSISTANT_CLIP, '（早期回复已压缩）'),
+      } as AgentMessage
+    }
+    return message
+  }
+  if (role !== 'assistant' && role !== 'toolResult') return message
+
+  const max = role === 'toolResult' ? TOOL_CLIP : ASSISTANT_CLIP
+  const note = role === 'toolResult' ? '（早期工具输出已压缩）' : '（早期回复已压缩）'
+  let changed = false
+  const next: ContentBlock[] = []
+  for (const block of blocks) {
+    if (role === 'assistant' && block.type === 'thinking') {
+      changed = true
+      continue
+    }
+    if (block.type === 'text' && typeof block.text === 'string') {
+      const text = clipText(block.text, max, note)
+      if (text !== block.text) changed = true
+      next.push({ ...block, text })
+      continue
+    }
+    next.push(block)
+  }
+  return changed ? ({ ...message, content: next } as AgentMessage) : message
+}
+
+function hasToolCall(message: AgentMessage): boolean {
+  if ((message as { role?: string }).role !== 'assistant') return false
+  const blocks = blocksOf(message)
+  return blocks !== null && blocks.some((b) => b.type === 'toolCall')
+}
+
+/**
+ * 按「轮」分组：assistant(toolCall) 与紧随其后的 toolResult 是一组。
+ * ★ 逐条删会拆散配对，provider 会直接 400。
+ */
+function groupMessages(messages: AgentMessage[]): AgentMessage[][] {
+  const groups: AgentMessage[][] = []
+  let i = 0
+  while (i < messages.length) {
+    const message = messages[i]
+    if (message === undefined) break
+    if (!hasToolCall(message)) {
+      groups.push([message])
+      i += 1
+      continue
+    }
+    const group = [message]
+    i += 1
+    while (i < messages.length && (messages[i] as { role?: string }).role === 'toolResult') {
+      const result = messages[i]
+      if (result !== undefined) group.push(result)
+      i += 1
+    }
+    groups.push(group)
+  }
+  return groups
+}
+
+/** 从尾部往回数，凑够 keepRecent 条消息要保留多少组 */
+function groupsToKeep(groups: AgentMessage[][], keepRecent: number): number {
+  let count = 0
+  let keep = 0
+  for (let g = groups.length - 1; g >= 0; g -= 1) {
+    keep += 1
+    count += groups[g]?.length ?? 0
+    if (count >= keepRecent) break
+  }
+  return keep
+}
+
+/**
+ * 预算内不动；超预算时压旧组、再从最旧的组开始丢。
+ * ★ 首组（作者原始目标）与最后 keepRecent 条对应的组永远保留，否则续接接不上话。
  */
 export function compactMessages(
   messages: AgentMessage[],
@@ -63,32 +167,28 @@ export function compactMessages(
 ): AgentMessage[] {
   const budget = opts.budgetChars ?? DEFAULT_BUDGET
   const keepRecent = opts.keepRecent ?? DEFAULT_RECENT
-  const total = messages.reduce((n, m) => n + textOf(m).length, 0)
-  const out = messages.map((m) => ({ ...m }))
-  if (total <= budget) return out
+  // ★ 幂等剥离：保证 index 0 是作者输入，而不是旧 system
+  const base = stripSystemMessages(messages)
+  if (sizeOf(base) <= budget) return structuredClone(base)
 
-  const keepFrom = Math.max(0, out.length - keepRecent)
-  for (let i = 1; i < keepFrom; i += 1) {
-    const m = out[i]
-    if (m === undefined) continue
-    const role = (m as { role?: string }).role
-    if (role === 'toolResult') {
-      out[i] = withText(m, textOf(m).slice(0, TOOL_CLIP), '（早期工具输出已压缩）')
-    } else if (role === 'assistant') {
-      out[i] = withText(m, textOf(m).slice(0, ASSISTANT_CLIP), '（早期回复已压缩）')
-    }
+  const groups = groupMessages(base)
+  const keep = groupsToKeep(groups, keepRecent)
+  const firstKeep = Math.max(0, groups.length - keep)
+
+  for (let g = 1; g < firstKeep; g += 1) {
+    const group = groups[g]
+    if (group !== undefined) groups[g] = group.map(compressMessage)
   }
 
-  // 压缩后仍超预算：从最旧开始丢，但保留首条与最后 2 条
-  let size = out.reduce((n, m) => n + textOf(m).length, 0)
+  let size = groups.reduce((n, group) => n + sizeOf(group), 0)
   const cursor = 1
-  while (size > budget && cursor < out.length - 2) {
-    const dropped = out[cursor]
-    if (dropped === undefined) break
-    size -= textOf(dropped).length
-    out.splice(cursor, 1)
+  while (size > budget && cursor < groups.length - keep) {
+    const removed = groups[cursor]
+    if (removed === undefined) break
+    size -= sizeOf(removed)
+    groups.splice(cursor, 1)
   }
-  return out
+  return structuredClone(groups.flat())
 }
 
 export async function saveMessageSnapshot(
@@ -96,8 +196,12 @@ export async function saveMessageSnapshot(
   sessionId: string,
   snap: MessageSnapshot,
 ): Promise<void> {
+  // ★ 文件名与文件内字段以参数为准：错传旧快照对象时不至于张冠李戴
   const body: MessageSnapshot = {
     ...snap,
+    version: 1,
+    sessionId,
+    savedAt: new Date().toISOString(),
     messages: compactMessages(stripSystemMessages(snap.messages)),
   }
   // atomicWrite 不建目录：第一次存快照时 sessions/ 还不存在

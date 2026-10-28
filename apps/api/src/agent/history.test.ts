@@ -1,11 +1,12 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   compactMessages,
   loadMessageSnapshot,
+  messageSnapshotPath,
   saveMessageSnapshot,
   stripSystemMessages,
 } from './history.js'
@@ -20,10 +21,20 @@ function assistant(text: string): AgentMessage {
     timestamp: 2,
   } as unknown as AgentMessage
 }
-function toolResult(text: string): AgentMessage {
+function assistantCall(text: string, callId: string): AgentMessage {
+  return {
+    role: 'assistant',
+    content: [
+      { type: 'text', text },
+      { type: 'toolCall', id: callId, name: 'web_search', arguments: {} },
+    ],
+    timestamp: 2,
+  } as unknown as AgentMessage
+}
+function toolResult(text: string, callId = 't1'): AgentMessage {
   return {
     role: 'toolResult',
-    toolCallId: 't1',
+    toolCallId: callId,
     toolName: 'web_search',
     content: [{ type: 'text', text }],
     timestamp: 3,
@@ -42,11 +53,20 @@ describe('stripSystemMessages', () => {
 })
 
 describe('compactMessages', () => {
-  it('★ 最近 keepRecent 条原样保留', () => {
-    const msgs = Array.from({ length: 12 }, (_, i) => user(`第 ${i} 条`))
-    const out = compactMessages(msgs, { keepRecent: 8, budgetChars: 100_000 })
-    expect(out).toHaveLength(12)
-    expect(out.at(-1)).toEqual(msgs.at(-1))
+  it('预算内原样返回（内容不变）', () => {
+    const msgs = [user('目标'), assistant('短回复')]
+    expect(compactMessages(msgs, { budgetChars: 100_000 })).toEqual(msgs)
+  })
+
+  it('★ 最近 keepRecent 条原样保留（真触发裁剪时）', () => {
+    const recent = Array.from({ length: 8 }, (_, i) => assistant(`近 ${i} ${'y'.repeat(500)}`))
+    const msgs = [
+      user('目标'),
+      ...Array.from({ length: 10 }, () => user('f'.repeat(100))),
+      ...recent,
+    ]
+    const out = compactMessages(msgs, { keepRecent: 8, budgetChars: 4000 })
+    expect(out.slice(-8)).toEqual(recent)
   })
 
   it('★ 早期的 toolResult 被截断并加标注', () => {
@@ -56,7 +76,7 @@ describe('compactMessages', () => {
       toolResult(long),
       ...Array.from({ length: 8 }, (_, i) => user(`近 ${i}`)),
     ]
-    const out = compactMessages(msgs, { keepRecent: 8, budgetChars: 1000 })
+    const out = compactMessages(msgs, { keepRecent: 8, budgetChars: 2000 })
     const early = out[1] as { content: { text: string }[] }
     expect(early.content[0]?.text.length).toBeLessThan(600)
     expect(early.content[0]?.text).toContain('早期工具输出已压缩')
@@ -72,6 +92,43 @@ describe('compactMessages', () => {
     expect(out.at(-1)).toEqual(msgs.at(-1))
     expect(out.length).toBeLessThan(msgs.length)
   })
+
+  it('★ 落在最近窗口里的 toolCall 与 toolResult 必须同存（拆散会让续接 400）', () => {
+    const msgs = [
+      user('目标'),
+      ...Array.from({ length: 20 }, () => user('f'.repeat(100))),
+      assistantCall('查一下', 'c1'),
+      toolResult('结果', 'c1'),
+      user('最后'),
+    ]
+    const out = compactMessages(msgs, { keepRecent: 3, budgetChars: 500 })
+    const texts = out.map((m) => JSON.stringify(m))
+    expect(texts.some((t) => t.includes('"c1"'))).toBe(true)
+    expect(texts.filter((t) => t.includes('"c1"')).length).toBe(2)
+  })
+
+  it('★ 落在旧区的 toolCall 与 toolResult 必须同删（不留半对）', () => {
+    const msgs = [
+      user('目标'),
+      assistantCall('查一下', 'c1'),
+      toolResult('结果', 'c1'),
+      ...Array.from({ length: 20 }, () => user('f'.repeat(100))),
+      user('最后'),
+    ]
+    const out = compactMessages(msgs, { keepRecent: 3, budgetChars: 500 })
+    const texts = out.map((m) => JSON.stringify(m))
+    expect(texts.filter((t) => t.includes('"c1"')).length).toBe(0)
+  })
+
+  it('消息数少于 keepRecent 时不崩', () => {
+    const msgs = [user('目标'), assistant('y'.repeat(5000))]
+    const out = compactMessages(msgs, { keepRecent: 8, budgetChars: 1000 })
+    expect(out[0]).toEqual(msgs[0])
+  })
+
+  it('空数组返回空数组', () => {
+    expect(compactMessages([], { budgetChars: 1 })).toEqual([])
+  })
 })
 
 describe('message snapshot', () => {
@@ -83,7 +140,7 @@ describe('message snapshot', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('★ 写入后可读回，且目录自动创建', async () => {
+  it('★ 写入后可读回，路径与版本号正确', async () => {
     await saveMessageSnapshot(root, 'cs_abc', {
       version: 1,
       savedAt: new Date().toISOString(),
@@ -93,10 +150,24 @@ describe('message snapshot', () => {
     })
     const back = await loadMessageSnapshot(root, 'cs_abc')
     expect(back?.messages).toHaveLength(1)
+    expect(back?.version).toBe(1)
+    expect(back?.sessionId).toBe('cs_abc')
+    expect(messageSnapshotPath(root, 'cs_abc')).toContain(
+      join('.inkloom', 'agent', 'sessions', 'cs_abc.messages.json'),
+    )
   })
 
   it('没有快照时返回 null', async () => {
     expect(await loadMessageSnapshot(root, 'cs_none')).toBeNull()
+  })
+
+  it('★ 坏 JSON 与版本不符都返回 null（不把坏快照当历史）', async () => {
+    const file = messageSnapshotPath(root, 'cs_bad')
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, 'not json', 'utf8')
+    expect(await loadMessageSnapshot(root, 'cs_bad')).toBeNull()
+    await writeFile(file, JSON.stringify({ version: 2, messages: [] }), 'utf8')
+    expect(await loadMessageSnapshot(root, 'cs_bad')).toBeNull()
   })
 
   it('★ 存盘前就剥掉 system 并裁剪：续接时只读用户与模型的消息', async () => {
@@ -112,5 +183,10 @@ describe('message snapshot', () => {
     })
     const back = await loadMessageSnapshot(root, 'cs_strip')
     expect(back?.messages.map((m) => m.role)).toEqual(['user'])
+  })
+
+  it('★ 含路径分隔符的 sessionId 直接拒绝（不能写出去）', () => {
+    expect(() => messageSnapshotPath(root, '../evil')).toThrow(/非法会话 id/)
+    expect(() => messageSnapshotPath(root, 'a/b')).toThrow(/非法会话 id/)
   })
 })
