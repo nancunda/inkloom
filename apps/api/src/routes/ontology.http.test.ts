@@ -56,7 +56,11 @@ beforeEach(async () => {
   )
   await writeFile(
     join(dir, 'nodes.jsonl'),
-    '{"id":"grp-qingyun","type":"group","name":"青云宗","createdAt":"2026-10-27T00:00:00.000Z"}\n',
+    [
+      '{"id":"grp-qingyun","type":"group","name":"青云宗","createdAt":"2026-10-27T00:00:00.000Z"}',
+      '{"id":"grp-hall","type":"group","name":"听雪楼","createdAt":"2026-10-27T00:00:00.000Z"}',
+      '{"id":"itm-token","type":"item","name":"玄铁令","createdAt":"2026-10-27T00:00:00.000Z"}',
+    ].join('\n'),
     'utf8',
   )
   await writeFile(
@@ -65,6 +69,9 @@ beforeEach(async () => {
       '{"id":"ed-aaaaaa","from":"grp-qingyun","predicate":"instanceOf","to":"cls-sect","source":{"kind":"author"},"createdAt":"2026-10-27T00:00:00.000Z"}',
       '{"id":"ed-bbbbbb","from":"c1","predicate":"belongsTo","to":"grp-qingyun","source":{"kind":"chapter","ref":"ch-007"},"createdAt":"2026-10-27T00:00:00.000Z"}',
       '{"id":"ed-cccccc","from":"c1","predicate":"belongsTo","to":"ghost","source":{"kind":"agent"},"createdAt":"2026-10-27T00:00:00.000Z"}',
+      // 一条 2 跳链：验 maxDepth
+      '{"id":"ed-dddddd","from":"c2","predicate":"belongsTo","to":"grp-hall","source":{"kind":"author"},"createdAt":"2026-10-27T00:00:00.000Z"}',
+      '{"id":"ed-eeeeee","from":"grp-hall","predicate":"belongsTo","to":"itm-token","source":{"kind":"author"},"createdAt":"2026-10-27T00:00:00.000Z"}',
     ].join('\n'),
     'utf8',
   )
@@ -231,14 +238,58 @@ describe('/api/ontology 查询', () => {
     const j2 = (await byEdge.json()) as { nodes: { id: string }[]; edges: { id: string }[] }
     expect(j2.edges.map((e) => e.id)).toEqual(['ed-bbbbbb'])
     expect(j2.nodes.map((n) => n.id).sort()).toEqual(['c1', 'grp-qingyun'])
+
+    // 只给 from：挂在幽灵端点上的边也要返回（契约，不是 bug）
+    const byFrom = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify({ predicate: 'belongsTo', from: 'c1' }),
+    })
+    const j3 = (await byFrom.json()) as { nodes: { id: string }[]; edges: { id: string }[] }
+    expect(j3.edges.map((e) => e.id)).toEqual(['ed-bbbbbb', 'ed-cccccc'])
+    expect(j3.nodes.map((n) => n.id).sort()).toEqual(['c1', 'grp-qingyun'])
   })
 
-  it('query 体不是对象 → 400', async () => {
-    const r = await app().request('/api/ontology/query', {
+  it('★ maxDepth：2 跳路径在 1 跳时找不到；空值回落 4；上限 8', async () => {
+    const one = await app().request('/api/ontology/path?from=c2&to=itm-token&maxDepth=1')
+    expect(((await one.json()) as { found: boolean }).found).toBe(false)
+
+    const def = await app().request('/api/ontology/path?from=c2&to=itm-token')
+    expect(((await def.json()) as { found: boolean }).found).toBe(true)
+
+    const high = await app().request('/api/ontology/path?from=c2&to=itm-token&maxDepth=99')
+    expect(((await high.json()) as { found: boolean }).found).toBe(true)
+
+    const empty = await app().request('/api/ontology/path?from=c2&to=itm-token&maxDepth=')
+    expect(((await empty.json()) as { found: boolean }).found).toBe(true)
+  })
+
+  it('query 体不是对象 / 坏了 / attr 为 null → 400', async () => {
+    const bad = await app().request('/api/ontology/query', {
       method: 'POST',
       body: JSON.stringify(['x']),
     })
-    expect(r.status).toBe(400)
+    expect(bad.status).toBe(400)
+
+    const broken = await app().request('/api/ontology/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{',
+    })
+    expect(broken.status).toBe(400)
+    expect(((await broken.json()) as { error: { code: string } }).error.code).toBe('INVALID_INPUT')
+
+    // ★ attr:null 会让 core 的 Object.entries 抛错：必须挡在 400，不能落成 500
+    const nullAttr = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify({ attr: null }),
+    })
+    expect(nullAttr.status).toBe(400)
+
+    const numberAttr = await app().request('/api/ontology/query', {
+      method: 'POST',
+      body: JSON.stringify({ attr: { tier: 1 } }),
+    })
+    expect(numberAttr.status).toBe(400)
   })
 
   it('★ explain：直接边与不存在', async () => {
@@ -251,6 +302,9 @@ describe('/api/ontology 查询', () => {
     expect(j.reason).toContain('直接')
 
     const miss = await app().request('/api/ontology/explain?from=c1&predicate=ally&to=nope')
-    expect(((await miss.json()) as { found: boolean }).found).toBe(false)
+    const jm = (await miss.json()) as { found: boolean; direct: boolean; via: string[] }
+    expect(jm.found).toBe(false)
+    expect(jm.direct).toBe(false)
+    expect(jm.via).toEqual([])
   })
 })

@@ -153,9 +153,12 @@ function required(raw: string | undefined, key: string): string {
 }
 
 function depthOf(raw: string | undefined): number {
-  const n = Number(raw ?? '4')
-  if (!Number.isInteger(n)) return 4
-  return Math.min(Math.max(n, 1), 8)
+  const t = (raw ?? '').trim()
+  if (t.length === 0) return 4
+  const n = Number(t)
+  // 非整数/非正数回落默认值，与 limitOf 同口径；空值不能当成 0 再 clamp 成 1
+  if (!Number.isInteger(n) || n <= 0) return 4
+  return Math.min(n, 8)
 }
 
 ontologyRoutes.get('/ontology/path', async (c) => {
@@ -170,8 +173,19 @@ ontologyRoutes.post('/ontology/query', async (c) => {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new InkloomError('INVALID_INPUT', '请求体必须是 GraphPattern 对象')
   }
+  // ★ attr 是唯一会让 core 抛 TypeError 的字段（Object.entries(null)）：挡成 400，别落成 500
+  const pattern = body as Record<string, unknown>
+  const attr = pattern['attr']
+  if (attr !== undefined) {
+    if (attr === null || typeof attr !== 'object' || Array.isArray(attr)) {
+      throw new InkloomError('INVALID_INPUT', 'attr 必须是 { 键: 字符串值 } 对象')
+    }
+    for (const v of Object.values(attr)) {
+      if (typeof v !== 'string') throw new InkloomError('INVALID_INPUT', 'attr 的值必须是字符串')
+    }
+  }
   const { snapshot } = await getGraphData()
-  return c.json(matchPattern(snapshot, body as Parameters<typeof matchPattern>[1]))
+  return c.json(matchPattern(snapshot, pattern as Parameters<typeof matchPattern>[1]))
 })
 
 ontologyRoutes.get('/ontology/explain', async (c) => {
