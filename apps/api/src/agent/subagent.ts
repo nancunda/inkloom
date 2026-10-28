@@ -6,7 +6,7 @@ import {
   type AgentTool,
   type StreamFn,
 } from '@earendil-works/pi-agent-core'
-import { AGENT_ROLES, type AgentRoleId, toolsForRole } from './roles.js'
+import { AGENT_ROLES, type AgentRoleId, isAgentRoleId, toolsForRole } from './roles.js'
 import { clip } from './tool-result.js'
 
 export interface SubagentRequest {
@@ -78,8 +78,20 @@ export function createSubagentRunner(
   deps: SubagentRunnerDeps,
 ): (req: SubagentRequest) => Promise<SubagentResult> {
   return async function runSubagent(req: SubagentRequest): Promise<SubagentResult> {
-    const role = AGENT_ROLES[req.role]
     const id = `sa_${randomUUID().replace(/-/g, '').slice(0, 12)}`
+    // ★ 运行期校验：role 可能来自模型参数，类型系统管不到；非法值不发事件、不计数
+    if (!isAgentRoleId(req.role)) {
+      return {
+        id,
+        role: req.role,
+        ok: false,
+        steps: 0,
+        tokens: 0,
+        text: '',
+        error: `未知角色 ${req.role}`,
+      }
+    }
+    const role = AGENT_ROLES[req.role]
     deps.budget.subagentCalls += 1
     deps.onEvent({ type: 'started', id, role: role.id, task: req.task })
 
@@ -89,45 +101,31 @@ export function createSubagentRunner(
     let text = ''
     let error: string | null = null
     let timedOut = false
+    /** 步数触顶不会写 state.errorMessage，必须自己记下来，否则会以「成功但空结论」返回 */
+    let limitReason: string | null = null
 
-    const agent = new Agent({
-      initialState: {
-        systemPrompt: role.systemPrompt,
-        model: deps.model,
-        thinkingLevel: 'low',
-        tools: toolsForRole(role, deps.getTools()),
-      },
-      streamFn: deps.streamFn,
-      toolExecution: 'sequential',
-      beforeToolCall: async () => {
-        // ★ 双上限：主预算保护整场会话，角色上限保护单次子任务
-        if (deps.budget.steps >= deps.budget.maxSteps) {
-          return {
-            block: true,
-            terminate: true,
-            reason: `主会话步数预算已用尽（${deps.budget.maxSteps} 步）`,
-          }
-        }
-        if (steps >= role.maxSteps) {
-          return {
-            block: true,
-            terminate: true,
-            reason: `子任务步数上限（${role.maxSteps} 步）`,
-          }
-        }
-        deps.budget.steps += 1
-        steps += 1
-        return undefined
-      },
-    })
+    const beforeToolCall = async (_ctx: unknown, signal?: AbortSignal) => {
+      // 已 abort 的调用不会执行，不能白扣主预算
+      if (signal?.aborted === true) return undefined
+      // ★ 双上限：主预算保护整场会话，角色上限保护单次子任务
+      if (deps.budget.steps >= deps.budget.maxSteps) {
+        limitReason = `主会话步数预算已用尽（${deps.budget.maxSteps} 步）`
+        return { block: true, terminate: true, reason: limitReason }
+      }
+      if (steps >= role.maxSteps) {
+        limitReason = `子任务步数上限（${role.maxSteps} 步）`
+        return { block: true, terminate: true, reason: limitReason }
+      }
+      deps.budget.steps += 1
+      steps += 1
+      return undefined
+    }
 
-    const unsubscribe = agent.subscribe((e: AgentEvent) => {
-      if (timedOut) return
+    const onEvent = (e: AgentEvent): void => {
       if (e.type === 'message_end') {
         const msg = e.message as { role?: string; usage?: { input?: number; output?: number } }
         if (msg.role !== 'assistant') return
-        const t = assistantText(e.message)
-        if (t.length > 0) text = t
+        // ★ 超时后仍要记账：已经结算的 usage 是真实成本，不该因为 abort 而少算
         const usage = msg.usage
         if (usage !== undefined) {
           const n = (usage.input ?? 0) + (usage.output ?? 0)
@@ -136,8 +134,12 @@ export function createSubagentRunner(
             deps.onTokens(n)
           }
         }
+        if (timedOut) return
+        const t = assistantText(e.message)
+        if (t.length > 0) text = t
         return
       }
+      if (timedOut) return
       if (e.type === 'tool_execution_end') {
         const result = e.result as { content?: { text?: string }[] }
         const raw = (result.content ?? [])
@@ -153,7 +155,29 @@ export function createSubagentRunner(
           summary: clip(raw.length === 0 ? '(无输出)' : raw),
         })
       }
-    })
+    }
+
+    let agent: Agent
+    let unsubscribe: () => void
+    try {
+      agent = new Agent({
+        initialState: {
+          systemPrompt: role.systemPrompt,
+          model: deps.model,
+          thinkingLevel: 'low',
+          tools: toolsForRole(role, deps.getTools()),
+        },
+        streamFn: deps.streamFn,
+        toolExecution: 'sequential',
+        beforeToolCall,
+      })
+      unsubscribe = agent.subscribe(onEvent)
+    } catch (e) {
+      // ★ 有 started 就必须有 ended：构造失败（白名单断言、模型对象异常）也要收口
+      const msg = (e as Error).message
+      deps.onEvent({ type: 'ended', id, role: role.id, ok: false, steps, tokens, summary: '' })
+      return { id, role: role.id, ok: false, steps, tokens, text: '', error: msg }
+    }
 
     const timer = setTimeout(() => {
       timedOut = true
@@ -176,6 +200,7 @@ export function createSubagentRunner(
       const stateError = agent.state.errorMessage
       if (typeof stateError === 'string' && stateError.length > 0) error = stateError
     }
+    if (error === null && limitReason !== null) error = limitReason
 
     const trimmed =
       text.length <= MAX_TEXT ? text : `${text.slice(0, MAX_TEXT)}…（共 ${text.length} 字符）`
