@@ -1228,7 +1228,48 @@ const DELEGATE = Type.Object({
       )
 ```
 
-- [ ] **Step 6: 补 `subagentCalls` 到已有测试的 budget 字面量**
+- [ ] **Step 6: 让子智能体读得到正文（`read_element` 放行 `chapters/`）**
+
+审查发现 stylist / critic 的只读工具集拿不到正文：`read_element` 目前只允许 `characters|world|story`，而正文在 `chapters/ch-001.md` 与 `chapters/ch-001/scenes/s1.v1.md`。
+
+在 `tools.ts` 的 `read_element` 里把路径校验与读取改成：
+
+```ts
+      const rel = params.path
+      if (!/^(characters|world|story|chapters)\//.test(rel) || rel.includes('..')) {
+        return fail(`路径不可读：${rel}。只能是 characters/、world/、story/、chapters/ 下的文件`)
+      }
+      // ★ 章节是 Markdown：返回原文，不做 JSON 化（否则模型看到的是转义后的字符串）
+      if (rel.startsWith('chapters/')) {
+        const raw = await readIfExists(join(root, rel))
+        if (raw === null) return fail(`文件不存在：${rel}`)
+        const text = raw.length > 30_000 ? `${raw.slice(0, 30_000)}\n…（已截断）` : raw
+        return ok(text, { path: rel, hash: hashContent(raw), format: 'text' })
+      }
+      const data = await readElement(rel)
+      if (data === null) return fail(`文件不存在：${rel}`)
+      const raw = (await readIfExists(join(root, rel))) ?? ''
+      // ……其余不变（JSON 分支保持原样）
+```
+
+在 `apps/api/src/agent/delegate-tools.test.ts` 追加（顶部 import 补 `mkdir` / `writeFile`）：
+
+```ts
+describe('read_element 读正文', () => {
+  it('★ 章节 Markdown 原样返回，不再是「文件不存在」', async () => {
+    await mkdir(join(root, 'chapters'), { recursive: true })
+    await writeFile(join(root, 'chapters', 'ch-001.md'), '# 第 1 章\n\n林岚御剑而行。', 'utf8')
+    const r = await tool('read_element').execute('c1', { path: 'chapters/ch-001.md' })
+    expect(r.isError).toBeFalsy()
+    expect(textOf(r)).toContain('林岚御剑而行')
+  })
+})
+```
+
+Run: `pnpm vitest run --project unit apps/api/src/agent/delegate-tools.test.ts`
+Expected: PASS（含新用例）
+
+- [ ] **Step 7: 补 `subagentCalls` 到已有测试的 budget 字面量**
 
 `apps/api/src/agent/plan-tools.test.ts` 里的：
 
@@ -1243,20 +1284,20 @@ const budget: RunBudget = {
 
 改为末尾加 `subagentCalls: 0,`。
 
-- [ ] **Step 7: 跑新测试与既有计划测试**
+- [ ] **Step 8: 跑新测试与既有计划测试**
 
 Run: `pnpm vitest run --project unit apps/api/src/agent/delegate-tools.test.ts apps/api/src/agent/plan-tools.test.ts`
-Expected: PASS — delegate-tools 6 passed、plan-tools 全绿
+Expected: PASS — delegate-tools 7 passed、plan-tools 全绿
 
-- [ ] **Step 8: 类型与格式检查**
+- [ ] **Step 9: 类型与格式检查**
 
 Run: `pnpm tsc --build tsconfig.base.json`
 Expected: 无输出
 
-Run: `pnpm biome check apps/api/src/agent/tools.ts apps/api/src/agent/delegate-tools.test.ts`
-Expected: 无错误（若有格式问题，`pnpm biome check --write <文件>` 后重跑）
+Run: `pnpm exec biome check apps/api/src/agent/tools.ts apps/api/src/agent/delegate-tools.test.ts`
+Expected: 无错误（若有格式问题，`pnpm exec biome check --write <文件>` 后重跑）
 
-- [ ] **Step 9: 提交**
+- [ ] **Step 10: 提交**
 
 ```bash
 git add apps/api/src/agent/tools.ts apps/api/src/agent/delegate-tools.test.ts apps/api/src/agent/plan-tools.test.ts
@@ -1815,8 +1856,8 @@ function settleRunningTools(blocks: Block[]): Block[] {
 Run: `pnpm tsc`
 Expected: 无输出
 
-Run: `pnpm biome check apps/web/src apps/api/src/routes/settings.ts`
-Expected: 无错误（有格式问题先 `pnpm biome check --write <路径>`）
+Run: `pnpm exec biome check apps/web/src apps/api/src/routes/settings.ts`
+Expected: 无错误（有格式问题先 `pnpm exec biome check --write <路径>`）
 
 Run: `pnpm --filter @inkloom/web build`
 Expected: 构建成功（bundle 大小与切片 2 相近）
