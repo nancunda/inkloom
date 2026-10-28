@@ -75,16 +75,19 @@ function spanOf(
 /**
  * 事件型 span 的右边界：spec §6.2 要求用「下一事件的时间」推，
  * 否则 start === end，时间轴上宽度 0%（等于看不见）。
- * 末尾事件没有下一事件时拉到会话结束；同一毫秒时至少给 1ms。
+ *
+ * ⚠️ 有下一事件时**只能**认它：同毫秒就退回 +1ms，不能拿会话结束去兜底，
+ * 否则瞬时事件会被横向拉成一条覆盖整个后续时间的假 span（plan.updated 与
+ * gate.waiting 在 run-service 里是同一个同步块连续 emit 的，同毫秒几乎必然）。
+ * 会话结束只用于「末尾事件」。
  */
 function endOf(start: string, next: string | undefined, sessionEnd: string): string {
   const startMs = new Date(start).getTime()
-  for (const candidate of [next, sessionEnd]) {
-    if (candidate === undefined) continue
-    const ms = new Date(candidate).getTime()
-    if (ms > startMs) return candidate
+  const oneMs = new Date(startMs + 1).toISOString()
+  if (next !== undefined) {
+    return new Date(next).getTime() > startMs ? next : oneMs
   }
-  return new Date(startMs + 1).toISOString()
+  return new Date(sessionEnd).getTime() > startMs ? sessionEnd : oneMs
 }
 
 function countSpans(spans: readonly TraceSpan[]): number {
@@ -185,6 +188,8 @@ export function toTraceData(
           if (e.text.length > 0) llm.output = e.text
           if (e.thinking.length > 0) llm.reasoning = { content: e.thinking }
           llm.endTime = new Date(endAt)
+          // 保留权威全文事件，否则这个 span 的 RAW tab 是空的
+          llm.raw = [JSON.stringify(e)]
           llm = null
           break
         }
@@ -246,7 +251,7 @@ export function toTraceData(
             TOOL_LABEL[e.toolName] ?? e.toolName,
             'tool_execution',
             at,
-            at,
+            endAt,
             e.ok ? 'success' : 'error',
           )
           s.output = e.summary

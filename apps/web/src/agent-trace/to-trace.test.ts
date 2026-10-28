@@ -156,9 +156,13 @@ describe('toTraceData', () => {
     expect(plans).toHaveLength(2)
     const ids = plans.flatMap((p) => [p.id, ...(p.children ?? []).map((c) => c.id)])
     expect(new Set(ids).size).toBe(ids.length)
+    // 同一毫秒的两个事件不能互相拉长（否则瞬时事件会变成一条假的长条）
+    for (const p of plans) {
+      expect(p.endTime.getTime() - p.startTime.getTime()).toBe(1)
+    }
   })
 
-  it('★ ping 不建 span，事件型 span 的时长不为零', () => {
+  it('★ ping 不建 span，事件型 span 的时长取下一事件', () => {
     const { spans } = toTraceData(meta, [
       ev({ type: 'run.started', goal: 'g' }),
       ev({ type: 'user.message', text: '写', seq: 2 }),
@@ -169,6 +173,6 @@ describe('toTraceData', () => {
     expect(children).toHaveLength(1)
     const author = children[0]
     expect(author?.title).toBe('作者')
-    expect((author?.endTime.getTime() ?? 0) - (author?.startTime.getTime() ?? 0)).toBeGreaterThan(0)
+    expect(author?.endTime.toISOString()).toBe('2026-10-28T10:00:03.000Z')
   })
 })

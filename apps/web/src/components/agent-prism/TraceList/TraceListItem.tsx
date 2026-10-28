@@ -36,6 +36,9 @@ export const TraceListItem = ({
 }: ReadonlyProps<TraceListItemProps>): ReactElement => {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent): void => {
+      // actions 插槽里的按钮（… 菜单）是这个 div 的后代；不挡一下的话，
+      // 行上的 Enter/Space 会 preventDefault 掉按钮的默认激活行为，键盘用户打不开菜单。
+      if (e.target !== e.currentTarget) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         onClick?.();

@@ -54,6 +54,8 @@ export const SpanCardTimeline = ({
           className={`absolute h-full rounded-xs ${timelineBgColors[spanCard.type]}`}
           style={{
             left: `${startPercent}%`,
+            // 最小 2px：纯比例渲染下瞬时事件（宽度 ~0.001%）会直接看不见
+            minWidth: 2,
             width: `${widthPercent}%`,
           }}
         />
