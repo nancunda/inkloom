@@ -1,7 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { readIfExists } from '../storage/atomic-write.js'
+import { messageSnapshotPath } from './history.js'
 import {
   listSessions,
   readSessionEvents,
@@ -91,6 +93,38 @@ describe('session store', () => {
     expect(await readSessionEvents(root, 'cs_b', 1)).toHaveLength(1)
   })
 
+  it('★ 回放取最近 N 条（不是前 N 条）', async () => {
+    const file = sessionJournalPath(root, 'cs_tail')
+    await mkdir(dirname(file), { recursive: true })
+    const lines = Array.from({ length: 5 }, (_, i) =>
+      JSON.stringify({ type: 'event', seq: i + 1, at: '2026-10-28T00:00:00.000Z' }),
+    )
+    await writeFile(file, lines.join('\n'), 'utf8')
+    const events = await readSessionEvents(root, 'cs_tail', 2)
+    expect(events.map((e) => e.seq)).toEqual([4, 5])
+    expect(await readSessionEvents(root, 'cs_tail', 0)).toEqual([])
+  })
+
+  it('没有任何目录时列表为空', async () => {
+    expect(await listSessions(root)).toEqual([])
+  })
+
+  it('★ legacy 的 updatedAt 用文件 mtime（长 journal 不会排序错位）', async () => {
+    const runs = join(root, '.inkloom', 'agent', 'runs')
+    await mkdir(runs, { recursive: true })
+    const file = join(runs, 'ar_long.jsonl')
+    await writeFile(
+      file,
+      `${JSON.stringify({ type: 'run.started', goal: '长', seq: 1, at: '2026-10-01T00:00:00.000Z' })}\n`,
+      'utf8',
+    )
+    const when = new Date('2026-10-20T00:00:00.000Z')
+    await utimes(file, when, when)
+    const legacy = (await listSessions(root)).find((s) => s.id === 'lg_ar_long')
+    expect(legacy?.updatedAt).toBe(when.toISOString())
+    expect(legacy?.createdAt).toBe('2026-10-01T00:00:00.000Z')
+  })
+
   it('★ legacy 会话可从旧 journal 回放', async () => {
     const runs = join(root, '.inkloom', 'agent', 'runs')
     await mkdir(runs, { recursive: true })
@@ -103,10 +137,25 @@ describe('session store', () => {
     expect(events[0]?.type).toBe('run.started')
   })
 
-  it('★ 运行中的会话不能重命名/删除', async () => {
-    await writeSessionMeta(root, { ...meta('cs_run', '运行中'), status: 'running' })
+  it('★ 运行中的会话不能重命名/删除（未超时）', async () => {
+    // 刚更新过 → 不是崩溃残留，必须拦住
+    await writeSessionMeta(root, {
+      ...meta('cs_run', '运行中'),
+      status: 'running',
+      updatedAt: new Date().toISOString(),
+    })
     await expect(renameSession(root, 'cs_run', '新名字')).rejects.toThrow(/运行中/)
     await expect(removeSession(root, 'cs_run')).rejects.toThrow(/运行中/)
+  })
+
+  it('★ 崩溃残留的 running 会话（超时）允许改名并修正状态', async () => {
+    await writeSessionMeta(root, {
+      ...meta('cs_stale', '残留'),
+      status: 'running',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    const next = await renameSession(root, 'cs_stale', '救回来')
+    expect(next.status).toBe('stopped')
   })
 
   it('★ legacy 会话只读', async () => {
@@ -125,14 +174,22 @@ describe('session store', () => {
     await expect(readSessionEvents(root, 'cs_a/b', 10)).rejects.toThrow(/非法会话 id/)
   })
 
+  it('★ 超长标题按字符截断，不切断 emoji', async () => {
+    await writeSessionMeta(root, meta('cs_e', '旧名'))
+    const next = await renameSession(root, 'cs_e', `${'a'.repeat(79)}😀b`)
+    expect(next.title.includes('😀')).toBe(true)
+    expect(next.title).not.toContain('\uFFFD')
+  })
+
   it('★ 重命名生效；删除会把 meta/journal/快照一起清掉', async () => {
     await writeSessionMeta(root, meta('cs_d', '旧名'))
     const next = await renameSession(root, 'cs_d', '新名')
     expect(next.title).toBe('新名')
     await writeFile(sessionJournalPath(root, 'cs_d'), '{}\n', 'utf8')
-    await writeFile(join(root, '.inkloom', 'agent', 'sessions', 'cs_d.messages.json'), '{}', 'utf8')
+    await writeFile(messageSnapshotPath(root, 'cs_d'), '{}', 'utf8')
     await removeSession(root, 'cs_d')
     expect(await readSessionMeta(root, 'cs_d')).toBeNull()
     expect(await readSessionEvents(root, 'cs_d', 10)).toEqual([])
+    expect(await readIfExists(messageSnapshotPath(root, 'cs_d'))).toBeNull()
   })
 })
