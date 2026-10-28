@@ -54,19 +54,15 @@ function liveEdges(snap: GraphSnapshot): GraphEdgeView[] {
   return snap.edges.filter((e) => e.tombstone !== true && e.retracted !== true)
 }
 
-/** 类闭包：自己 + 所有子孙类（instanceOf 指向子类，父类查询要能带出来） */
-function classClosure(snap: GraphSnapshot, classId: string): Set<string> {
-  const out = new Set<string>([classId])
-  for (const child of snap.subclasses.get(classId) ?? []) out.add(child)
-  return out
-}
-
+/**
+ * 类条件：`GraphSnapshot.classOf` 由 buildGraph 保证含祖先（子类实例也在父类的 classOf 里），
+ * 所以直接 includes 即可；不在 query 侧再算一次闭包，避免两套机制静默漂移。
+ */
 function nodeMatches(snap: GraphSnapshot, n: GraphNode, p: GraphPattern): boolean {
   if (p.nodeType !== undefined && n.type !== p.nodeType) return false
   if (p.classId !== undefined) {
-    const closure = classClosure(snap, p.classId)
     const classes = snap.classOf.get(n.id) ?? []
-    if (!classes.some((c) => closure.has(c))) return false
+    if (!classes.includes(p.classId)) return false
   }
   if (p.attr !== undefined) {
     for (const [k, v] of Object.entries(p.attr)) {
@@ -90,22 +86,20 @@ export function matchPattern(snap: GraphSnapshot, pattern: GraphPattern): Patter
   const edges = liveEdges(snap)
 
   if (hasEdgeCond(pattern)) {
-    // ★ 双向路线匹配忽略方向（types.ts 的 undirected 契约）
-    const fromHit = (e: GraphEdgeView): boolean =>
-      pattern.from === undefined ||
-      e.from === pattern.from ||
-      (e.undirected === true && e.to === pattern.from)
-    const toHit = (e: GraphEdgeView): boolean =>
-      pattern.to === undefined ||
-      e.to === pattern.to ||
-      (e.undirected === true && e.from === pattern.to)
+    // ★ 双向路线匹配忽略方向；但 from===to 时不能把 a—b 当成 a 的自环
     const picked = edges
-      .filter(
-        (e) =>
-          (pattern.predicate === undefined || e.predicate === pattern.predicate) &&
-          fromHit(e) &&
-          toHit(e),
-      )
+      .filter((e) => {
+        if (pattern.predicate !== undefined && e.predicate !== pattern.predicate) return false
+        const forward =
+          (pattern.from === undefined || e.from === pattern.from) &&
+          (pattern.to === undefined || e.to === pattern.to)
+        if (forward || e.undirected !== true) return forward
+        return (
+          pattern.from !== pattern.to &&
+          (pattern.from === undefined || e.to === pattern.from) &&
+          (pattern.to === undefined || e.from === pattern.to)
+        )
+      })
       .sort((a, b) => a.id.localeCompare(b.id))
       .slice(0, limit)
     const ids = new Set<string>()
@@ -248,10 +242,9 @@ export function explainFact(
   }
 
   if (predicate === 'instanceOf') {
-    // ★ spec §5.5：子类实例按父类查也算——不能只看 classOf 是否直接含目标类
-    const closure = classClosure(snap, to)
+    // classOf 含祖先（buildGraph 保证）：子类实例按父类查也能命中
     const classes = snap.classOf.get(from) ?? []
-    if (classes.some((c) => closure.has(c))) {
+    if (classes.includes(to)) {
       return {
         found: true,
         direct: false,

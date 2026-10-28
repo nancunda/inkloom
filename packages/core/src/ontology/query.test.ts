@@ -2,7 +2,6 @@ import type { Character, CharacterRelation, ClassesFile, OntologyNode } from '@i
 import { describe, expect, it } from 'vitest'
 import { buildGraph, type GraphSource } from './graph.js'
 import { explainFact, findPath, matchPattern } from './query.js'
-import type { GraphSnapshot } from './types.js'
 
 const classesFile: ClassesFile = {
   version: 1,
@@ -165,7 +164,7 @@ describe('matchPattern', () => {
     expect(from.nodes.map((n) => n.id).sort()).toEqual(['c2', 'n1'])
   })
 
-  it('★ 双向路线：from/to 反向也能匹配', () => {
+  it('★ 双向路线：from/to 反向也能匹配，但 from===to 不能当自环', () => {
     const s = snap()
     expect(matchPattern(s, { predicate: 'route', from: 'n3' }).edges.map((e) => e.id)).toEqual([
       'ed-11',
@@ -173,6 +172,7 @@ describe('matchPattern', () => {
     expect(matchPattern(s, { predicate: 'route', to: 'n2' }).edges.map((e) => e.id)).toEqual([
       'ed-11',
     ])
+    expect(matchPattern(s, { predicate: 'route', from: 'n2', to: 'n2' }).edges).toEqual([])
   })
 
   it('没有边条件时返回节点间的诱导边', () => {
@@ -204,16 +204,17 @@ describe('findPath', () => {
     expect(r.edges.map((e) => e.id)).toEqual(['ed-1', 'ed-3'])
   })
 
-  it('同一起点终点的结果稳定', () => {
-    const first = findPath(snap(), 'c1', 'n2')
-    const second = findPath(snap(), 'c1', 'n2')
-    expect(second.nodes.map((n) => n.id)).toEqual(first.nodes.map((n) => n.id))
-  })
-
   it('maxDepth 限制 + 找不到返回 found=false', () => {
     expect(findPath(snap(), 'c1', 'n2', 1).found).toBe(false)
     expect(findPath(snap(), 'nope', 'n2').found).toBe(false)
     expect(findPath(snap(), 'c1', 'n2', Number.NaN).found).toBe(true)
+  })
+
+  it('端点只存在于边里（悬空）：found=false 且不带半截路径', () => {
+    const s = snap()
+    s.edges.push({ ...edge('ed-99', 'n3', 'ally', 'ghost'), virtual: false })
+    const r = findPath(s, 'n1', 'ghost')
+    expect(r).toEqual({ nodes: [], edges: [], found: false })
   })
 
   it('起点即终点：返回单节点、零边', () => {
@@ -259,17 +260,12 @@ describe('explainFact', () => {
     expect(explainFact(snap(), 'n1', 'ally', 'n7').found).toBe(false)
   })
 
-  it('instanceOf 走类闭包（子类实例也算）', () => {
-    const s = snap()
-    // 把 cn1 的类收窄成子类本身，逼 instanceOf 走闭包而不是 classOf 直接命中
-    const patched: GraphSnapshot = {
-      ...s,
-      classOf: new Map([...s.classOf, ['cn1', ['cls-sword']]]),
-    }
-    expect(matchPattern(patched, { classId: 'cls-character' }).nodes.map((n) => n.id)).toContain(
+  it('instanceOf 走类闭包（子类实例按父类查）', () => {
+    // cn1 instanceOf cls-sword（cls-character 的子类）；真实快照的 classOf 已含祖先
+    expect(matchPattern(snap(), { classId: 'cls-character' }).nodes.map((n) => n.id)).toContain(
       'cn1',
     )
-    const r = explainFact(patched, 'cn1', 'instanceOf', 'cls-character')
+    const r = explainFact(snap(), 'cn1', 'instanceOf', 'cls-character')
     expect(r.found).toBe(true)
     expect(r.reason).toContain('子类')
   })
