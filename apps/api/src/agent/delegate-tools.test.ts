@@ -113,6 +113,9 @@ beforeEach(async () => {
   subagentImpl = okSubagent
   budget.steps = 0
   budget.subagentCalls = 0
+  // critic 开启时 done 必须列产物：先准备一个真实文件
+  await mkdir(join(root, 'world'), { recursive: true })
+  await writeFile(join(root, 'world', 'note.md'), '规则', 'utf8')
   tools = buildTools()
 })
 
@@ -180,6 +183,7 @@ describe('delegate', () => {
 describe('update_task(done) 的 critic 门禁', () => {
   it('★ critic 报 error → 任务保持 doing，不写 state', async () => {
     await startDoingTask()
+    const before = await readPlanState(root, planId as string)
     tools = buildTools(async () => ({
       kind: 'blocked',
       errors: [
@@ -191,22 +195,58 @@ describe('update_task(done) 的 critic 门禁', () => {
       ],
       warnings: [],
     }))
-    const r = await tool('update_task').execute('c1', { taskId: 'world', status: 'done' })
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      artifacts: ['world/note.md'],
+    })
     expect(r.isError).toBe(true)
     expect(textOf(r)).toContain('一致性检查发现 1 处矛盾')
     expect(textOf(r)).toContain('characters/index.json#c1')
     const state = await readPlanState(root, planId as string)
     expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('doing')
+    // 不只是状态没变：整份 state 不能被重写（updatedAt 完全相同）
+    expect(state?.updatedAt).toBe(before?.updatedAt)
   })
 
   it('★ critic 故障 → 写 done，但明确标注未完成', async () => {
     await startDoingTask()
     tools = buildTools(async () => ({ kind: 'skipped', reason: '返回内容不是合法 JSON' }))
-    const r = await tool('update_task').execute('c1', { taskId: 'world', status: 'done' })
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      artifacts: ['world/note.md'],
+    })
     expect(r.isError).toBeFalsy()
     expect(textOf(r)).toContain('一致性检查未完成：返回内容不是合法 JSON')
     const state = await readPlanState(root, planId as string)
     expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('done')
+  })
+
+  it('★ critic 抛异常 → 按未完成放行，不让任务永久卡在 doing', async () => {
+    await startDoingTask()
+    tools = buildTools(async () => {
+      throw new Error('fetch failed')
+    })
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      artifacts: ['world/note.md'],
+    })
+    expect(r.isError).toBeFalsy()
+    expect(textOf(r)).toContain('一致性检查未完成：检查器出错（fetch failed）')
+    const state = await readPlanState(root, planId as string)
+    expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('done')
+  })
+
+  it('★ critic 开启时 done 必须列产物（否则可绕过检查）', async () => {
+    await startDoingTask()
+    tools = buildTools(async () => ({ kind: 'passed', warnings: [], suggestions: [] }))
+    const r = await tool('update_task').execute('c1', { taskId: 'world', status: 'done' })
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toContain('artifacts')
+    const state = await readPlanState(root, planId as string)
+    expect(state?.tasks.find((t) => t.id === 'world')?.status).toBe('doing')
   })
 
   it('★ critic 只有 warning → 写 done 并提示条数', async () => {
@@ -218,7 +258,11 @@ describe('update_task(done) 的 critic 门禁', () => {
       ],
       suggestions: ['统一用「掌门」'],
     }))
-    const r = await tool('update_task').execute('c1', { taskId: 'world', status: 'done' })
+    const r = await tool('update_task').execute('c1', {
+      taskId: 'world',
+      status: 'done',
+      artifacts: ['world/note.md'],
+    })
     expect(r.isError).toBeFalsy()
     expect(textOf(r)).toContain('一致性检查通过（1 处提示')
     expect(textOf(r)).toContain('统一用「掌门」')

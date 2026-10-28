@@ -211,6 +211,14 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
+/** 按码点截断：直接 slice 可能切坏代理对（emoji / 扩展 B 区汉字） */
+function truncateText(text: string, max: number): string {
+  if (text.length <= max) return text
+  const cp = text.codePointAt(max - 1) ?? 0
+  const cut = cp > 0xffff ? max - 1 : max
+  return `${text.slice(0, cut)}\n…（已截断）`
+}
+
 function emptyState(): PlanState {
   return { status: 'drafting', summary: null, feedback: null, tasks: [], updatedAt: nowIso() }
 }
@@ -425,7 +433,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     name: 'read_element',
     label: '读取要素文件',
     description:
-      '读取一个要素文件的原始内容和 hash。写之前用它拿 hash；如果只想看全貌，用 read_book 更省。',
+      '读取一个要素文件的原始内容和 hash（`chapters/` 下按 Markdown 原文返回，只读）。写之前用它拿 hash；如果只想看全貌，用 read_book 更省。',
     parameters: READ_ELEMENT,
     execute: async (_id, params) => {
       const { root } = getContext()
@@ -435,10 +443,15 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       }
       // ★ 章节是 Markdown：返回原文，不做 JSON 化（否则模型看到的是转义后的字符串）
       if (rel.startsWith('chapters/')) {
-        const raw = await readIfExists(join(root, rel))
+        let raw: string | null
+        try {
+          raw = await readIfExists(join(root, rel))
+        } catch (e) {
+          // 模型经常把目录当文件读（chapters/ch-001 是目录）：给可执行的提示，不抛 EISDIR
+          return fail(`读取失败：${rel}（${(e as Error).message}）。目录请给具体文件路径。`)
+        }
         if (raw === null) return fail(`文件不存在：${rel}`)
-        const text = raw.length > 30_000 ? `${raw.slice(0, 30_000)}\n…（已截断）` : raw
-        return ok(text, { path: rel, hash: hashContent(raw), format: 'text' })
+        return ok(truncateText(raw, 30_000), { path: rel, hash: hashContent(raw), format: 'text' })
       }
       const data = await readElement(rel)
       if (data === null) return fail(`文件不存在：${rel}`)
@@ -562,6 +575,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     parameters: DELEGATE,
     execute: async (_id, params) => {
       if (deps.subagent === undefined) return fail('这个会话没有启用子智能体')
+      // TypeBox 只在真实工具循环里校验；测试/直接调用 execute 会绕过，保留运行期兜底
       if (!isAgentRoleId(params.role)) return fail(`未知角色：${params.role}`)
       const r = await deps.subagent({
         role: params.role,
@@ -575,8 +589,12 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           `[${r.role}] 子任务失败：${r.error ?? '未知原因'}。可以换一种方式，或自己继续。${partial}`,
         )
       }
+      const summary =
+        r.text.length <= 4000
+          ? r.text
+          : `${r.text.slice(0, 4000)}…（已截断，共 ${r.text.length} 字符）`
       return ok(
-        `[${r.role}] 用了 ${r.steps} 步，${r.tokens.toLocaleString()} tokens。\n摘要：\n${r.text.slice(0, 4000)}`,
+        `[${r.role}] 用了 ${r.steps} 步，${r.tokens.toLocaleString()} tokens。\n摘要：\n${summary}`,
         { role: r.role, ok: r.ok, steps: r.steps, tokens: r.tokens },
       )
     },
@@ -846,14 +864,26 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
 
       let criticNote = ''
       if (params.status === 'done' && deps.critic !== undefined) {
-        const verdict = await deps.critic({
-          taskId: task.id,
-          title: task.title,
-          brief: task.brief,
-          artifacts,
-          summary: params.note ?? cur.summary,
-          goal: bundle.plan.goal,
-        })
+        // ★ 空产物会绕过检查（模型只要不填 artifacts 就能拿到「通过」），所以直接拦下
+        if (artifacts.length === 0) {
+          return fail(
+            'done 时必须用 artifacts 列出实际产出的文件；没有产物不能标记完成（也会绕过一致性检查）。',
+          )
+        }
+        let verdict: CriticVerdict
+        try {
+          verdict = await deps.critic({
+            taskId: task.id,
+            title: task.title,
+            brief: task.brief,
+            artifacts,
+            summary: params.note ?? cur.summary,
+            goal: bundle.plan.goal,
+          })
+        } catch (e) {
+          // ★ 注入方抛异常也必须按「未完成」放行：不能让任务永久卡在 doing
+          verdict = { kind: 'skipped', reason: `检查器出错（${(e as Error).message}）` }
+        }
         if (verdict.kind === 'blocked') {
           const lines = verdict.errors.map(
             (c, i) => `${i + 1}. ${c.message}（证据：${c.evidence.join('、')}）`,
