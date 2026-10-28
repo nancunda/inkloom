@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useBook, useOverview } from '../api/hooks'
 import { type Command, CommandPalette } from '../components/CommandPalette'
 import { TimeMachine } from '../components/TimeMachine'
 import { STATUS_LABEL, STATUS_MARK } from '../lib/status'
-import { AgentPage } from '../pages/AgentPage'
 import { AssetsPage } from '../pages/AssetsPage'
 import { CastPage } from '../pages/CastPage'
 import { LibraryDialog } from '../pages/LibraryDialog'
@@ -14,6 +13,15 @@ import { StoryPage } from '../pages/StoryPage'
 import { WorldPage } from '../pages/WorldPage'
 import { WritingPage } from '../pages/WritingPage'
 import { type ModuleId, useSessionStore } from '../stores/session'
+
+/**
+ * 共创页懒加载：它拖着整套 AgentPrism（radix×2 + resizable-panels + json-pretty），
+ * 而主 chunk 已经装着 cytoscape/xyflow/dagre。不切开就是首屏多背一个面板。
+ */
+const CocreatePage = lazy(async () => {
+  const mod = await import('../pages/CocreatePage')
+  return { default: mod.CocreatePage }
+})
 
 const MODULES: { id: ModuleId; label: string; icon: string }[] = [
   { id: 'overview', label: '概览', icon: '◎' },
@@ -177,7 +185,13 @@ export function AppShell() {
         {/* 主工作区 */}
         <main className="flex min-w-0 flex-1">
           {module === 'overview' && <OverviewPage />}
-          {module === 'agent' && <AgentPage />}
+          {module === 'agent' && (
+            <Suspense
+              fallback={<p className="p-6 text-[12px] text-neutral-500">正在载入共创面板…</p>}
+            >
+              <CocreatePage />
+            </Suspense>
+          )}
           {module === 'world' && <WorldPage />}
           {module === 'cast' && <CastPage />}
           {module === 'story' && <StoryPage />}
