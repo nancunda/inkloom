@@ -2,6 +2,8 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import {
   explainFact,
   findPath,
+  type GraphEdgeView,
+  type GraphNode,
   type GraphPattern,
   type GraphSnapshot,
   matchPattern,
@@ -16,13 +18,20 @@ const READONLY = '图谱是只读视图；要改设定请用 write_element，不
 const QUERY_GRAPH = Type.Object({
   classId: Type.Optional(Type.String({ description: '类 id，例如 cls-character；含子类' })),
   nodeType: Type.Optional(
-    Type.String({ description: '节点类型：character/group/place/rule/item/concept/class' }),
+    Type.Union(
+      ['character', 'group', 'place', 'rule', 'item', 'concept', 'class'].map((t) =>
+        Type.Literal(t),
+      ),
+      { description: '节点类型' },
+    ),
   ),
   predicate: Type.Optional(Type.String({ description: '谓词 id，例如 belongsTo / instanceOf' })),
   from: Type.Optional(Type.String({ description: '边的起点节点 id' })),
   to: Type.Optional(Type.String({ description: '边的终点节点 id（可为类 id）' })),
   attr: Type.Optional(
-    Type.Record(Type.String(), Type.String(), { description: '属性相等过滤，如 {"tier":"一流"}' }),
+    Type.Record(Type.String(), Type.String(), {
+      description: '属性相等过滤，值必须是字符串（如 {"tier":"一流"}）',
+    }),
   ),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: '默认 50' })),
 })
@@ -55,6 +64,21 @@ function renderQuery(result: PatternResult, snap: GraphSnapshot): string {
   return `${head}\n${nodeLines.join('\n')}${edgeLines.length > 0 ? `\n${edgeLines.join('\n')}` : ''}`
 }
 
+/** 给 details 的结构化副本：文本给模型看，details 给调试/后续 UI 看 */
+function nodeFacts(nodes: GraphNode[]): Record<string, unknown>[] {
+  return nodes.map((n) => ({ id: n.id, type: n.type, name: n.name, virtual: n.virtual }))
+}
+
+function edgeFacts(edges: GraphEdgeView[]): Record<string, unknown>[] {
+  return edges.map((e) => ({
+    id: e.id,
+    from: e.from,
+    to: e.to,
+    predicate: e.predicate,
+    virtual: e.virtual,
+  }))
+}
+
 export function createGraphTools(): AgentTool[] {
   const queryGraph: AgentTool<typeof QUERY_GRAPH> = {
     name: 'query_graph',
@@ -82,6 +106,8 @@ export function createGraphTools(): AgentTool[] {
       return ok(renderQuery(result, snap), {
         nodeCount: result.nodes.length,
         edgeCount: result.edges.length,
+        nodes: nodeFacts(result.nodes),
+        edges: edgeFacts(result.edges),
       })
     },
   }
@@ -101,14 +127,20 @@ export function createGraphTools(): AgentTool[] {
         )
       }
       const hops = r.edges.map((e, i) => {
-        const fromName = nameOf(snap, r.nodes[i]?.id ?? e.from)
-        const toName = nameOf(snap, r.nodes[i + 1]?.id ?? e.to)
+        const a = nameOf(snap, r.nodes[i]?.id ?? e.from)
+        const b = nameOf(snap, r.nodes[i + 1]?.id ?? e.to)
         const label = snap.predicates.find((p) => p.id === e.predicate)?.label ?? e.predicate
-        return `${i + 1}. ${fromName} —${label}→ ${toName}${e.virtual ? '（虚拟）' : ''}`
+        // ★ BFS 不看方向：反向跨越时必须按边自身方向渲染，否则会把事实说反
+        const back = r.nodes[i]?.id !== e.from
+        const line = back ? `${b} —${label}→ ${a}（反向）` : `${a} —${label}→ ${b}`
+        return `${i + 1}. ${line}${e.virtual ? '（虚拟）' : ''}`
       })
+      if (r.edges.length === 0) {
+        return ok('同一个节点，0 跳。', { found: true, hops: 0 })
+      }
       return ok(
         `找到路径：${r.nodes.map((n) => n.name).join(' → ')}（${r.edges.length} 跳）\n${hops.join('\n')}`,
-        { hops: r.edges.length },
+        { found: true, hops: r.edges.length, nodes: nodeFacts(r.nodes), edges: edgeFacts(r.edges) },
       )
     },
   }
@@ -122,7 +154,9 @@ export function createGraphTools(): AgentTool[] {
       const snap = await getGraphSnapshot().catch((e: unknown) => e as Error)
       if (snap instanceof Error) return fail(`图谱不可用：${snap.message}`)
       const r = explainFact(snap, params.from, params.predicate, params.to)
-      return r.found ? ok(r.reason, { direct: r.direct, virtual: r.virtual }) : fail(r.reason)
+      return r.found
+        ? ok(r.reason, { direct: r.direct, virtual: r.virtual, via: r.via })
+        : fail(r.reason)
     },
   }
 
