@@ -98,7 +98,8 @@ export function decideCritic(report: CriticReport | null): CriticVerdict {
   return { kind: 'passed', warnings, suggestions: report.suggestions ?? [] }
 }
 
-/** 默认开：不设置就检查；只有显式 off 才关（与设置页的 on/off 一致） */
+/** 默认开：只有显式关闭值才关（设置页写 on/off，手改 .env 常用 false/0/no 也要认） */
 export function criticEnabled(raw: string | undefined): boolean {
-  return (raw ?? 'on').trim().toLowerCase() !== 'off'
+  const v = (raw ?? 'on').trim().toLowerCase()
+  return v !== 'off' && v !== '0' && v !== 'false' && v !== 'no'
 }

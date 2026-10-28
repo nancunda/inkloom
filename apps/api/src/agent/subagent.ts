@@ -49,6 +49,8 @@ export interface SubagentRunnerDeps {
   budget: { steps: number; maxSteps: number; subagentCalls: number }
   onEvent: (e: SubagentEvent) => void
   onTokens: (n: number) => void
+  /** 注册外部停止钩子（作者点「停止」）；返回注销函数 */
+  registerAbort?: (abort: () => void) => () => void
   timeoutMs?: number
 }
 
@@ -101,6 +103,7 @@ export function createSubagentRunner(
     let text = ''
     let error: string | null = null
     let timedOut = false
+    let externalStop = false
     /** 步数触顶不会写 state.errorMessage，必须自己记下来，否则会以「成功但空结论」返回 */
     let limitReason: string | null = null
 
@@ -184,6 +187,12 @@ export function createSubagentRunner(
       agent.abort()
     }, timeoutMs)
 
+    // ★ 子体是独立 Agent：主 Agent 的 abort() 管不到它，必须单独注册停止钩子
+    const unregisterAbort = deps.registerAbort?.(() => {
+      externalStop = true
+      agent.abort()
+    })
+
     try {
       await agent.prompt(taskMessage(req))
     } catch (e) {
@@ -192,9 +201,12 @@ export function createSubagentRunner(
     } finally {
       clearTimeout(timer)
       unsubscribe()
+      unregisterAbort?.()
     }
 
-    if (timedOut) {
+    if (externalStop) {
+      error = '运行已停止'
+    } else if (timedOut) {
       error = `子任务超时（${timeoutMs}ms）`
     } else if (error === null) {
       const stateError = agent.state.errorMessage

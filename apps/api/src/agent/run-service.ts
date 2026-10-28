@@ -112,6 +112,8 @@ interface AgentRun {
   lastPlanSignature: string
   /** 连续“没推进”的轮数；推两推还不动就停给作者 */
   stallTurns: number
+  /** 正在跑的子体停止钩子：主 Agent.abort() 管不到独立子体 */
+  childAborts: Set<() => void>
 }
 
 const runs = new Map<string, AgentRun>()
@@ -610,14 +612,23 @@ export async function startAgentRun(
   // ★ runner 需要「工具全集」，工具又需要 runner：用惰性 getter 打破构造期循环。
   //   只有 delegate / critic 执行时才会读到 allTools，那时它已经赋值。
   let allTools: AgentTool[] = []
+  const childAborts = new Set<() => void>()
   const subagent = createSubagentRunner({
     model,
     streamFn: models().streamSimple.bind(models()),
     getTools: () => allTools,
     budget,
     onEvent: (e) => {
+      // ★ 作者已点停止：不再往已停止的 run 写事件
+      if (run.stopped) return
       if (e.type === 'started') {
-        emit(run, { type: 'subagent.started', id: e.id, role: e.role, task: e.task })
+        emit(run, {
+          type: 'subagent.started',
+          id: e.id,
+          role: e.role,
+          // critic 的任务是拼出来的，summary/brief 可能很长；事件进 journal，必须截
+          task: clip(e.task, 500),
+        })
         return
       }
       if (e.type === 'tool') {
@@ -642,7 +653,14 @@ export async function startAgentRun(
       })
     },
     onTokens: (n) => {
+      if (run.stopped) return
       run.tokens += n
+    },
+    registerAbort: (abort) => {
+      childAborts.add(abort)
+      return () => {
+        childAborts.delete(abort)
+      }
     },
   })
 
@@ -658,7 +676,11 @@ export async function startAgentRun(
           '先用 read_book 看设定全貌，需要时用 query_graph / explain_fact 核对具体关系。',
         ].join('\n')
         const r = await subagent({ role: 'critic', task })
-        if (!r.ok) return { kind: 'skipped', reason: r.error ?? '子智能体失败' }
+        if (!r.ok) return { kind: 'skipped', reason: (r.error ?? '').trim() || '子智能体失败' }
+        // 空文本不是「JSON 不合法」：如实说子体没给结论
+        if (r.text.trim().length === 0) {
+          return { kind: 'skipped', reason: '子智能体没有给出检查结论' }
+        }
         return decideCritic(parseCriticReport(r.text))
       }
     : undefined
@@ -733,6 +755,7 @@ export async function startAgentRun(
     lastSteps: 0,
     lastPlanSignature: '',
     stallTurns: 0,
+    childAborts,
   }
 
   agent.subscribe((e) => handlePiEvent(run, e))
@@ -849,6 +872,8 @@ export function stopAgentRun(id: string): AgentRunSnapshot {
     run.finishedAt = new Date().toISOString()
     run.gate = null
     run.agent.abort()
+    // ★ 子体是独立 Agent：主 Agent 的 abort() 停不住它，必须逐个停
+    for (const abort of run.childAborts) abort()
     emit(run, { type: 'run.stopped' })
     // doing 不能永久钉住：停止时把当前任务标成 blocked，计划标成 aborted
     void finalizePlanOnRunEnd(run)

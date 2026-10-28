@@ -245,4 +245,34 @@ describe('createSubagentRunner', () => {
     expect(d.events).toHaveLength(0)
     expect(d.budget.subagentCalls).toBe(0)
   })
+
+  it('★ 外部停止 → abort 子体、ok=false、原因不写成超时', async () => {
+    h.hang = true
+    const holder: { stop: (() => void) | null } = { stop: null }
+    const budget = { steps: 0, maxSteps: 80, subagentCalls: 0 }
+    const events: SubagentEvent[] = []
+    const run = createSubagentRunner({
+      model: {} as never,
+      streamFn: (() => undefined) as never,
+      getTools: () => [],
+      budget,
+      onEvent: (e) => events.push(e),
+      onTokens: () => undefined,
+      registerAbort: (fn) => {
+        holder.stop = fn
+        return () => {
+          holder.stop = null
+        }
+      },
+      timeoutMs: 50,
+    })
+    const pending = run({ role: 'researcher', task: 'x' })
+    await new Promise((r) => setTimeout(r, 0))
+    holder.stop?.()
+    const r = await pending
+    expect(r.ok).toBe(false)
+    expect(r.error).toBe('运行已停止')
+    expect(h.aborts).toBe(1)
+    expect(events.map((e) => e.type)).toEqual(['started', 'ended'])
+  })
 })

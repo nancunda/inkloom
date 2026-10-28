@@ -98,10 +98,13 @@ describe('decideCritic', () => {
     expect(decideCritic(parseCriticReport(text)).kind).toBe('blocked')
   })
 
-  it('★ 默认开；只有显式 off 才关', () => {
+  it('★ 默认开；只有显式关闭值才关', () => {
     expect(criticEnabled(undefined)).toBe(true)
     expect(criticEnabled('')).toBe(true)
     expect(criticEnabled('on')).toBe(true)
     expect(criticEnabled('OFF')).toBe(false)
+    expect(criticEnabled('false')).toBe(false)
+    expect(criticEnabled('0')).toBe(false)
+    expect(criticEnabled('no')).toBe(false)
   })
 })
