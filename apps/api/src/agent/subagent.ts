@@ -6,7 +6,13 @@ import {
   type AgentTool,
   type StreamFn,
 } from '@earendil-works/pi-agent-core'
-import { AGENT_ROLES, type AgentRoleId, isAgentRoleId, toolsForRole } from './roles.js'
+import {
+  AGENT_ROLES,
+  type AgentRoleId,
+  isAgentRoleId,
+  stepDiscipline,
+  toolsForRole,
+} from './roles.js'
 import { clip } from './tool-result.js'
 
 export interface SubagentRequest {
@@ -18,8 +24,10 @@ export interface SubagentRequest {
 export interface SubagentResult {
   id: string
   role: AgentRoleId
-  /** false = 超时、抛错、步数超限；text 仍可能是已产出的部分结论 */
+  /** false = 一步都没跑成；true 含 partial（有结论但被上限/超时截断） */
   ok: boolean
+  /** true = 结论可用但不完整（步数触顶或超时） */
+  partial: boolean
   steps: number
   tokens: number
   text: string
@@ -48,6 +56,10 @@ export type SubagentEvent =
       tokens: number
       /** 结果文本前 400 字，前端卡片直接展示 */
       summary: string
+      /** 完整结论（已按 6000 字截断）：trace 详情靠它展示，不能只给摘要 */
+      text: string
+      /** true = 结论可用但不完整（步数触顶/超时） */
+      partial: boolean
       /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null */
       error: string | null
     }
@@ -99,6 +111,7 @@ export function createSubagentRunner(
         id,
         role: req.role,
         ok: false,
+        partial: false,
         steps: 0,
         tokens: 0,
         text: '',
@@ -179,7 +192,8 @@ export function createSubagentRunner(
     try {
       agent = new Agent({
         initialState: {
-          systemPrompt: role.systemPrompt,
+          // ★ 子体不知道自己有多少预算，会把步数撞在上限上；把纪律写进 systemPrompt
+          systemPrompt: `${role.systemPrompt}\n\n${stepDiscipline(role.maxSteps)}`,
           model: deps.model,
           thinkingLevel: 'low',
           tools: toolsForRole(role, deps.getTools()),
@@ -197,12 +211,23 @@ export function createSubagentRunner(
         id,
         role: role.id,
         ok: false,
+        partial: false,
         steps,
         tokens,
         summary: '',
+        text: '',
         error: msg,
       })
-      return { id, role: role.id, ok: false, steps, tokens, text: '', error: msg }
+      return {
+        id,
+        role: role.id,
+        ok: false,
+        partial: false,
+        steps,
+        tokens,
+        text: '',
+        error: msg,
+      }
     }
 
     const timer = setTimeout(() => {
@@ -240,16 +265,22 @@ export function createSubagentRunner(
     const trimmed =
       text.length <= MAX_TEXT ? text : `${text.slice(0, MAX_TEXT)}…（共 ${text.length} 字符）`
     const ok = error === null
+    // ★ 上限/超时截断时，已产出的结论仍然有价值：放行成 partial，别让主 Agent 白重派
+    const salvaged = !externalStop && text.trim().length > 0 && (limitReason !== null || timedOut)
+    const partial = !ok && salvaged
+    const finalOk = ok || partial
     deps.onEvent({
       type: 'ended',
       id,
       role: role.id,
-      ok,
+      ok: finalOk,
+      partial,
       steps,
       tokens,
       summary: trimmed.slice(0, 400),
+      text: trimmed,
       error,
     })
-    return { id, role: role.id, ok, steps, tokens, text: trimmed, error }
+    return { id, role: role.id, ok: finalOk, partial, steps, tokens, text: trimmed, error }
   }
 }

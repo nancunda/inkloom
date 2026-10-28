@@ -49,6 +49,7 @@ const okSubagent = async (req: SubagentRequest): Promise<SubagentResult> => {
     id: 'sa_test',
     role: req.role,
     ok: true,
+    partial: false,
     steps: 2,
     tokens: 120,
     text: '找到 2 条资料',
@@ -156,11 +157,31 @@ describe('delegate', () => {
     expect(textOf(r)).toContain('120 tokens')
     expect(textOf(r)).toContain('找到 2 条资料')
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toMatchObject({
-      role: 'researcher',
-      task: '查唐代驿站制度',
-      context: '这本书是唐风玄幻',
+    // ★ task 里必须带上步数预算（子体不知道上限，会盲撞）
+    expect(calls[0]?.task).toContain('查唐代驿站制度')
+    expect(calls[0]?.task).toContain('最多 12 步')
+    expect(calls[0]?.['context']).toBe('这本书是唐风玄幻')
+  })
+
+  it('★ 子体 partial → 返回成功文案但明确标注「未跑完」，结论保留', async () => {
+    subagentImpl = async (req) => ({
+      id: 'sa_partial',
+      role: req.role,
+      ok: true,
+      partial: true,
+      steps: 12,
+      tokens: 900,
+      text: '查到三条，第四条未核实',
+      error: '子任务步数上限（12 步）',
     })
+    const r = await tool('delegate').execute('c1', {
+      role: 'researcher',
+      task: '查驿站',
+    })
+    expect(r.isError).toBeFalsy()
+    expect(textOf(r)).toContain('未跑完')
+    expect(textOf(r)).toContain('子任务步数上限（12 步）')
+    expect(textOf(r)).toContain('查到三条')
   })
 
   it('★ 子体失败时返回 fail，并带上已产出的部分结论', async () => {
@@ -168,6 +189,7 @@ describe('delegate', () => {
       id: 'sa_test',
       role: req.role,
       ok: false,
+      partial: false,
       steps: 1,
       tokens: 10,
       text: '查到一半',

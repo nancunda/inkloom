@@ -486,6 +486,10 @@ export type AgentEvent =
       steps: number
       tokens: number
       summary: string
+      /** 完整结论（已截到 6000 字）：trace 详情靠它展示 */
+      text: string
+      /** true = 结论可用但不完整（步数触顶/超时） */
+      partial: boolean
       /** 失败原因（超时/步数触顶/抛错/被停止）；成功为 null */
       error: string | null
     }

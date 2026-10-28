@@ -58,9 +58,11 @@ export type AgentStreamPayload =
       id: string
       role: AgentRoleId
       ok: boolean
+      partial: boolean
       steps: number
       tokens: number
       summary: string
+      text: string
       error: string | null
     }
   | { type: 'run.finished' }
@@ -655,9 +657,12 @@ export async function startAgentRun(
         id: e.id,
         role: e.role,
         ok: e.ok,
+        partial: e.partial,
         steps: e.steps,
         tokens: e.tokens,
         summary: e.summary,
+        // ★ 完整结论进事件（trace 详情要读全文）；6000 字上限防 journal 膨胀
+        text: clip(e.text, 6000),
         error: e.error,
       })
     },

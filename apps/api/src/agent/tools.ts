@@ -43,7 +43,7 @@ import type { CriticInput, CriticVerdict } from './critic.js'
 import { renderGraphSummary } from './graph-summary.js'
 import { createGraphTools } from './graph-tools.js'
 import { type AgentGate, deriveGate } from './plan-gate.js'
-import { isAgentRoleId } from './roles.js'
+import { AGENT_ROLES, isAgentRoleId } from './roles.js'
 import type { SubagentRequest, SubagentResult } from './subagent.js'
 import { clip, fail, ok } from './tool-result.js'
 
@@ -571,17 +571,29 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     name: 'delegate',
     label: '派子智能体',
     description:
-      '把一个只读子任务派给专家子智能体并等它跑完：researcher=联网考据，worldbuilder=审设定与图谱缺口，critic=查一致性，stylist=文风建议。它看不到你的对话历史，也不写文件；需要背景请写进 context。',
+      '把一个只读子任务派给专家子智能体并等它跑完：researcher=联网考据，worldbuilder=审设定与图谱缺口，critic=查一致性，stylist=文风建议。它看不到你的对话历史，也不写文件；需要背景请写进 context。子体在步数上限内没跑完会返回「未跑完」+ 部分结论，可直接用，也可以再派一次更窄的任务。',
     parameters: DELEGATE,
     execute: async (_id, params) => {
       if (deps.subagent === undefined) return fail('这个会话没有启用子智能体')
       // TypeBox 只在真实工具循环里校验；测试/直接调用 execute 会绕过，保留运行期兜底
       if (!isAgentRoleId(params.role)) return fail(`未知角色：${params.role}`)
+      const role = AGENT_ROLES[params.role]
       const r = await deps.subagent({
         role: params.role,
-        task: params.task,
+        // ★ 子体不知道自己的预算，调用方必须告诉它，否则会在工具上把步数撞满
+        task: `${params.task}\n\n（本次最多 ${role.maxSteps} 步；用满前先给结论）`,
         ...(params.context === undefined ? {} : { context: params.context }),
       })
+      if (r.partial) {
+        const part =
+          r.text.length <= 4000
+            ? r.text
+            : `${r.text.slice(0, 4000)}…（已截断，共 ${r.text.length} 字符）`
+        return ok(
+          `[${r.role}] 未跑完（${r.error ?? '中断'}），以下结论可能不完整；需要更多信息就再派一次更窄的任务：\n${part}`,
+          { role: r.role, ok: r.ok, partial: true, steps: r.steps, tokens: r.tokens },
+        )
+      }
       if (!r.ok) {
         const partial =
           r.text.length === 0 ? '' : `\n\n已产出的部分结论：\n${r.text.slice(0, 1000)}`

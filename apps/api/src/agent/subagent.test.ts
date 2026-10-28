@@ -173,6 +173,41 @@ describe('createSubagentRunner', () => {
     expect(ended.error).toBe('子任务步数上限（8 步）')
   })
 
+  it('★ 触顶但已有结论 → ok=true + partial，不再当失败丢掉结论', async () => {
+    h.callToolCalls = 9
+    h.script = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '查到三条：一驿三十里' }],
+          usage: { input: 10, output: 5 },
+        },
+      },
+    ]
+    const d = deps()
+    const r = await d.run({ role: 'stylist', task: 'x' })
+    expect(r.ok).toBe(true)
+    expect(r.partial).toBe(true)
+    expect(r.error).toBe('子任务步数上限（8 步）')
+    expect(r.text).toContain('一驿三十里')
+    const ended = d.events.find((e) => e.type === 'ended') as Extract<
+      SubagentEvent,
+      { type: 'ended' }
+    >
+    expect(ended.ok).toBe(true)
+    expect(ended.partial).toBe(true)
+    expect(ended.text).toContain('一驿三十里')
+  })
+
+  it('★ 触顶且没有结论 → 仍然是失败（partial=false）', async () => {
+    h.callToolCalls = 9
+    const d = deps()
+    const r = await d.run({ role: 'stylist', task: 'x' })
+    expect(r.ok).toBe(false)
+    expect(r.partial).toBe(false)
+  })
+
   it('★ 主预算用尽 → 第一个工具调用就被挡', async () => {
     const d = deps()
     d.budget.steps = 80
