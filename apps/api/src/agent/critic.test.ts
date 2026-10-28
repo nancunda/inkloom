@@ -38,6 +38,31 @@ describe('parseCriticReport', () => {
     expect(r?.conflicts.map((c) => c.message)).toEqual(['有证据'])
     expect(r?.suggestions).toEqual([])
   })
+
+  it.each([
+    ['severity 大写', { conflicts: [{ severity: 'Error', message: 'x', evidence: ['a.json'] }] }],
+    ['字段名错', { conflicts: [{ level: 'error', message: 'x', evidence: ['a.json'] }] }],
+    ['evidence 是字符串', { conflicts: [{ severity: 'error', message: 'x', evidence: 'a.json' }] }],
+    ['message 为空', { conflicts: [{ severity: 'error', message: '', evidence: ['a.json'] }] }],
+    ['元素是字符串', { conflicts: ['error: x (a.json)'] }],
+  ])('★ 形状非法 → null（不能静默变成空 conflicts）：%s', (_name, body) => {
+    expect(parseCriticReport(JSON.stringify(body))).toBeNull()
+  })
+
+  it('★ 围栏前后带解释文字也能解析（模型常态输出）', () => {
+    const body = JSON.stringify({
+      conflicts: [{ severity: 'error', message: 'x', evidence: ['a.json'] }],
+    })
+    const text = `检查结果如下：\n\`\`\`json\n${body}\n\`\`\`\n以上。`
+    expect(parseCriticReport(text)?.conflicts).toHaveLength(1)
+  })
+
+  it('★ suggestions 为 null 不算失败', () => {
+    expect(parseCriticReport('{"conflicts":[],"suggestions":null}')).toEqual({
+      conflicts: [],
+      suggestions: [],
+    })
+  })
 })
 
 describe('decideCritic', () => {
@@ -64,5 +89,12 @@ describe('decideCritic', () => {
 
   it('★ null → skipped（故障按未完成处理）', () => {
     expect(decideCritic(null)).toEqual({ kind: 'skipped', reason: '返回内容不是合法 JSON' })
+  })
+
+  it('★ 端到端：出现 error 时绝不会被判成 passed', () => {
+    const text = JSON.stringify({
+      conflicts: [{ severity: 'error', message: '境界矛盾', evidence: ['characters/index.json'] }],
+    })
+    expect(decideCritic(parseCriticReport(text)).kind).toBe('blocked')
   })
 })

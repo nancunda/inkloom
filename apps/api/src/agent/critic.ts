@@ -29,8 +29,17 @@ function isRec(v: unknown): v is Record<string, unknown> {
 
 function stripFence(text: string): string {
   const t = text.trim()
-  const m = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(t)
-  return m === null ? t : (m[1] ?? '').trim()
+  // ★ 不锚定整段：模型习惯在围栏前后加一句解释，锚定会让 critic 常态退化成 skipped
+  const m = /```(?:json)?\s*([\s\S]*?)```/i.exec(t)
+  if (m === null) return t
+  const inner = (m[1] ?? '').trim()
+  try {
+    JSON.parse(inner)
+    return inner
+  } catch {
+    // 围栏内容不是 JSON（多块/嵌套）：交回外层按非法处理，不猜
+    return t
+  }
 }
 
 function strings(v: unknown): string[] {
@@ -56,17 +65,23 @@ export function parseCriticReport(text: string): CriticReport | null {
   const rawConflicts = parsed['conflicts']
   if (!Array.isArray(rawConflicts)) return null
   const rawSuggestions = parsed['suggestions']
-  if (rawSuggestions !== undefined && !Array.isArray(rawSuggestions)) return null
+  if (rawSuggestions !== undefined && rawSuggestions !== null && !Array.isArray(rawSuggestions)) {
+    return null
+  }
 
   const conflicts: CriticConflict[] = []
   for (const item of rawConflicts) {
-    if (!isRec(item)) continue
+    // ★ 形状不对就整份作废：若 continue 吞掉，critic 报了 error 也会变成空 conflicts → 谎报通过
+    if (!isRec(item)) return null
     const severity = item['severity']
     const message = item['message']
-    if (severity !== 'error' && severity !== 'warning') continue
-    if (typeof message !== 'string' || message.trim().length === 0) continue
-    const evidence = strings(item['evidence'])
-    // ★ 没有证据的矛盾不采信：模型很容易编一条「看起来有道理」的冲突
+    const rawEvidence = item['evidence']
+    if (severity !== 'error' && severity !== 'warning') return null
+    if (typeof message !== 'string' || message.trim().length === 0) return null
+    if (!Array.isArray(rawEvidence)) return null
+    if (rawEvidence.some((e) => typeof e !== 'string')) return null
+    const evidence = strings(rawEvidence)
+    // ★ 唯一允许丢弃的理由：模型没给证据（没证据的矛盾不采信）
     if (evidence.length === 0) continue
     conflicts.push({ severity, message: message.trim(), evidence })
   }
@@ -75,8 +90,10 @@ export function parseCriticReport(text: string): CriticReport | null {
 
 export function decideCritic(report: CriticReport | null): CriticVerdict {
   if (report === null) return { kind: 'skipped', reason: '返回内容不是合法 JSON' }
-  const errors = report.conflicts.filter((c) => c.severity === 'error')
-  const warnings = report.conflicts.filter((c) => c.severity === 'warning')
+  // 导出的函数可能被手工构造的对象调用：缺字段当作空，而不是让下游 slice 抛错
+  const conflicts = Array.isArray(report.conflicts) ? report.conflicts : []
+  const errors = conflicts.filter((c) => c.severity === 'error')
+  const warnings = conflicts.filter((c) => c.severity === 'warning')
   if (errors.length > 0) return { kind: 'blocked', errors, warnings }
-  return { kind: 'passed', warnings, suggestions: report.suggestions }
+  return { kind: 'passed', warnings, suggestions: report.suggestions ?? [] }
 }
