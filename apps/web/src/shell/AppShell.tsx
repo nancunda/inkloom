@@ -139,7 +139,7 @@ export function AppShell() {
             </span>
           </button>
           <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
-            v0.0.1
+            v{__APP_VERSION__}
           </span>
           <span className="ml-2 text-xs text-neutral-400">
             {overview?.stats.finalized ?? 0}/{overview?.stats.total ?? 0} 章定稿

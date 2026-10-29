@@ -1,6 +1,6 @@
 [package]
 name = "inkloom-desktop"
-version = "1.0.0"
+version = "0.1.0"
 description = "inkloom desktop shell"
 edition = "2021"
 

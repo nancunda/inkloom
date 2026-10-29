@@ -1,7 +1,7 @@
 {
   "name": "@inkloom/desktop",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "inkloom 桌面壳：拉起本地服务，窗口直接开在书页上",
   "scripts": {
