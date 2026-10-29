@@ -499,24 +499,34 @@ function pauseRun(run: AgentRun, message: string): void {
   finishRun(run)
 }
 
-/** 把合并后的 plan 写回状态文件（定义已在 write_plan/update_plan 时写过） */
+/**
+ * 把合并后的 plan 写回状态文件（定义已在 write_plan/update_plan 时写过）。
+ *
+ * ★ ENOENT 不算失败：书目录被删/切走时本来就写不进去（测试 teardown 也是这个形态），
+ *   而这句落盘经常挂在 run 收尾的 fire-and-forget 链上——抛出去就是未处理的 rejection。
+ *   其它错误照旧抛，不能把真的写盘故障吞掉。
+ */
 async function persistPlan(run: AgentRun, plan: Plan): Promise<void> {
-  await writeQueue.run(async () => {
-    await writePlanState(run.root, plan.id, {
-      status: plan.status,
-      summary: plan.summary,
-      feedback: plan.feedback,
-      tasks: plan.tasks.map((t) => ({
-        id: t.id,
-        status: t.status,
-        artifacts: t.artifacts,
-        feedback: t.feedback,
-        summary: t.summary,
-        reviewed: t.reviewed,
-      })),
-      updatedAt: new Date().toISOString(),
+  try {
+    await writeQueue.run(async () => {
+      await writePlanState(run.root, plan.id, {
+        status: plan.status,
+        summary: plan.summary,
+        feedback: plan.feedback,
+        tasks: plan.tasks.map((t) => ({
+          id: t.id,
+          status: t.status,
+          artifacts: t.artifacts,
+          feedback: t.feedback,
+          summary: t.summary,
+          reviewed: t.reviewed,
+        })),
+        updatedAt: new Date().toISOString(),
+      })
     })
-  })
+  } catch (e) {
+    if (!(e as Error).message.includes('ENOENT')) throw e
+  }
   emit(run, { type: 'plan.updated', plan })
 }
 
