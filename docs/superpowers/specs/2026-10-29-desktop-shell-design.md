@@ -60,7 +60,7 @@ apps/desktop/
 
 1. 建窗口（**先加载本地等待页**，不是白屏）；
 2. 取一个空闲端口（`bind 127.0.0.1:0`）；
-3. 起服务端：`server/node.exe app/node_modules/tsx/dist/cli.mjs app/apps/api/src/server.ts`，`cwd=server`，`PORT=<port>`，`INKLOOM_LIBRARY` 未设置时默认 `~/inkloom`；Windows 下 `CREATE_NO_WINDOW` 不弹黑框；stdout/stderr 写 `%LOCALAPPDATA%\inkloom\server.log`；
+3. 起服务端：`server/node.exe app/node_modules/tsx/dist/cli.mjs app/apps/api/src/server.ts`，`cwd=server`，`PORT=<port>`，`INKLOOM_LIBRARY` 未设置时默认 `~/inkloom`；Windows 下 `CREATE_NO_WINDOW` 不弹黑框；stdout/stderr 写 `%APPDATA%\inkloom\server.log`；
 4. 探活：真正 `GET /api/library` 直到 200（最多 90 秒）；
 5. `window.navigate(http://127.0.0.1:<port>/)`；失败则把错误写进等待页（含日志路径）；
 6. 退出时 kill 子进程（`RunEvent::Exit` / `ExitRequested`）。
@@ -69,7 +69,7 @@ apps/desktop/
 ### 3.4 与浏览器版的一致性
 
 - 书库默认 `~/inkloom`，与 CLI、浏览器版相同；外部设了 `INKLOOM_LIBRARY` 就尊重外部（开发时指向 `.tmp-library`）。
-- **配置放用户目录** `%LOCALAPPDATA%\inkloom\.env`，不放在安装目录（升级/卸载会连 key 一起没掉）：壳层给子进程传 `--env-file-if-exists=<该路径>` 与 `INKLOOM_ENV_FILE`，设置页 `PUT /api/settings` 写入同一文件，下次启动自动加载。便携版与开发版不设这两个变量，仍是 `cwd/.env`。
+- **配置放用户目录** `%APPDATA%\inkloom\.env`，不放在安装目录：NSIS 的 currentUser 安装就是 `%LOCALAPPDATA%\inkloom`，把 .env 放那儿会在卸载时连 key 一起删。壳层给子进程传 `--env-file-if-exists=<该路径>` 与 `INKLOOM_ENV_FILE`，设置页 `PUT /api/settings` 写入同一文件，下次启动自动加载。便携版与开发版不设这两个变量，仍是 `cwd/.env`。
 - 前端零改动：服务端同时托管 `apps/web/dist`（`INKLOOM_WEB_DIST` 可覆盖），SSE 同源。
 - 端口随机：桌面版不会和开发用的 8787 抢。
 

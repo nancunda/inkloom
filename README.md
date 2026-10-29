@@ -126,9 +126,9 @@ Agent 侧工具：`read_book`、`read_element`、`web_search`、`read_url`、`re
 
 - **自带服务端**：窗口打开时先显示等待页，服务端就绪后自动进书库；端口随机（不占开发用的 8787）
 - **书库与浏览器版相同**：默认 `~/inkloom`，外部设了 `INKLOOM_LIBRARY` 就听外部的
-- **Key 放用户目录**：设置页写的是 `%LOCALAPPDATA%\inkloom\.env`，下次启动自动加载；升级不该带走它
+- **Key 放用户配置目录**：设置页写的是 `%APPDATA%\inkloom\.env`，下次启动自动加载；安装目录被卸载也不会带走它
 - **单实例**：再双击一次只是把已有窗口唤到前台，不会起第二个服务端
-- **启动失败**：窗口里直接显示原因和日志路径 `%LOCALAPPDATA%\inkloom\server.log`
+- **启动失败**：窗口里直接显示原因和日志路径 `%APPDATA%\inkloom\server.log`
 - **关闭窗口**即结束本地服务，不留后台进程
 
 从源码打包（需要 Rust 工具链与 NSIS，`tauri build` 会自动装后者）：
@@ -323,7 +323,9 @@ pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 - 端口随机：四次启动分别是 58816 / 58525 / 53938 / 61119，不和开发用的 8787 抢
 - 单实例：第一个实例在跑时再双击一次 exe，5 秒内自己退出；桌面进程保持 1 个、服务端监听只有 1 处
 - 退出清理：关窗口后桌面进程与 node 子进程全部退出、端口释放，不留孤儿
-- 配置位置：`GET /api/settings` 返回 `%LOCALAPPDATA%\inkloom\.env`；`PUT` 写入 `INKLOOM_WORDS_PER_CHAPTER=2800` 后重启应用，该字段 `value=2800` 且 `pendingRestart=false` —— `--env-file-if-exists` 确实生效
+- 配置位置：`GET /api/settings` 返回 `%APPDATA%\inkloom\.env`；`PUT` 写入 `INKLOOM_WORDS_PER_CHAPTER=2800` 后重启应用，该字段 `value=2800` 且 `pendingRestart=false` —— `--env-file-if-exists` 确实生效
+- NSIS 安装验收：静默安装 exit 0，快捷方式与卸载项就位；安装态启动后 `libraryRoot=C:\Users\xiesi\inkloom`（默认书库）、空书库页直接显示新建表单
+- NSIS 卸载验收：注册表项与开始菜单项清零，`%APPDATA%\inkloom` 保留；安装目录只剩运行时写的日志——所以配置目录必须放在安装目录之外
 - 安装包：`inkloom_1.0.0_x64-setup.exe`，61.67 MiB（NSIS，currentUser）
 
 **已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent · 多智能体与一致性门禁 · trace 视图与会话续接 · 书页阅读器 · Windows 桌面版**。

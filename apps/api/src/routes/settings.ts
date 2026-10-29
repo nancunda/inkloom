@@ -48,8 +48,8 @@ const DEFAULTS: Record<string, string> = {
 }
 
 function envFile(): string {
-  // ★ 桌面版把 .env 放在用户目录（壳层设 INKLOOM_ENV_FILE）：装到 Program Files
-  //   样式的位置后，cwd 里的 .env 会在升级/卸载时跟着走，key 就丢了。
+  // ★ 桌面版把 .env 放在用户配置目录（壳层设 INKLOOM_ENV_FILE，实际是 %APPDATA%\inkloom\.env）：
+  //   装到程序目录里的 .env 会在升级/卸载时跟着走，key 就丢了。
   //   便携版与开发版不设这个变量，仍是老行为：cwd/.env。
   const custom = (process.env['INKLOOM_ENV_FILE'] ?? '').trim()
   if (custom.length > 0) return custom

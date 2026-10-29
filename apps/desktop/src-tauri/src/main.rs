@@ -35,9 +35,13 @@ fn server_root(app: &tauri::AppHandle) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server")
 }
 
-/// 桌面版的配置目录：日志与 .env 都放这里，与书库（~/inkloom）分开
+/// 桌面版的配置目录：日志与 .env 放这里。
+///
+/// ★ 不能用 %LOCALAPPDATA%\inkloom：NSIS 的 currentUser 安装就装在那儿，
+///   卸载会连用户填的 key 一起删。%APPDATA%\inkloom 不属安装清单，升级/卸载都不碰。
 fn app_dir() -> Option<PathBuf> {
-    let dir = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?.join("inkloom");
+    let base = std::env::var_os("APPDATA").map(PathBuf::from)?;
+    let dir = base.join("inkloom");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
