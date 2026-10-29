@@ -1,151 +1,60 @@
 # inkloom
 
-**本地优先的长篇小说创作工作台：AI 起草，人确认；要素结构化，过程可回退。**
+[中文](README.md) · [English](README.en.md)
 
-> 不做「一键生成整本小说」的批量流水线。
-> inkloom 提供的是**可靠性**（跨章不崩）、**可控性**（每步可审可退）、**可视化**（结构看得见）。
+![version](https://img.shields.io/badge/version-0.1.0-3F5D4B?style=flat-square)
+![platform](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Web-3F5D4B?style=flat-square)
+![tests](https://img.shields.io/badge/tests-876%20passing-3F5D4B?style=flat-square)
 
-![共创 Agent](docs/screenshots/accept-plan-gate.png)
+**AI 与你共写长篇小说，稿子永远是你的。** 一本书 = 一个文件夹：正文是 Markdown，设定是 JSON，历史归 Git —— 删掉软件，稿子还在。
 
----
+![阅读器](docs/screenshots/reader.png)
 
-## 它是什么
+## 它和「又一个 AI 写作工具」不一样
 
-一本书就是一个文件夹：正文是 Markdown，要素是 JSON，版本历史是书内的 Git 仓库。
-删掉软件，稿子还在；换台机器，`git clone` + 重建索引就能接着写。
+| | inkloom | 常见的 AI 写作工具 |
+|---|---|---|
+| 数据在哪 | 本地文件夹，可 `git clone`、可整个拷走 | 别人的数据库 |
+| AI 的权限 | 只提案：计划要你批准，正文要你接受 | 直接改写你的稿子 |
+| 长篇结构 | 世界 / 角色 / 线索 / 节奏 都是结构化数据 | 一段长对话 |
+| 历史 | 每次接受自动 commit，随时回退 | 撤销栈 |
 
-九个模块：
+## 十个模块
 
-| 模块 | 干什么 |
+概览 · 共创 · 世界 · 角色 · 故事 · 图谱 · 写作 · 阅读 · 素材 · 设置
+
+| 概览：进度、张力曲线、悬着的线 | 图谱：要素按类型分组，位置会记住 |
 |---|---|
-| **概览** | 定稿进度、张力曲线、未兑现线索、生成记录 |
-| **共创** | 会话列表 + trace 树 + 详情面板：一次共创是一棵动作树（主笔 / 工具 / 子智能体 / 计划 / 门禁），历史会话可回放、可续接 |
-| **世界** | 规则、力量体系、地点与路线（地图上拖拽） |
-| **角色** | 角色卡、关系网络（拖两个节点连线建关系）、形象图 |
-| **故事** | 卷、故事弧、逐章蓝图、线索轨迹 |
-| **图谱** | Cytoscape 复合图：类=分组框、实例=节点、拖拽记住位置；按类型/谓词/跳数过滤，右键查两点路径 |
-| **写作** | 场景候选、diff、接受/拒绝、整场重写、定稿、专注模式 |
-| **阅读** | 把正文排成一本书：双页对开、真分页、目录抽屉、位置记忆、沉浸模式 |
-| **素材** | 形象图与参考资产（prompt / provider / params 可复现） |
-| **设置** | 模型、密钥、判断层开关 |
+| ![概览](docs/screenshots/overview.png) | ![图谱](docs/screenshots/graph.png) |
 
-所有写入都经过 **CAS → revision → 索引同步 → git commit**。
-时间机器随时回退；回退不是"删记录"，而是产生一个新的真实状态。
+## 共创 Agent：先批准计划，才动笔
 
----
+![共创](docs/screenshots/cocreate.png)
 
-## 书库：一个文件夹管所有书
+- **计划驱动**：Agent 先写 `write_plan`，你在界面上批准后才允许改设定、写正文
+- **多智能体**：`delegate('researcher')` 派子智能体去查资料，步数与 token 有上限，触顶如实收尾
+- **一致性门禁**：任务说「做完了」之前，子 Agent 拿新内容比对全书设定；有矛盾就返回 `error`，任务不许关
+- **全链路 trace**：每个 span 的耗时、token、输入输出都能点开；会话落在书里，重启还能续
 
-![切换书](docs/screenshots/accept-library.png)
+## 正文排成一本书
 
-- 书库根目录默认 `~/inkloom`（`INKLOOM_LIBRARY` 可覆盖），**一级子目录 = 一本书**
-- 每本书仍是独立文件夹（自带 Git 与索引），可以整个拷进 / 拷出书库
-- 顶栏点书名切换书；切书会整页重载，并清掉上一本的查询缓存与 Agent runId
-- 空书库是正常状态：直接在浏览器里「新建一本书」
-- 切书前要求没有进行中的共创会话 / 生成任务——避免把进度写进另一本书
+双页对开、章扉页、CSS 多栏真分页（不是假滚动）：`←` `→` 翻屏，`c` 目录，`f` 沉浸，字号四档，读到哪记到哪，窄屏自动退化成单页。
 
----
-
-## 图谱：看得见的世界模型
-
-![图谱](docs/screenshots/accept-ontology-v2.png)
-
-- 画布是 Cytoscape 复合图：每个类一个分组框，实例挂在最具体的类里；`instanceOf` 用父子关系表达，不再单独画边
-- 位置会记住：拖过的坐标存在浏览器本地，key 是 `inkloom:graph-layout:<bookId>:<signature>`；书内容一变旧坐标自动作废
-- 布局可切：力导向（fcose）/ 层级 / 同心圆 / 网格；双击类框折叠；切换布局会重置拖拽位置（工具栏有提示）
-- 过滤与搜索：节点类型多选、谓词多选、左栏类树、「只看 N 跳邻居」；搜索命中会高亮并聚焦
-- 路径：右键节点设起点 / 终点，右栏逐跳显示「林岚 —师徒→ 玄真」，其余节点淡出
-- 人物、地点、规则、线索、卷是**虚拟节点**：来自各自文件，改要去原模块改
-- 势力、物品、概念可以写进 `world/ontology/nodes.jsonl`；类与谓词在 `world/ontology/classes.json`
-- 跨类型边在 `world/ontology/edges.jsonl`（append-only，带章节区间与来源）
-- 坏行不会整页报错：跳过该行并在页面底部列出「第几行坏了」
-- 图谱只读：Agent 用 `query_graph` / `find_path` / `explain_fact` 查；改设定走 `write_element`
-- 同一套推理也是 HTTP 接口：`GET /api/ontology/path`、`POST /api/ontology/query`、`GET /api/ontology/explain`
-
----
-
-## 共创 Agent（计划驱动）
-
-![打回与重新审阅](docs/screenshots/accept-task-gate.png)
-
-像和一位总编对话，而不是提交一个批处理任务：
-
-- **先计划，后执行**：Agent 读完全书 → `write_plan` 提交 4–8 个任务 → 你批准 → 它逐项执行；每个任务写明技能、完成标准、是否需要你审阅
-- **任务门禁**：需要审阅的任务完成后停下；通过 → 自动进入下一个任务，打回 → 带意见重做，跳过 → 记为已跳过并继续
-- **随时说话**：运行中发消息会 `steer` 到当前步之后；**等待审阅时发消息 = 带意见打回**
-- **连续会话**：本轮完成后可以接着聊（"第 5 场扩一下""下一章蓝图改狠一点"），不重开任务
-- **可恢复**：计划从书里读取（刷新 / 服务重启后仍在）；停止、预算耗尽后「继续执行」从没做完的任务接着做，计划作废了可「重新规划」
-- **时间线而不是气泡**：一次共创真正发生的是一棵动作树——主笔 → 模型调用 / 工具 / 计划 / 门禁 / 子智能体。点任一节点看输入输出、思考过程、产物与原始事件；时间轴条的宽度就是真实耗时，一眼看出哪一步卡了 28 秒
-- **会话落盘**：每个会话存 `.inkloom/agent/sessions/`（`<id>.meta.json` 索引 + `<id>.jsonl` 事件流 + `<id>.messages.json` 快照）。左栏列出全部会话，可改名 / 删除；刷新或重启服务后点开就能回放整棵树（切片 3 的老会话自动补录成只读的「历史」）
-- **真续接**：续接会把 messages 快照装进新 run（system 用当前 prompt 重建，工具集变了也不会错位），所以子体和工具能引用上文，不是只拿标题重开
-- **全程可见**：思考折叠、工具卡片与结果、产物一键跳到对应模块
-- **预算**：`80 + 2 × 任务数` 步工具调用保护；章节与形象图不设额度，一个会话可连写多章；用完显示「已暂停」，点「继续执行」接着跑
-- **可联网**：Agent 有 `web_search` / `read_url` / `read_lore`；结果落资料卡，默认未批准，作者批准后才进 prompt。写作页右栏的「资料卡」列表可以直接批准/删除。
-- **多智能体**：主 Agent 用 `delegate` 派只读子智能体——`researcher` 联网考据、`worldbuilder` 梳理设定与图谱、`critic` 核对矛盾、`stylist` 提文风建议。子体只拿到「任务 + 背景」（看不到主对话），卡片上能看到角色、步数、tokens 与每次工具调用。
-- **子体软着陆**：子体步数触顶 / 超时 / 报错都不再抛给主 Agent——已产出的结论保留在卡片上（右栏 Output 可读全文），状态标为「部分完成」（琥珀），主 Agent 接着往下走
-- **一致性门禁**：任务 `done` 前自动派 `critic` 核对产物与设定/正文；`error` 级矛盾会拦住完成（任务保持未完成并回传证据），检查器自身出错或超时则放行并标注「检查未完成」。`INKLOOM_CRITIC=off` 可关闭。
-- **技能**：`world` 世界、`characters` 人物、`story` 故事、`chapter` 正文、`review` 审阅、`free` 自由
-
-Agent 侧工具：`read_book`、`read_element`、`web_search`、`read_url`、`read_lore`、
-`write_element`、`write_blueprint`、`write_plan`、`update_plan`、`update_task`、
-`request_review`、`generate_chapter`、`generate_portrait`、`delegate`。
-
-计划定义存 `story/plans/<id>.json`（进 Git，可审阅 / 回滚）；执行状态存
-`.inkloom/agent/plans/<id>.state.json`（不进 Git，随运行更新）。
-运行在 [Pi Agent](https://github.com/earendil-works/pi)（MIT）+ DeepSeek `deepseek-flash`；
-密钥只在服务端环境变量里，浏览器不接触。
-
----
-
-## 阅读：把正文排成一本书
-
-![阅读器](docs/screenshots/accept-reader.png)
-
-写完的正文不应该只躺在编辑框里。阅读模块用 `GET /chapters/:n/text` 拼好的段落排书，**不动数据、不增依赖**：
-
-- **双页对开**：暖纸 `#FBF8F1` + 宋体系 + 首行缩进 2em，中缝是淡阴影而不是 3D 书脊；页眉左书名右章名，页脚外侧页码，未定稿章多一个「草稿」点
-- **章扉页**：每章第一页只放「第四章 / 剑冢 / 一句摘要 / 细线」，正文从右页开始——短章一屏就读完，也不硬造空白页
-- **真分页**：CSS multi-column 让浏览器断中文，`scrollWidth` 反推列数，`translateX` 翻屏；`ResizeObserver` 与 `document.fonts.ready` 后重算，窗口缩放、改字号都按比例保住阅读位置
-- **翻页**：← → / PgUp PgDn / 空格；Home / End 首尾；翻到章末自动进下一章（没有正文的章翻开是「本章尚未成文」+ 去写作）
-- **目录抽屉**：`c` 打开，列全部章节（序 / 章名 / 字数 / 定稿点），↑↓ 选择、Enter 打开、Esc 收起
-- **体感**：字号四档、位置记忆（`localStorage: inkloom.read.<bookId>`）、沉浸模式（`f`，隐去顶栏与左栏，Esc 退出）、进度细线与`aria-live` 页码播报
-- **降级**：窄屏（<1180px）自动退化成单页纵向滚动，不硬塞双页
-
----
-
-## 快速开始
-
-### 桌面版（Windows）
+## 桌面版：双击即用
 
 ![桌面版](docs/screenshots/accept-desktop.png)
 
-装上就是独立应用：不用开浏览器、不用记 `pnpm api`。
+Tauri 2 外壳 + 内置本地服务端，不用开浏览器、不用装 Node；随机端口、单实例、关窗即停。书库默认 `~/inkloom`，Key 存在 `%APPDATA%\inkloom\.env`（卸载不会带走）。
 
-1. 双击安装包（NSIS，装到当前用户，不需要管理员）
-2. 从开始菜单或桌面启动 **inkloom**
+## 快速开始
 
-- **自带服务端**：窗口打开时先显示等待页，服务端就绪后自动进书库；端口随机（不占开发用的 8787）
-- **书库与浏览器版相同**：默认 `~/inkloom`，外部设了 `INKLOOM_LIBRARY` 就听外部的
-- **Key 放用户配置目录**：设置页写的是 `%APPDATA%\inkloom\.env`，下次启动自动加载；安装目录被卸载也不会带走它
-- **单实例**：再双击一次只是把已有窗口唤到前台，不会起第二个服务端
-- **启动失败**：窗口里直接显示原因和日志路径 `%APPDATA%\inkloom\server.log`
-- **关闭窗口**即结束本地服务，不留后台进程
+### 桌面版（Windows，推荐）
 
-从源码打包（需要 Rust 工具链与 NSIS，`tauri build` 会自动装后者）：
+从 [Releases](https://github.com/nancunda/inkloom/releases/latest) 下载 `inkloom_0.1.0_x64-setup.exe`，双击安装，从开始菜单启动。
 
-```bash
-node scripts/build-release.mjs              # 先出便携版：web/dist + API + Node 运行时
-pnpm --filter @inkloom/desktop build        # 再把便携版塞进 Tauri，产出 NSIS 安装包
-```
+### 便携版（无需安装）
 
-### 便携版（无需 Node / pnpm）
-
-1. 从 [Releases](https://github.com/nancunda/inkloom/releases) 下载 `inkloom-win-x64.zip`
-2. 解压到任意目录
-3. 双击 `start.bat`
-4. 浏览器打开 **http://127.0.0.1:8787**
-
-内置 Node 运行时与示例书《七霞》。启动后在书库里打开它，或新建一本。
+下载 `inkloom-0.1.0-win-x64.zip` → 解压 → 双击 `start.bat` → 浏览器打开 `http://127.0.0.1:8787`。
 
 ### 开发版
 
@@ -153,191 +62,79 @@ pnpm --filter @inkloom/desktop build        # 再把便携版塞进 Tauri，产�
 pnpm install
 
 # 终端 1：API（默认 127.0.0.1:8787，无鉴权，因此只绑本机）
-# 书库默认 ~/inkloom；想放别处：INKLOOM_LIBRARY=./books pnpm api
 pnpm api
 
 # 终端 2：前端（Vite，/api 代理到 8787）
 pnpm web                # → http://localhost:5173
+
+# 桌面壳（需要 Rust 工具链）
+pnpm --filter @inkloom/desktop dev
 ```
 
-只跑一个端口也行：先 `pnpm --filter @inkloom/web build`，再启动 API，访问 8787 就是完整界面。
+打包桌面版：先 `node scripts/build-release.mjs` 出便携版，再 `pnpm --filter @inkloom/desktop build`。
 
 ### 环境变量
 
-写在仓库根目录的 `.env`（开发版）或 `start.bat` 同目录的 `.env`（便携版）：
+写在仓库根目录的 `.env`（开发版）、`start.bat` 同目录的 `.env`（便携版），或直接用界面的「设置」页（桌面版写在 `%APPDATA%\inkloom\.env`）。
 
 | 变量 | 用途 |
 |---|---|
 | `DEEPSEEK_API_KEY` | 生成正文、共创 Agent |
-| `SILICONFLOW_API_KEY` | 人物形象图（Kolors） |
+| `SILICONFLOW_API_KEY` | 人物形象图（Kolors）、判断层 |
 | `TAVILY_API_KEY` | 联网搜索（可选） |
-| `SEARXNG_BASE_URLS` | 可选：SearXNG 实例，逗号分隔（无 key 时仍可用 DuckDuckGo 兜底） |
+| `SEARXNG_BASE_URLS` | 可选：SearXNG 实例，逗号分隔（无 key 时 DuckDuckGo 兜底） |
 | `INKLOOM_LIBRARY` | 书库根目录，默认 `~/inkloom` |
-| `INKLOOM_BOOK` | 可选：启动时直接打开某本书（路径） |
-| `INKLOOM_CRITIC` | 任务完成后的一致性检查，默认 `on`；`off` 关闭（下次会话生效） |
+| `INKLOOM_CRITIC` | 任务完成前的一致性检查，默认 `on`；`off` 关闭 |
+| `INKLOOM_JUDGE` | 判断层：`off`（默认）/ `mock` / `openai` / `typesafe` |
 
 没有 key 也能浏览、导入、编辑、导出与回退，只是不能调模型。
-
----
-
-## 一条章的生命周期（CLI）
-
-```bash
-pnpm cli create ./my-novel --name 七霞 --genre 玄幻    # 建书（目录树 + 身份锚 + Git 初始提交）
-pnpm cli write ./my-novel --chapter 1                  # 生成候选场景（DeepSeek）
-pnpm cli scenes ./my-novel --chapter 1                 # 看场景与状态
-pnpm cli diff ./my-novel --chapter 1 --scene 1 --from 1 --to 2
-pnpm cli accept ./my-novel --chapter 1 --scene 1 --version 2
-pnpm cli rewrite ./my-novel --chapter 1 --scene 1 --version 2 --seg k3t1 --guidance "更克制"
-pnpm cli finalize ./my-novel --chapter 1               # 定稿（还有 candidate 时拒绝）
-pnpm cli propose ./my-novel --chapter 1                # 状态提案（不落库）
-pnpm cli unfinalize ./my-novel --chapter 1             # 撤销定稿：正文反解回场景
-```
-
-已有稿件可直接导入：`pnpm cli import ./my-novel --from novel.txt --name 七霞 --genre 玄幻`
-（按「第X章 / Chapter N」切章，所有降级都进 warnings）
-
-**三条不变量**
-
-| 不变量 | 含义 |
-|---|---|
-| accepted 互斥 | 同场景同一时刻只有一个 accepted 版本，接受新版本时旧版自动 rejected |
-| diff 不参与落库 | diff 只用于展示；写什么以你接受哪个版本为准 |
-| 状态提案只提案 | LLM 只输出「角色\|字段\|新值\|证据」，逐条确认后才写 revision |
-
----
-
-## 结构与可视化
-
-| | |
-|---|---|
-| ![关系网络](docs/screenshots/relations.png) | ![线索轨迹](docs/screenshots/threads.png) |
-| **关系网络**：拖两个节点连线直接建关系；时间滑块看第 N 章时谁和谁是什么关系 | **线索轨迹**：每条伏笔一行，横轴章号；线断在右边 = 还没回收，逾期标红 |
-| ![世界地图](docs/screenshots/world.png) | ![专注模式](docs/screenshots/focus.png) |
-| **世界地图**：地点按类型着色，路线标天数（系统算，AI 不得改），单向路线画箭头 | **专注模式** `Ctrl+Shift+E`：全屏、无侧栏、无 AI，点任意一段就地改写 |
-
-命令面板 `Ctrl+K`：输入章名或命令，↑↓ 选择、Enter 执行。
-
----
 
 ## 架构
 
 | 铁律 | 含义 | 强制手段 |
 |---|---|---|
-| **文件是唯一事实源** | 一本书 = 一个文件夹，正文是 `.md`。删掉软件，稿子还在 | `pnpm check-deps` |
-| **`core` 零 IO** | 纯函数，不碰文件/网络/数据库 | `scripts/check-deps.mjs` 扫描 import |
+| **文件是唯一事实源** | 一本书 = 一个文件夹，正文是 `.md` | `pnpm check-deps` |
+| **`core` 零 IO** | 纯函数，不碰文件/网络/数据库 | 依赖扫描 |
 | **要素 append-only** | 永不 UPDATE，回退 = 产生新版本 | JSONL 历史 + 写入串行队列 |
-| **正文不进 revision** | 正文历史只归 Git，两套版本系统会互相打架 | `EntityRevision` 类型里没有 `draft_segment` |
-| **派生层可丢弃** | 索引与 Agent 运行日志不进版本历史 | 书内 `.gitignore` + 启动自愈 |
+| **正文不进 revision** | 正文历史只归 Git | `EntityRevision` 里没有 `draft_segment` |
+| **派生层可丢弃** | 索引与 Agent 日志不进版本历史 | 书内 `.gitignore` + 启动自愈 |
 
 ```
 一本书/
 ├── novel.json                  身份锚与篇幅设定
 ├── chapters/ch-001.md          定稿正文（一章一文件）
 ├── chapters/ch-001/scenes/     候选场景 sN.vM.md（永远写新版本）
-├── characters/ story/ world/   结构化要素（数组文件，整表写入 + CAS）
-├── styles/ assets/             文风资产与形象图
+├── characters/ story/ world/   结构化要素（整表写入 + CAS）
 └── .inkloom/                   索引（可重建）、revision 历史、Agent journal
 ```
 
 | 包 | 职责 |
 |---|---|
 | `packages/shared` | Zod schema + 统一错误类型 |
-| `packages/core` | 段标记、版本、状态推导、diff、判断层接口（零 IO） |
-| `packages/prompt` | Prompt 装配（S1–S5 缓存友好 + U1–U9） |
+| `packages/core` | 段标记、版本、状态推导、diff（零 IO） |
+| `packages/prompt` | Prompt 装配（缓存友好 + 工具协议） |
 | `apps/api` | 存储 + 服务层 + HTTP 路由 + Agent 运行时（唯一有副作用的地方） |
 | `apps/cli` | 命令行，复用 api 服务层 |
 | `apps/web` | React 19 工作台，只读 HTTP，SSE 接收 Agent 事件 |
 | `apps/desktop` | Tauri 2 桌面壳：拉起便携版服务端 → 探活 → 窗口导航到本机端口 |
 
----
-
-## 判断层（可开关）
-
-Tier 2 判断层只输出选项 / 分数 / 是否，**从不生成一个字**。
-
-```bash
-INKLOOM_JUDGE=off        # 默认：不调用，不花钱
-INKLOOM_JUDGE=mock       # 固定脚本，验证管线
-INKLOOM_JUDGE=openai     # 硅基流动（国内可用），需 SILICONFLOW_API_KEY
-INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
-```
-
-界面上点「AI 味体检」：每场景三问（反 AI 味 / 节奏 / 一致性），置信度 < 0.75 的结论标「不注入」——阈值不是装饰。判断层挂掉只降级，不阻塞写作。
-
----
-
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 529 单元 + 347 集成
-pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
-pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
-pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
-pnpm verify:p1c  # HTTP 接口 + 启动自愈             18 条
-pnpm verify:p2a  # 局部重写                          7 条
-pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
+pnpm verify      # biome + tsc + check-deps + 529 单元 + 347 集成
 ```
 
-**切片 1（共创急救包）真机验收**（2026-10-27，书《七霞》）：
+真机验收（联网搜索、多智能体、trace 续接、阅读器、桌面版安装/卸载）逐条记在 [docs/verification.md](docs/verification.md)。
 
-- `POST /api/search`（真实 Tavily key）→ `provider=tavily`、`degraded=false`、3 条命中都带 `snippet` 与 `provider`
-- `read_url` 抓 `https://example.com` → `extracted=true`、156 字，落成资料卡；`GET /api/lore` 能看到同一条且 `content` 非空
-- 重定向、IP 变体、5MB 上限、步数耗尽空转、reindex 保留资料卡均有单测/集成覆盖
-- `generate_chapter` 连写 3 章不再被额度拦住（`plan-tools.test.ts` 等价证据）
-
-**切片 3（多智能体）真机验收**（2026-10-28，书《七霞》）：
-
-![多智能体](docs/screenshots/accept-multi-agent.png)
-
-- 真实会话里主 Agent 调 `delegate('researcher')`：卡片显示角色、步数、tokens 与每次工具调用；展开能看到 `web_search` / `read_url` / `read_lore` 轨迹与资料卡 id（`lr-e59f201f`）；运行中步数实时刷新，触顶显示「未跑完 · 原因：子任务步数上限」
-- 把裴无咎外观改成「双腿齐膝断去」后调 `update_task(done)`：返回 2 处 `error`，任务保持未完成且 `artifacts` 未写入（其中一处是书里原本就有的矛盾：苏婉 22 岁 vs「与父亲三十年只见过三面」）
-- `INKLOOM_CRITIC=off` 重跑同一调用：直接 `done`，子智能体调用 0 次
-
-**切片 4（trace 视图与会话）真机验收**（2026-10-29，书《七霞》：1440×900，`INKLOOM_LIBRARY=.tmp-library`）：
-
-![trace 视图](docs/screenshots/accept-trace-viewer.png)
-
-- 新建会话 → 主 Agent `delegate('researcher')` → 树里 5 个 span：主笔 20s → 模型 / 派子智能体 17s / 研究员 17s（下挂 3 次读网页）/ 模型 / 本轮结束；右栏 Output 读到完整结论（3 条要点 + 4 个来源 URL）
-- 重跑「查 10 个朝代驿传」：子体用满 12/12 步后按步数纪律自行收尾（`partial=false`，结论 4.7k 字），主 Agent 不中断继续跑（会话共 26 步）；`partial`（琥珀）路径由 `delegate-tools.test.ts` 与 `to-trace.test.ts` 覆盖
-- 刷新页面、重启 API 后：6 个会话（含 2 个切片 3 补录的只读历史）全部重新出现，点开能回放完整 span 树
-- 真续接：重启后在新 run 里发「把三十里一驿写成一条世界规则」→ 零次 `web_search`、先 `read_element` 比对已有 w1–w5，引用了上一轮的《唐六典》原文与 1639 所/程限分等，并指出会与 w5 重复；`write_element` 被「先有获批计划」的门禁拦住（预期）
-- 门禁：计划待批准 → 批准 → 任务待审阅 → 通过 → 已完成；顶栏在门开瞬间就显示「已完成」（不等盘上 meta 的 30 秒节流）
-
-**阅读器真机验收**（2026-10-29，书《七霞》：1440×900 与 1024×736、`INKLOOM_LIBRARY=.tmp-library`）：
-
-![阅读器](docs/screenshots/accept-reader.png)
-
-- 1440×900：双页对开，左页是章扉页（第 四 章 / 剑冢 / 细线）、右页正文从第一段开始，页眉「七霞 / 剑冢」、页脚「— 1 — / — 2 —」；未定稿章页脚多一个「草稿」点
-- 真分页：第 4 章 86 段被排成 13 列 / 7 屏（17px）或 5 屏（21px），`scrollWidth` 推列数与 `translateX` 平移对得上；长句不会半个字掉到下一列
-- 键盘：←/→/PgUp/PgDn/空格 翻屏、Home/End 首尾、`c` 目录、`f` 沉浸、Esc 退出；目录里 ↑↓ 选择 + Enter 跳章可用
-- 位置记忆：读到 5/8 刷新 → 仍在 5/8；字号 17→19→21 时按比例换到 4/7 → 5/9，不跳回第一屏
-- 沉浸：隐去顶栏与左栏后书页铺满窗口，页码与页眉仍在，Esc 退回
-- 窄屏 420/1024：自动退化为单页纵向滚动，无横向溢出；这一轮顺手修掉了重复短句的 React key 冲突
-
-**桌面版真机验收**（2026-10-29，Windows 11 25H2）：
-
-![桌面版](docs/screenshots/accept-desktop.png)
-
-- 启动：窗口先显示等待页 → 探活成功后才导航到本机端口；截图是 release 版直接跑起来的书库页（七霞 · 打开 / 新建一本书）
-- 端口随机：四次启动分别是 58816 / 58525 / 53938 / 61119，不和开发用的 8787 抢
-- 单实例：第一个实例在跑时再双击一次 exe，5 秒内自己退出；桌面进程保持 1 个、服务端监听只有 1 处
-- 退出清理：关窗口后桌面进程与 node 子进程全部退出、端口释放，不留孤儿
-- 配置位置：`GET /api/settings` 返回 `%APPDATA%\inkloom\.env`；`PUT` 写入 `INKLOOM_WORDS_PER_CHAPTER=2800` 后重启应用，该字段 `value=2800` 且 `pendingRestart=false` —— `--env-file-if-exists` 确实生效
-- NSIS 安装验收：静默安装 exit 0，快捷方式与卸载项就位；安装态启动后 `libraryRoot=C:\Users\xiesi\inkloom`（默认书库）、空书库页直接显示新建表单
-- NSIS 卸载验收：注册表项与开始菜单项清零，`%APPDATA%\inkloom` 保留；安装目录只剩运行时写的日志——所以配置目录必须放在安装目录之外
-- 安装包：`inkloom_1.0.0_x64-setup.exe`，61.67 MiB（NSIS，currentUser）
-
-**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent · 多智能体与一致性门禁 · trace 视图与会话续接 · 书页阅读器 · Windows 桌面版**。
-
-**已知缺口**
+## 已知缺口
 
 | # | 缺口 | 影响 |
 |---|---|---|
-| 1 | TypeSafe 官方 API 从 CN 出口返回 451 | 判断层实际用硅基流动；`typesafe` provider 已就绪 |
-| 2 | 前端无 Playwright 自动化回归 | 界面回归靠手工 + Chrome MCP |
-| 3 | 生图 seed 不可控（Kolors 不支持） | 复现靠 prompt + params 记录 |
-| 4 | Agent run / 生成任务在内存 | 服务重启丢进行中的 run；会话索引、事件流与 messages 快照已落盘，重启后点「继续执行」或直接接着聊（真续接） |
-| 5 | Agent 思考流是英文 | 模型自选语言；正文与工具参数是中文 |
+| 1 | Agent run 在内存 | 服务重启丢进行中的 run；会话与事件已落盘，可续跑 |
+| 2 | 长会话未做虚拟化 | 数百 span 时滚动与展开可能变卡 |
+| 3 | 前端无自动化 UI 回归 | 界面回归靠手工 |
+| 4 | Agent 思考流是英文 | 模型自选语言；正文与工具参数是中文 |
 
-**明确不做**：并行生成多场景（邻场景正文不存在时章内因果必然丢失）；写作 Skill 市场（需要社区载体）。
+## 版本
+
+当前 **0.1.0**（2026-10-30）：首个公开版本，十个模块 + Windows 桌面版。变更见 [CHANGELOG.md](CHANGELOG.md)。
