@@ -21,12 +21,12 @@ function assistant(text: string): AgentMessage {
     timestamp: 2,
   } as unknown as AgentMessage
 }
-function assistantCall(text: string, callId: string): AgentMessage {
+function assistantCall(text: string, ...callIds: string[]): AgentMessage {
   return {
     role: 'assistant',
     content: [
       { type: 'text', text },
-      { type: 'toolCall', id: callId, name: 'web_search', arguments: {} },
+      ...callIds.map((id) => ({ type: 'toolCall', id, name: 'web_search', arguments: {} })),
     ],
     timestamp: 2,
   } as unknown as AgentMessage
@@ -187,6 +187,18 @@ describe('message snapshot', () => {
     })
     const back = await loadMessageSnapshot(root, 'cs_dangling')
     // 只剩作者那句：assistant(toolCall) 没有对应的 toolResult，续接会被 provider 拒
+    expect(back?.messages.map((m) => m.role)).toEqual(['user'])
+  })
+
+  it('★ 一批 2 个 toolCall 只回了 1 个结果：整批丢掉（半截 turn 同样不能续接）', async () => {
+    await saveMessageSnapshot(root, 'cs_half', {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      sessionId: 'cs_half',
+      runId: 'ar_1',
+      messages: [user('目标'), assistantCall('搜两下', 't1', 't2'), toolResult('只回了一条', 't1')],
+    })
+    const back = await loadMessageSnapshot(root, 'cs_half')
     expect(back?.messages.map((m) => m.role)).toEqual(['user'])
   })
 

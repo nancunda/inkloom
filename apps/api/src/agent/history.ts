@@ -109,19 +109,39 @@ function hasToolCall(message: AgentMessage): boolean {
 }
 
 /**
- * 丢掉尾部「悬空的工具调用」：assistant(toolCall) 已经落盘、toolResult 还没回来。
+ * 丢掉尾部「没配完的工具调用」：
+ *   1) 纯悬空：最后一条是 assistant(toolCall)，结果一条都没回来；
+ *   2) 半批：一条 assistant 发了 2 个 toolCall，只回了 1 个 toolResult（工具串行执行，
+ *      快照可能正好落在两条结果之间；作者中途点「停止」也会停在这里）。
  *
- * ★ 快照会在运行中被 30 秒节流写盘（此时正卡在工具执行中），也可能停在工具中途。
- *   这半截 turn 直接拿来续接，provider 会说「toolCall 没有对应结果」——要么 400，
- *   要么把上一轮的回调当成新请求。裁掉它不影响任何已完成的内容：下一轮跑完
- *   快照会整体覆写，那时尾巴就是完整的。
+ * ★ 两种都不能拿去续接：provider 要求 tool_calls 与 tool 消息一一对应。
+ *   裁掉不影响任何已完成的内容：下一轮跑完快照会整体覆写，那时尾巴就是完整的。
  */
 function dropDanglingToolCalls(messages: AgentMessage[]): AgentMessage[] {
   let end = messages.length
+  // 1) 末尾连续的 assistant(toolCall)：结果一条都没回来
   while (end > 0) {
     const last = messages[end - 1]
     if (last === undefined || !hasToolCall(last)) break
     end -= 1
+  }
+  // 2) 半批：先收尾部的 toolResult，再回头看它前面那条 assistant 是否已经全部配对
+  const resultIds = new Set<string>()
+  let cursor = end
+  while (cursor > 0) {
+    const message = messages[cursor - 1]
+    if (message === undefined || (message as { role?: string }).role !== 'toolResult') break
+    const id = (message as { toolCallId?: unknown }).toolCallId
+    if (typeof id === 'string') resultIds.add(id)
+    cursor -= 1
+  }
+  const head = cursor > 0 ? messages[cursor - 1] : undefined
+  if (head !== undefined && hasToolCall(head)) {
+    const callIds = (blocksOf(head) ?? [])
+      .filter((block) => block.type === 'toolCall')
+      .map((block) => (typeof block['id'] === 'string' ? block['id'] : ''))
+      .filter((id) => id.length > 0)
+    if (callIds.some((id) => !resultIds.has(id))) end = cursor - 1
   }
   return end === messages.length ? messages : messages.slice(0, end)
 }

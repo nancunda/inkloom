@@ -49,8 +49,11 @@ export const TraceListItemMenu = ({
 }: ReadonlyProps<TraceListItemMenuProps>): ReactElement | null => {
   const [open, setOpen] = useState(false);
   // ★ 不能按「数据最后一行」预判方向：列表会滚，可视区底部那一行往往不是最后一行，
-  //   菜单会被 overflow 容器裁掉。打开时量一下真实位置再决定往上还是往下。
-  const [openUp, setOpenUp] = useState(above);
+  //   菜单会被 overflow 容器裁掉。打开时量一下真实位置再决定往上还是往下；
+  //   `above` 只在量不到（没有 trigger）时做兜底。
+  const [openUp, setOpenUp] = useState<boolean | null>(null);
+  /** 面板方向：量到的优先，没量到才退回调用方的提示 */
+  const panelAbove = openUp ?? above;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -121,7 +124,7 @@ export const TraceListItemMenu = ({
       {open ? (
         <div
           className={`border-agentprism-border bg-agentprism-background absolute right-0 z-10 w-28 overflow-hidden rounded-md border shadow-md ${
-            openUp ? "bottom-full mb-1" : "top-full mt-1"
+            panelAbove ? "bottom-full mb-1" : "top-full mt-1"
           }`}
         >
           {onRename === undefined ? null : (

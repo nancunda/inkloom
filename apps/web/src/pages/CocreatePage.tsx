@@ -583,7 +583,15 @@ export function CocreatePage() {
         setMeta(detail.meta)
         savedTitle.current = detail.meta.title
         if (reset) {
-          setEvents(detail.events)
+          // ★ 不能整体替换：setRun 已经让 SSE 用新 runId 重连，服务端会从头回放
+          //   内存里的 delta（journal 里没有），先到的增量不能被这次覆盖抹掉。
+          //   只丢「不属于新 run」的事件——新建/重新规划时旧 run 必然不同，等价于清空。
+          setEvents((prev) =>
+            mergeEvents(
+              prev.filter((e) => e.runId === next.id),
+              detail.events,
+            ),
+          )
           seen.current = new Set(detail.events.map(eventKey))
           setSelectedSpanId(null)
           setDetailsTab('input-output')
@@ -745,12 +753,14 @@ export function CocreatePage() {
         body: JSON.stringify({ title: trimmed }),
       })
       setSessions((prev) => prev.map((s) => (s.id === id ? next : s)))
-      savedTitle.current = next.title
-      if (meta?.id === id) setMeta(next)
+      if (meta?.id === id) {
+        savedTitle.current = next.title
+        setMeta(next)
+      }
     } catch (e) {
       setError(errorText(e))
       // 输入框已经乐观改了名：存盘失败必须退回去，否则界面上「看着改了实际没存」
-      setMeta((m) => (m === null ? m : { ...m, title: savedTitle.current }))
+      setMeta((m) => (m === null || m.id !== id ? m : { ...m, title: savedTitle.current }))
     }
   }
 
