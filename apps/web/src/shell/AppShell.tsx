@@ -120,7 +120,7 @@ export function AppShell() {
 
   // 沉浸阅读：顶栏与左右栏直接不渲染，但阅读器本身保持挂载（不丢当前章与屏号）
   return (
-    <div className="flex h-screen flex-col bg-neutral-50">
+    <div className="flex h-dvh flex-col bg-neutral-50">
       {/* 顶栏 */}
       {immersive ? null : (
         <header className="flex h-12 shrink-0 items-center gap-4 border-b border-neutral-200 bg-white px-5">
@@ -175,8 +175,8 @@ export function AppShell() {
       <div className="flex min-h-0 flex-1">
         {/* 左栏：模块 */}
         {immersive ? null : (
-          <nav className="flex w-[168px] shrink-0 flex-col border-r border-neutral-200 bg-white">
-            <div className="flex-1 space-y-0.5 p-2">
+          <nav className="flex min-h-0 w-[168px] shrink-0 flex-col border-r border-neutral-200 bg-white">
+            <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
               {MODULES.map((m) => (
                 <button
                   key={m.id}
@@ -206,7 +206,7 @@ export function AppShell() {
         )}
 
         {/* 主工作区 */}
-        <main className="flex min-w-0 flex-1">
+        <main className="flex min-h-0 min-w-0 flex-1">
           {module === 'overview' && <OverviewPage />}
           {module === 'agent' && (
             <ErrorBoundary label="共创面板">

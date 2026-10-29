@@ -1,5 +1,6 @@
 import type { TraceRecord, TraceSpan } from '@evilmartians/agent-prism-types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { eventKey, mergeEvents } from '../agent-trace/merge-events'
 import { planTasksFrom } from '../agent-trace/plan-view'
 import { SessionList } from '../agent-trace/SessionList'
 import { toTraceData } from '../agent-trace/to-trace'
@@ -122,33 +123,6 @@ function withLiveRun(meta: AgentSessionMeta, run: AgentRun | null): AgentSession
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-function eventKey(e: AgentEvent): string {
-  return `${e.runId}:${e.seq}`
-}
-
-/**
- * 事件合并：按「runId 首次出现的顺序 + 组内 seq」排序，后到的同 key 覆盖先到的。
- *
- * ★ 为什么要合并而不是直接替换成服务端快照：journal 不记录 delta 流（emit 的
- *   `persist=false`），而 SSE 建连时会从头回放整段 run.events（含 delta）。
- *   只拿 journal 当真相会两个方向都错：整体替换会抹掉刚 append 的 delta，
- *   重新追加又会把回放的 delta 堆到树尾。按 key 合并两种来源都能存在。
- */
-function mergeEvents(prev: readonly AgentEvent[], incoming: readonly AgentEvent[]): AgentEvent[] {
-  const map = new Map<string, AgentEvent>()
-  const runOrder: string[] = []
-  for (const e of [...prev, ...incoming]) {
-    if (!runOrder.includes(e.runId)) runOrder.push(e.runId)
-    map.set(eventKey(e), e)
-  }
-  const rank = new Map(runOrder.map((id, i) => [id, i]))
-  return [...map.values()].sort((a, b) => {
-    const ra = rank.get(a.runId) ?? 0
-    const rb = rank.get(b.runId) ?? 0
-    return ra === rb ? a.seq - b.seq : ra - rb
-  })
 }
 
 /** 在 span 树里按 id 找节点（选中态只存 id，避免存住过期对象） */
@@ -381,6 +355,41 @@ export function CocreatePage() {
   const [streamNote, setStreamNote] = useState<string | null>(null)
   /** SSE 与初载可能重复投递同一事件；按 runId+seq 去重 */
   const seen = useRef<Set<string>>(new Set())
+  /**
+   * 事件批量刷新的缓冲。
+   * ★ token 级 delta 每秒能来几百条，逐条 setEvents 会把整棵 span 树重建几百次；
+   *   攒到下一帧（80ms）再一次性合入，渲染次数降一个数量级。
+   */
+  const pending = useRef<AgentEvent[]>([])
+  const flushTimer = useRef<number | null>(null)
+  const dropPending = useCallback(() => {
+    pending.current = []
+    if (flushTimer.current !== null) {
+      window.clearTimeout(flushTimer.current)
+      flushTimer.current = null
+    }
+  }, [])
+  const flushPending = useCallback(() => {
+    if (flushTimer.current !== null) {
+      window.clearTimeout(flushTimer.current)
+      flushTimer.current = null
+    }
+    if (pending.current.length === 0) return
+    const batch = pending.current
+    pending.current = []
+    setEvents((prev) => mergeEvents(prev, batch))
+  }, [])
+  const queueEvent = useCallback(
+    (ev: AgentEvent) => {
+      pending.current.push(ev)
+      if (flushTimer.current !== null) return
+      flushTimer.current = window.setTimeout(() => {
+        flushTimer.current = null
+        flushPending()
+      }, 80)
+    },
+    [flushPending],
+  )
   /** 已落盘的标题：与输入框里的值分开跟，否则 onBlur 永远判等 */
   const savedTitle = useRef('')
 
@@ -391,39 +400,44 @@ export function CocreatePage() {
   }, [])
 
   /** 载入一个会话（meta + 全部事件），并入内存里仍然活着的 run */
-  const loadSession = useCallback(async (id: string): Promise<void> => {
-    const detail = await api<{ meta: AgentSessionMeta; events: AgentEvent[] }>(
-      `/agent/sessions/${id}?limit=2000`,
-    )
-    setSelectedId(id)
-    setMeta(detail.meta)
-    savedTitle.current = detail.meta.title
-    setEvents(detail.events)
-    seen.current = new Set(detail.events.map(eventKey))
-    setSelectedSpanId(null)
-    setDetailsTab('input-output')
-    setExpandedSpansIds(['root'])
-    setRunMissing(false)
-    // 会话可能是崩溃残留的 running：只有内存里真有 live run 才算在跑
-    if (detail.meta.status === 'running' || detail.meta.status === 'waiting_review') {
-      const lastRunId = detail.meta.runIds.at(-1)
-      if (lastRunId === undefined) {
-        setRun(null)
-        setRunMissing(true)
+  const loadSession = useCallback(
+    async (id: string): Promise<void> => {
+      const detail = await api<{ meta: AgentSessionMeta; events: AgentEvent[] }>(
+        `/agent/sessions/${id}?limit=2000`,
+      )
+      setSelectedId(id)
+      setMeta(detail.meta)
+      savedTitle.current = detail.meta.title
+      // 上一个会话还没冲刷的 delta 不能再落进新会话
+      dropPending()
+      setEvents(detail.events)
+      seen.current = new Set(detail.events.map(eventKey))
+      setSelectedSpanId(null)
+      setDetailsTab('input-output')
+      setExpandedSpansIds(['root'])
+      setRunMissing(false)
+      // 会话可能是崩溃残留的 running：只有内存里真有 live run 才算在跑
+      if (detail.meta.status === 'running' || detail.meta.status === 'waiting_review') {
+        const lastRunId = detail.meta.runIds.at(-1)
+        if (lastRunId === undefined) {
+          setRun(null)
+          setRunMissing(true)
+          return
+        }
+        try {
+          const { run: live } = await api<{ run: AgentRun }>(`/agent/runs/${lastRunId}`)
+          setRun(live)
+        } catch {
+          // 服务重启：run 不在了，但会话快照还在，可以续接
+          setRun(null)
+          setRunMissing(true)
+        }
         return
       }
-      try {
-        const { run: live } = await api<{ run: AgentRun }>(`/agent/runs/${lastRunId}`)
-        setRun(live)
-      } catch {
-        // 服务重启：run 不在了，但会话快照还在，可以续接
-        setRun(null)
-        setRunMissing(true)
-      }
-      return
-    }
-    setRun(null)
-  }, [])
+      setRun(null)
+    },
+    [dropPending],
+  )
 
   // 挂载：拉会话列表；有正在跑的会话就自动选中它
   useEffect(() => {
@@ -483,7 +497,7 @@ export function CocreatePage() {
       const key = eventKey(ev)
       if (seen.current.has(key)) return
       seen.current.add(key)
-      setEvents((prev) => mergeEvents(prev, [ev]))
+      queueEvent(ev)
       // 步数/tokens 只在内存 run 里：工具与子体收尾后刷一下，否则顶栏一直停在旧数字
       if (ev.type === 'tool.ended' || ev.type === 'subagent.ended') pullRun()
       if (
@@ -504,8 +518,10 @@ export function CocreatePage() {
     return () => {
       closed = true
       es.close()
+      // 离开运行态前把最后一批 delta 落进状态，否则最后半句会丢
+      flushPending()
     }
-  }, [run?.id, run?.status, refreshSessions])
+  }, [run?.id, run?.status, refreshSessions, flushPending, queueEvent])
 
   const trace = useMemo(() => (meta === null ? null : toTraceData(meta, events)), [meta, events])
   const planTasks = useMemo(() => planTasksFrom(events), [events])

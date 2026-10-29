@@ -1,6 +1,18 @@
 @import 'tailwindcss';
 @import './components/agent-prism/theme/theme.css';
 
+/* 应用自己管滚动：根高度铺满，但文档不允许滚——
+   否则任何一层溢出都会把底栏顶到视口外（共创输入框就是这样丢的） */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
 /* 中文正文用衬线（写作页是长文本，无衬线读久了累） */
 @theme {
   --font-serif: 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', serif;

@@ -9,7 +9,7 @@ import { BookBrowser } from './BookBrowser'
  */
 export function LibraryPage({ data }: { data: LibraryData }) {
   return (
-    <div className="min-h-screen bg-neutral-50">
+    <div className="h-dvh overflow-y-auto bg-neutral-50">
       <div className="mx-auto max-w-2xl px-6 py-12">
         <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-400">inkloom</div>
         <h1 className="mt-2 text-xl font-semibold text-neutral-900">书库</h1>
