@@ -193,3 +193,65 @@
 
 /* 深色变体改为 class 驱动：项目暂无暗色模式，这样 dark: 工具类不会跟着系统偏好乱亮 */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   阅读器：纸与墨
+   ★ 独立于 UI 的 neutral 阶梯：阅读区要的是纸质暖白，而不是界面灰。
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-paper: #fbf8f1;
+  --color-paper-desk: #eae4d9;
+  --color-paper-ink: #2b2723;
+  --color-paper-muted: #6f685e;
+  --color-paper-faint: #9a9287;
+  --color-paper-rule: #e4dccf;
+  --color-paper-accent: #3f5d4b;
+}
+
+@layer components {
+  /* 多栏文本块：宽度就是「两页正文 + 中缝」，超出的列溢出到右侧，靠 translateX 翻 */
+  .reader-flow {
+    column-fill: auto;
+    column-width: var(--reader-col-w);
+    column-gap: var(--reader-gap);
+    height: var(--reader-flow-h);
+    width: var(--reader-window-w);
+    transition: transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    will-change: transform;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-flow {
+      transition: none;
+    }
+  }
+
+  .reader-flow > p {
+    margin: 0 0 0.9em;
+    text-indent: 2em;
+    hanging-punctuation: allow-end;
+  }
+
+  .reader-flow > p:last-of-type {
+    margin-bottom: 0;
+  }
+
+  /* 章扉页：占满一列并强制断列，于是正文天然从右页开始 */
+  .reader-titlepage {
+    break-after: column;
+    /* 比列高少 2px：恰好满高时，浮点/行盒会把下一列顶出一丝空白页 */
+    height: calc(var(--reader-flow-h) - 2px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  /* 纸面：暖白 + 极淡的纹理 + 内圈细边，不做 3D */
+  .reader-page {
+    background-color: var(--color-paper);
+    background-image:
+      radial-gradient(circle at 18% 12%, rgb(255 255 255 / 55%), transparent 42%),
+      radial-gradient(circle at 82% 88%, rgb(210 198 178 / 18%), transparent 46%);
+    box-shadow: inset 0 0 0 1px var(--color-paper-rule);
+  }
+}

@@ -24,6 +24,12 @@ const CocreatePage = lazy(async () => {
   return { default: mod.CocreatePage }
 })
 
+/** 阅读器也切开：分页与书页样式只会在打开阅读时才需要 */
+const ReadPage = lazy(async () => {
+  const mod = await import('../pages/ReadPage')
+  return { default: mod.ReadPage }
+})
+
 const MODULES: { id: ModuleId; label: string; icon: string }[] = [
   { id: 'overview', label: '概览', icon: '◎' },
   { id: 'agent', label: '共创', icon: '✳' },
@@ -32,6 +38,7 @@ const MODULES: { id: ModuleId; label: string; icon: string }[] = [
   { id: 'story', label: '故事', icon: '❖' },
   { id: 'ontology', label: '图谱', icon: '⊞' },
   { id: 'write', label: '写作', icon: '✎' },
+  { id: 'read', label: '阅读', icon: '❧' },
   { id: 'assets', label: '素材', icon: '▧' },
   { id: 'settings', label: '设置', icon: '⚙' },
 ]
@@ -52,6 +59,7 @@ export function AppShell() {
   const setPalette = useSessionStore((s) => s.setPalette)
   const setChapter = useSessionStore((s) => s.setChapter)
   const setFocus = useSessionStore((s) => s.setFocus)
+  const immersive = useSessionStore((s) => s.immersive)
   const [tmOpen, setTmOpen] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
 
@@ -67,6 +75,7 @@ export function AppShell() {
         s.setFocus(!s.focus)
       } else if (e.key === 'Escape') {
         s.setFocus(false)
+        s.setImmersive(false)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -101,87 +110,100 @@ export function AppShell() {
   const chapterNo = useSessionStore((s) => s.chapterNo)
   const current = book?.chapters.find((c) => c.chapterNo === chapterNo)
 
+  const readView = (
+    <ErrorBoundary label="阅读器">
+      <Suspense fallback={<p className="p-6 text-[12px] text-neutral-500">正在翻开书…</p>}>
+        <ReadPage />
+      </Suspense>
+    </ErrorBoundary>
+  )
+
+  // 沉浸阅读：顶栏与左右栏直接不渲染，但阅读器本身保持挂载（不丢当前章与屏号）
   return (
     <div className="flex h-screen flex-col bg-neutral-50">
       {/* 顶栏 */}
-      <header className="flex h-12 shrink-0 items-center gap-4 border-b border-neutral-200 bg-white px-5">
-        <span className="text-[15px] font-semibold tracking-tight text-neutral-900">inkloom</span>
-        <span className="h-4 w-px bg-neutral-200" />
-        <button
-          type="button"
-          onClick={() => setLibraryOpen(true)}
-          title="切换书（书库）"
-          className="group flex items-baseline gap-2 rounded px-1 py-0.5 hover:bg-neutral-100"
-        >
-          <span className="text-sm font-medium text-neutral-800">{book?.name ?? '—'}</span>
-          <span className="text-xs text-neutral-400">{book?.genre ?? ''}</span>
-          <span className="text-[10px] text-neutral-400 opacity-0 group-hover:opacity-100">
-            切换
+      {immersive ? null : (
+        <header className="flex h-12 shrink-0 items-center gap-4 border-b border-neutral-200 bg-white px-5">
+          <span className="text-[15px] font-semibold tracking-tight text-neutral-900">inkloom</span>
+          <span className="h-4 w-px bg-neutral-200" />
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(true)}
+            title="切换书（书库）"
+            className="group flex items-baseline gap-2 rounded px-1 py-0.5 hover:bg-neutral-100"
+          >
+            <span className="text-sm font-medium text-neutral-800">{book?.name ?? '—'}</span>
+            <span className="text-xs text-neutral-400">{book?.genre ?? ''}</span>
+            <span className="text-[10px] text-neutral-400 opacity-0 group-hover:opacity-100">
+              切换
+            </span>
+          </button>
+          <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
+            v0.0.1
           </span>
-        </button>
-        <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
-          v0.0.1
-        </span>
-        <span className="ml-2 text-xs text-neutral-400">
-          {overview?.stats.finalized ?? 0}/{overview?.stats.total ?? 0} 章定稿
-        </span>
+          <span className="ml-2 text-xs text-neutral-400">
+            {overview?.stats.finalized ?? 0}/{overview?.stats.total ?? 0} 章定稿
+          </span>
 
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setPalette(true)}
-            className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500 hover:bg-neutral-100"
-            title="命令面板"
-          >
-            🔍 Ctrl+K
-          </button>
-          <span className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500">
-            任务 {overview?.runs.total ?? 0}
-          </span>
-          <button
-            type="button"
-            onClick={() => setModule('settings')}
-            className={`rounded px-2.5 py-1 text-[11px] ${
-              module === 'settings'
-                ? 'bg-neutral-900 text-white'
-                : 'text-neutral-500 hover:bg-neutral-100'
-            }`}
-          >
-            设置
-          </button>
-        </div>
-      </header>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPalette(true)}
+              className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500 hover:bg-neutral-100"
+              title="命令面板"
+            >
+              🔍 Ctrl+K
+            </button>
+            <span className="rounded border border-neutral-200 px-2.5 py-1 text-[11px] text-neutral-500">
+              任务 {overview?.runs.total ?? 0}
+            </span>
+            <button
+              type="button"
+              onClick={() => setModule('settings')}
+              className={`rounded px-2.5 py-1 text-[11px] ${
+                module === 'settings'
+                  ? 'bg-neutral-900 text-white'
+                  : 'text-neutral-500 hover:bg-neutral-100'
+              }`}
+            >
+              设置
+            </button>
+          </div>
+        </header>
+      )}
 
       <div className="flex min-h-0 flex-1">
-        {/* 左栏：七个模块 */}
-        <nav className="flex w-[168px] shrink-0 flex-col border-r border-neutral-200 bg-white">
-          <div className="flex-1 space-y-0.5 p-2">
-            {MODULES.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setModule(m.id)}
-                className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] ${
-                  module === m.id
-                    ? 'bg-neutral-900 text-white'
-                    : 'text-neutral-600 hover:bg-neutral-100'
-                }`}
-              >
-                <span className="w-4 text-center text-[11px] opacity-70">{m.icon}</span>
-                {m.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setTmOpen(true)}
-            className="w-full border-t border-neutral-200 px-2.5 py-2 text-left text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
-            title="检查点与回退（时间机器）"
-          >
-            ⏱ 时间机器
-            <span className="ml-1 text-[10px] text-neutral-400">检查点 / 回退</span>
-          </button>
-        </nav>
+        {/* 左栏：模块 */}
+        {immersive ? null : (
+          <nav className="flex w-[168px] shrink-0 flex-col border-r border-neutral-200 bg-white">
+            <div className="flex-1 space-y-0.5 p-2">
+              {MODULES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setModule(m.id)}
+                  className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] ${
+                    module === m.id
+                      ? 'bg-neutral-900 text-white'
+                      : 'text-neutral-600 hover:bg-neutral-100'
+                  }`}
+                >
+                  <span className="w-4 text-center text-[11px] opacity-70">{m.icon}</span>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setTmOpen(true)}
+              className="w-full border-t border-neutral-200 px-2.5 py-2 text-left text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+              title="检查点与回退（时间机器）"
+            >
+              ⏱ 时间机器
+              <span className="ml-1 text-[10px] text-neutral-400">检查点 / 回退</span>
+            </button>
+          </nav>
+        )}
 
         {/* 主工作区 */}
         <main className="flex min-w-0 flex-1">
@@ -200,25 +222,28 @@ export function AppShell() {
           {module === 'story' && <StoryPage />}
           {module === 'ontology' && <OntologyPage />}
           {module === 'write' && <WritingPage />}
+          {module === 'read' && readView}
           {module === 'assets' && <AssetsPage />}
           {module === 'settings' && <SettingsPage />}
         </main>
       </div>
 
-      {/* 底栏 */}
-      <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-neutral-200 bg-white px-5 text-[11px] text-neutral-500">
-        <span>{words.toLocaleString()} 字</span>
-        <span className="text-neutral-300">|</span>
-        <span>
-          {current?.title ?? '—'} · {STATUS_MARK[current?.status ?? 'planned'] ?? '○'}{' '}
-          {STATUS_LABEL[current?.status ?? 'planned'] ?? '计划中'}
-        </span>
-        <span className="text-neutral-300">|</span>
-        <span>deepseek-flash</span>
-        <span className="ml-auto text-neutral-400">
-          自动保存 · 文件即真相（每次接受/定稿自动 commit）
-        </span>
-      </footer>
+      {/* 底栏：阅读时不需要（阅读器自己有一条更安静的页脚） */}
+      {immersive || module === 'read' ? null : (
+        <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-neutral-200 bg-white px-5 text-[11px] text-neutral-500">
+          <span>{words.toLocaleString()} 字</span>
+          <span className="text-neutral-300">|</span>
+          <span>
+            {current?.title ?? '—'} · {STATUS_MARK[current?.status ?? 'planned'] ?? '○'}{' '}
+            {STATUS_LABEL[current?.status ?? 'planned'] ?? '计划中'}
+          </span>
+          <span className="text-neutral-300">|</span>
+          <span>deepseek-flash</span>
+          <span className="ml-auto text-neutral-400">
+            自动保存 · 文件即真相（每次接受/定稿自动 commit）
+          </span>
+        </footer>
+      )}
 
       <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />
       {tmOpen && <TimeMachine onClose={() => setTmOpen(false)} />}

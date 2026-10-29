@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-/** 八个主模块（spec §2.1 + 共创 Agent） */
+/** 九个主模块（spec §2.1 + 共创 Agent + 阅读） */
 export const MODULES = [
   'overview',
   'agent',
@@ -9,6 +9,7 @@ export const MODULES = [
   'story',
   'ontology',
   'write',
+  'read',
   'assets',
   'settings',
 ] as const
@@ -31,12 +32,15 @@ interface SessionState {
   module: ModuleId
   /** 纯编辑模式（全屏无干扰） */
   focus: boolean
+  /** 阅读沉浸模式（隐去顶栏与左栏） */
+  immersive: boolean
   /** 命令面板是否打开 */
   palette: boolean
   setChapter: (n: number) => void
   selectScene: (s: number | null) => void
   setModule: (m: ModuleId) => void
   setFocus: (on: boolean) => void
+  setImmersive: (on: boolean) => void
   setPalette: (on: boolean) => void
 }
 
@@ -53,6 +57,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   // 首屏落在概览：先看「这本书现在怎么样」，再点进写作
   module: initialModule(),
   focus: false,
+  immersive: false,
   palette: false,
   setChapter: (n) => set({ chapterNo: n, selectedScene: null, module: 'write' }),
   selectScene: (s) => set({ selectedScene: s }),
@@ -61,5 +66,6 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ module: m })
   },
   setFocus: (on) => set({ focus: on }),
+  setImmersive: (on) => set({ immersive: on }),
   setPalette: (on) => set({ palette: on }),
 }))

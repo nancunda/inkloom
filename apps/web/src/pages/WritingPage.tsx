@@ -307,8 +307,9 @@ function ChapterTextBlock({ chapterNo }: { chapterNo: number }) {
       </button>
       {open && (
         <div className="max-h-[420px] overflow-y-auto border-t border-neutral-100 px-5 py-4 text-[14px] leading-7 text-neutral-800">
-          {data.text.split(/\n{2,}/).map((p) => (
-            <p key={p.slice(0, 40)} className="mb-3 last:mb-0">
+          {data.text.split(/\n{2,}/).map((p, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 正文段落不重排；用文本做键会撞上重复的短句
+            <p key={`p${i}`} className="mb-3 last:mb-0">
               {p}
             </p>
           ))}
