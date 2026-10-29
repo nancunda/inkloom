@@ -32,7 +32,14 @@ export default defineConfig({
           //   所以必须把默认忽略项也写一遍，否则会把依赖包自带的测试一并跑掉。
           // ★ http.test.ts 属于集成项目（30s 超时）：Windows 上拍检查点/回退偶尔超过 5s，
           //   漏在这里会被 unit 的默认超时误杀。
-          exclude: ['**/node_modules/**', '**/dist/**', '**/*.int.test.ts', '**/*.http.test.ts'],
+          // ★ apps/desktop 里有打包拷进来的整份便携版（含它自己的 *.test.ts），必须排除。
+          exclude: [
+            '**/node_modules/**',
+            '**/dist/**',
+            'apps/desktop/**',
+            '**/*.int.test.ts',
+            '**/*.http.test.ts',
+          ],
           environment: 'node',
         },
       },
@@ -40,6 +47,8 @@ export default defineConfig({
         test: {
           name: 'integration',
           include: ['apps/**/src/**/*.int.test.ts', 'apps/**/src/**/*.http.test.ts'],
+          // apps/desktop/src-tauri/server 是拷进来的便携版，里面的测试不算本仓的
+          exclude: ['**/node_modules/**', '**/dist/**', 'apps/desktop/**'],
           environment: 'node',
           testTimeout: 30_000,
         },

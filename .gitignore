@@ -79,3 +79,13 @@ Thumbs.db
 
 # 发行包产物（由 scripts/build-release.mjs 生成）
 release/
+
+# ============================================================
+# Tauri 桌面壳
+# ============================================================
+# Rust 编译产物
+apps/desktop/src-tauri/target/
+# Tauri 生成的权限 schema
+apps/desktop/src-tauri/gen/
+# 打包前从 release/ 拷进来的服务端（200MB+，由 stage-server.mjs 生成）
+apps/desktop/src-tauri/server/

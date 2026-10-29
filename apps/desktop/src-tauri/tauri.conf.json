@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "inkloom",
+  "version": "1.0.0",
+  "identifier": "com.inkloom.desktop",
+  "build": {
+    "frontendDist": "../web-stub",
+    "beforeDevCommand": "node scripts/stage-server.mjs",
+    "beforeBuildCommand": "node scripts/stage-server.mjs"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": ["server/**/*"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"]
+      }
+    }
+  }
+}

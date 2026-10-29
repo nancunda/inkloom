@@ -67,12 +67,19 @@ await writeFile(
       private: true,
       type: 'module',
       dependencies: {
+        // ★ 手写清单容易漏：改 apps/api 的依赖时，这里必须同步。
+        //   缺一个 linkedom 就会让整个便携版在 read_url 模块加载时就起不来。
+        '@earendil-works/pi-agent-core': '1.4.0',
+        '@earendil-works/pi-ai': '1.4.0',
         '@hono/node-server': '^2.1.5',
+        '@mozilla/readability': '^0.6.0',
         '@prisma/client': '^6.19.3',
         diff: '^9.0.0',
         hono: '^4.13.13',
+        linkedom: '^0.18.14',
         prisma: '6.19.3',
         tsx: '^4.23.15',
+        typebox: '1.3.27',
         zod: '^4.6.7',
       },
     },

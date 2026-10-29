@@ -115,6 +115,29 @@ Agent 侧工具：`read_book`、`read_element`、`web_search`、`read_url`、`re
 
 ## 快速开始
 
+### 桌面版（Windows）
+
+![桌面版](docs/screenshots/accept-desktop.png)
+
+装上就是独立应用：不用开浏览器、不用记 `pnpm api`。
+
+1. 双击安装包（NSIS，装到当前用户，不需要管理员）
+2. 从开始菜单或桌面启动 **inkloom**
+
+- **自带服务端**：窗口打开时先显示等待页，服务端就绪后自动进书库；端口随机（不占开发用的 8787）
+- **书库与浏览器版相同**：默认 `~/inkloom`，外部设了 `INKLOOM_LIBRARY` 就听外部的
+- **Key 放用户目录**：设置页写的是 `%LOCALAPPDATA%\inkloom\.env`，下次启动自动加载；升级不该带走它
+- **单实例**：再双击一次只是把已有窗口唤到前台，不会起第二个服务端
+- **启动失败**：窗口里直接显示原因和日志路径 `%LOCALAPPDATA%\inkloom\server.log`
+- **关闭窗口**即结束本地服务，不留后台进程
+
+从源码打包（需要 Rust 工具链与 NSIS，`tauri build` 会自动装后者）：
+
+```bash
+node scripts/build-release.mjs              # 先出便携版：web/dist + API + Node 运行时
+pnpm --filter @inkloom/desktop build        # 再把便携版塞进 Tauri，产出 NSIS 安装包
+```
+
 ### 便携版（无需 Node / pnpm）
 
 1. 从 [Releases](https://github.com/nancunda/inkloom/releases) 下载 `inkloom-win-x64.zip`
@@ -225,6 +248,7 @@ pnpm cli unfinalize ./my-novel --chapter 1             # 撤销定稿：正文�
 | `apps/api` | 存储 + 服务层 + HTTP 路由 + Agent 运行时（唯一有副作用的地方） |
 | `apps/cli` | 命令行，复用 api 服务层 |
 | `apps/web` | React 19 工作台，只读 HTTP，SSE 接收 Agent 事件 |
+| `apps/desktop` | Tauri 2 桌面壳：拉起便携版服务端 → 探活 → 窗口导航到本机端口 |
 
 ---
 
@@ -246,7 +270,7 @@ INKLOOM_JUDGE=typesafe   # TypeSafe 官方 JEV，需 TYPESAFE_API_KEY
 ## 验证
 
 ```bash
-pnpm verify      # biome + tsc（含 web）+ check-deps + 521 单元 + 345 集成
+pnpm verify      # biome + tsc（含 web）+ check-deps + 529 单元 + 347 集成
 pnpm verify:p0   # 建书 / 索引 / 回退 / 导出        11 条
 pnpm verify:p1a  # 装配 → 生成 → 落盘                6 条
 pnpm verify:p1b  # 确认 / diff / 定稿 / 提案        11 条
@@ -291,7 +315,18 @@ pnpm verify:p2c  # 判断层开关 / 降级 / 只读          7 条
 - 沉浸：隐去顶栏与左栏后书页铺满窗口，页码与页眉仍在，Esc 退回
 - 窄屏 420/1024：自动退化为单页纵向滚动，无横向溢出；这一轮顺手修掉了重复短句的 React key 冲突
 
-**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent · 多智能体与一致性门禁 · trace 视图与会话续接 · 书页阅读器**。
+**桌面版真机验收**（2026-10-29，Windows 11 25H2）：
+
+![桌面版](docs/screenshots/accept-desktop.png)
+
+- 启动：窗口先显示等待页 → 探活成功后才导航到本机端口；截图是 release 版直接跑起来的书库页（七霞 · 打开 / 新建一本书）
+- 端口随机：四次启动分别是 58816 / 58525 / 53938 / 61119，不和开发用的 8787 抢
+- 单实例：第一个实例在跑时再双击一次 exe，5 秒内自己退出；桌面进程保持 1 个、服务端监听只有 1 处
+- 退出清理：关窗口后桌面进程与 node 子进程全部退出、端口释放，不留孤儿
+- 配置位置：`GET /api/settings` 返回 `%LOCALAPPDATA%\inkloom\.env`；`PUT` 写入 `INKLOOM_WORDS_PER_CHAPTER=2800` 后重启应用，该字段 `value=2800` 且 `pendingRestart=false` —— `--env-file-if-exists` 确实生效
+- 安装包：`inkloom_1.0.0_x64-setup.exe`，61.67 MiB（NSIS，currentUser）
+
+**已完成**：P0 数据底座 → P1 单章共创 → P2 局部重写 · 导入 · 判断层 · 关系网络 · 联网搜索 · 异步生成 → P3 视觉锚点 → P4 人物形象 → **书库（多书切换）· 计划驱动的共创 Agent · 多智能体与一致性门禁 · trace 视图与会话续接 · 书页阅读器 · Windows 桌面版**。
 
 **已知缺口**
 

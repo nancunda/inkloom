@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口：只用来显示本地书页，不需要额外权限",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
