@@ -177,6 +177,31 @@ describe('message snapshot', () => {
     expect(back?.messages.map((m) => m.role)).toEqual(['user'])
   })
 
+  it('★ 尾部的悬空 toolCall 不落盘（运行中被节流写盘时快照不能停在 turn 中间）', async () => {
+    await saveMessageSnapshot(root, 'cs_dangling', {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      sessionId: 'cs_dangling',
+      runId: 'ar_1',
+      messages: [user('目标'), assistantCall('我搜一下', 't1')],
+    })
+    const back = await loadMessageSnapshot(root, 'cs_dangling')
+    // 只剩作者那句：assistant(toolCall) 没有对应的 toolResult，续接会被 provider 拒
+    expect(back?.messages.map((m) => m.role)).toEqual(['user'])
+  })
+
+  it('★ 配对完整的尾部保留（不会误删已完成的 turn）', async () => {
+    await saveMessageSnapshot(root, 'cs_paired', {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      sessionId: 'cs_paired',
+      runId: 'ar_1',
+      messages: [user('目标'), assistantCall('我搜一下', 't1'), toolResult('结果')],
+    })
+    const back = await loadMessageSnapshot(root, 'cs_paired')
+    expect(back?.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'toolResult'])
+  })
+
   it('★ 含路径分隔符的 sessionId 直接拒绝（不能写出去）', () => {
     expect(() => messageSnapshotPath(root, '../evil')).toThrow(/非法会话 id/)
     expect(() => messageSnapshotPath(root, 'a/b')).toThrow(/非法会话 id/)

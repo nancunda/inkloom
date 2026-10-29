@@ -109,6 +109,24 @@ function hasToolCall(message: AgentMessage): boolean {
 }
 
 /**
+ * 丢掉尾部「悬空的工具调用」：assistant(toolCall) 已经落盘、toolResult 还没回来。
+ *
+ * ★ 快照会在运行中被 30 秒节流写盘（此时正卡在工具执行中），也可能停在工具中途。
+ *   这半截 turn 直接拿来续接，provider 会说「toolCall 没有对应结果」——要么 400，
+ *   要么把上一轮的回调当成新请求。裁掉它不影响任何已完成的内容：下一轮跑完
+ *   快照会整体覆写，那时尾巴就是完整的。
+ */
+function dropDanglingToolCalls(messages: AgentMessage[]): AgentMessage[] {
+  let end = messages.length
+  while (end > 0) {
+    const last = messages[end - 1]
+    if (last === undefined || !hasToolCall(last)) break
+    end -= 1
+  }
+  return end === messages.length ? messages : messages.slice(0, end)
+}
+
+/**
  * 按「轮」分组：assistant(toolCall) 与紧随其后的 toolResult 是一组。
  * ★ 逐条删会拆散配对，provider 会直接 400。
  */
@@ -193,7 +211,7 @@ export async function saveMessageSnapshot(
     version: 1,
     sessionId,
     savedAt: new Date().toISOString(),
-    messages: compactMessages(snap.messages),
+    messages: dropDanglingToolCalls(compactMessages(snap.messages)),
   }
   // atomicWrite 不建目录：第一次存快照时 sessions/ 还不存在
   await mkdir(sessionDir(root), { recursive: true })

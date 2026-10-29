@@ -146,6 +146,8 @@ interface AgentRun {
   metaAt: number
   /** true = 续接的旧会话（会话被删后不能再写回去复活它） */
   adopted: boolean
+  /** 本 run 是否已经落过盘：会话被删后再落盘不能重建一个空会话 */
+  metaCreated: boolean
 }
 
 const runs = new Map<string, AgentRun>()
@@ -588,8 +590,9 @@ async function persistSessionMeta(run: AgentRun): Promise<void> {
     const done = plan?.tasks.filter((t) => t.status === 'done').length ?? 0
     // ★ 队列内读改写：直接覆盖会抹掉同一时刻用户刚改的标题
     const meta = await updateSessionMeta(run.root, run.sessionId, (prev) => {
-      // ★ 续接的会话已被删：不复活（否则列表里会冒出一个打不开的空会话）
-      if (prev === null && run.adopted) return null
+      // ★ 会话已被删：不复活（否则列表里会冒出一个打不开的空会话）。
+      //   续接来的 run 一开始就不允许建；本 run 已经建过 meta 的话，删了就是删了。
+      if (prev === null && (run.adopted || run.metaCreated)) return null
       const now = new Date().toISOString()
       if (prev !== null) {
         // ★ 本 run 首次落盘（还不在 runIds 里）或就是最新 run 时，才有权写状态。
@@ -618,6 +621,7 @@ async function persistSessionMeta(run: AgentRun): Promise<void> {
       }
     })
     if (meta === null) return
+    run.metaCreated = true
     await saveMessageSnapshot(run.root, run.sessionId, {
       version: 1,
       savedAt: meta.updatedAt,
@@ -933,6 +937,7 @@ export async function startAgentRun(
     childAborts,
     metaAt: Date.now(),
     adopted,
+    metaCreated: false,
   }
 
   agent.subscribe((e) => handlePiEvent(run, e))

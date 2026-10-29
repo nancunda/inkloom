@@ -559,14 +559,22 @@ export function CocreatePage() {
   const resumable = meta !== null && !meta.id.startsWith('lg_') && (meta.resumable || runSettled)
   const ended =
     run !== null && (run.status === 'paused' || run.status === 'stopped' || run.status === 'failed')
-  const canResume = !live && (resumable || runMissing)
+  // ★ 「能不能点」与「点了走哪条分支」必须是同一个判定：
+  //   重启残留的会话 meta 还写着 running（resumable=false）、但内存里 run 已经不在了，
+  //   只渲按钮不放行，就会变成一个点了必报错的死按钮。
+  const canContinue = resumable || runMissing
+  const canResume = !live && canContinue
 
   const gate = live ? (run?.gate ?? null) : null
 
-  const adoptRun = useCallback(async (next: AgentRun): Promise<void> => {
+  /**
+   * 服务端是真相：拉一遍会话把 meta 与事件对齐。
+   * ★ reset：`replan` 会开一个新会话，旧会话的事件绝不能被合进来——
+   *   trace 的起点、计划 tab、选中态全都会跟着错位。
+   */
+  const adoptRun = useCallback(async (next: AgentRun, reset = false): Promise<void> => {
     setRun(next)
     setRunMissing(false)
-    // 服务端是真相：拉一遍会话把 meta 与事件对齐；事件用合并，不能整体替换（见 mergeEvents）
     await api<{ meta: AgentSessionMeta; events: AgentEvent[] }>(
       `/agent/sessions/${next.sessionId}?limit=2000`,
     )
@@ -574,6 +582,14 @@ export function CocreatePage() {
         setSelectedId(detail.meta.id)
         setMeta(detail.meta)
         savedTitle.current = detail.meta.title
+        if (reset) {
+          setEvents(detail.events)
+          seen.current = new Set(detail.events.map(eventKey))
+          setSelectedSpanId(null)
+          setDetailsTab('input-output')
+          setExpandedSpansIds(['root'])
+          return
+        }
         setEvents((prev) => mergeEvents(prev, detail.events))
         for (const e of detail.events) seen.current.add(eventKey(e))
       })
@@ -601,7 +617,8 @@ export function CocreatePage() {
       )
       setDraft('')
       setGoal(text)
-      await adoptRun(started)
+      // 新会话 / 重新规划都是全新 session：事件整体重置，不合并旧会话的 trace
+      await adoptRun(started, true)
       await refreshSessions()
     } catch (e) {
       setError(errorText(e))
@@ -639,7 +656,7 @@ export function CocreatePage() {
         })
         setDraft('')
         await adoptRun(next)
-      } else if (resumable) {
+      } else if (canContinue) {
         const { run: next } = await post<{ run: AgentRun }>(`/agent/sessions/${meta.id}/messages`, {
           text,
         })
@@ -675,7 +692,7 @@ export function CocreatePage() {
       if (run !== null && ended) {
         const { run: next } = await post<{ run: AgentRun }>(`/agent/runs/${run.id}/resume`)
         await adoptRun(next)
-      } else if (meta !== null && resumable) {
+      } else if (meta !== null && canContinue) {
         const { run: next } = await post<{ run: AgentRun }>(`/agent/sessions/${meta.id}/messages`, {
           text: RESUME_TEXT,
         })
@@ -716,6 +733,10 @@ export function CocreatePage() {
   }
 
   const renameSession = async (id: string, title: string): Promise<void> => {
+    if (id.startsWith('lg_')) {
+      setError('历史会话只读：只能查看，不能改名。')
+      return
+    }
     const trimmed = title.trim()
     if (trimmed.length === 0) return
     try {
@@ -728,10 +749,16 @@ export function CocreatePage() {
       if (meta?.id === id) setMeta(next)
     } catch (e) {
       setError(errorText(e))
+      // 输入框已经乐观改了名：存盘失败必须退回去，否则界面上「看着改了实际没存」
+      setMeta((m) => (m === null ? m : { ...m, title: savedTitle.current }))
     }
   }
 
   const deleteSession = async (id: string): Promise<void> => {
+    if (id.startsWith('lg_')) {
+      setError('历史会话只读：只能查看，不能删除。')
+      return
+    }
     if (!window.confirm('删除这个会话？主笔、工具、子智能体的时间线都会消失（书里的文件不动）。')) {
       return
     }
@@ -773,7 +800,7 @@ export function CocreatePage() {
     seen.current = new Set()
   }
 
-  const canSend = draft.trim().length > 0 && !busy && (meta === null || live || resumable)
+  const canSend = draft.trim().length > 0 && !busy && (meta === null || live || canContinue)
   const sendLabel =
     meta === null
       ? '开始共创'
@@ -822,16 +849,21 @@ export function CocreatePage() {
           }
           className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-neutral-900 placeholder:text-neutral-400 focus:outline-none disabled:text-neutral-400"
         />
-        <span
-          className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${STATUS_TONE[displayStatus]}`}
-        >
-          {STATUS_LABEL[displayStatus]}
-        </span>
-        <span className="shrink-0 text-[11px] text-neutral-500">
-          步数 {stepCount}
-          {run === null ? '' : `/${run.budget.maxSteps}`} · 子智能体 {subagentCalls} ·{' '}
-          {tokenCount.toLocaleString()} tokens
-        </span>
+        {/* 空态（还没选会话）不渲染状态徽标：兜底成「已完成」会误导 */}
+        {meta === null ? null : (
+          <>
+            <span
+              className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${STATUS_TONE[displayStatus]}`}
+            >
+              {STATUS_LABEL[displayStatus]}
+            </span>
+            <span className="shrink-0 text-[11px] text-neutral-500">
+              步数 {stepCount}
+              {run === null ? '' : `/${run.budget.maxSteps}`} · 子智能体 {subagentCalls} ·{' '}
+              {tokenCount.toLocaleString()} tokens
+            </span>
+          </>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {meta !== null && (
             <button

@@ -12,7 +12,7 @@ import {
   writePlanState,
 } from '../storage/plans.js'
 import { loadMessageSnapshot, saveMessageSnapshot } from './history.js'
-import { readSessionMeta, writeSessionMeta } from './session-store.js'
+import { readSessionMeta, removeSession, writeSessionMeta } from './session-store.js'
 
 interface FakeEvent {
   type: string
@@ -905,6 +905,23 @@ describe('会话绑定', () => {
     })
     lastAgent().done()
     stopAgentRun(second.id)
+  })
+
+  it('★ 会话在本 run 跑完前被删：收尾落盘不再把它复活', async () => {
+    const started = await startAgentRun('删了别回来', { mode: 'new' })
+    const meta = await readSessionMeta(h.root, started.sessionId)
+    expect(meta).not.toBeNull()
+    // 删会话要求先收尾（服务端不允许删 running），直接改写 meta 模拟作者已停手
+    if (meta !== null)
+      await writeSessionMeta(h.root, { ...meta, status: 'stopped', resumable: true })
+    await removeSession(h.root, started.sessionId)
+    expect(await readSessionMeta(h.root, started.sessionId)).toBeNull()
+
+    // 收尾会再落一次盘：不能因为 prev === null 就重建一个 journal 已被删的空会话
+    lastAgent().done()
+    await new Promise((r) => setTimeout(r, 60))
+    expect(await readSessionMeta(h.root, started.sessionId)).toBeNull()
+    stopAgentRun(started.id)
   })
 
   it('★ 同一会话两次运行会累积 runIds（旧 run 不覆盖新状态的前提）', async () => {

@@ -27,15 +27,21 @@
    避免菜单用绝对定位盖住徽标。
 8. `Tabs.tsx` 的 `underline` 主题：触发器由 `w-full`（平分宽度）改为 `shrink-0 whitespace-nowrap`，
    列表加 `overflow-x-auto`。详情栏常驻 480px，平分宽度会把标签截成「In/... / Attr...」。
+9. `SpanCard/SpanCardTimeline.tsx`：时间轴条加 `minWidth: 2`（px）。上游按比例算宽度，
+   1ms 的瞬时事件在几分钟的会话里宽度≈0，不设下限等于看不见（不改变 span 的真实时长）。
+10. `TraceList/TraceListItem.tsx`：`handleKeyDown` 首行加 `if (e.target !== e.currentTarget) return`。
+    行级按钮吞掉 Enter/Space 会把 `…` 菜单、KPI 链接的默认激活一起吃掉，键盘用户打不开菜单。
+11. `TraceList/TraceListItemMenu.tsx`：`above` 从「按索引预判」改为打开时量 `getBoundingClientRect`
+    与最近滚动容器的底边——列表会滚，可视区底行往往不是数据最后一行，按索引判断会被 overflow 裁切。
 
 不在本目录、但属于同一套适配的改动：
 
-9. `apps/web/src/index.css` 用 `@theme inline` 把 83 个 `--agentprism-*` 映射成
+12. `apps/web/src/index.css` 用 `@theme inline` 把 83 个 `--agentprism-*` 映射成
    `--color-agentprism-*`（与 `theme/index.ts` 的 `AGENT_PRISM_TOKENS` 一一对应）。
-10. `apps/web/src/index.css` 用同特异度的 `:root` **覆盖** `theme.css` 的浅/深两套值，
+13. `apps/web/src/index.css` 用同特异度的 `:root` **覆盖** `theme.css` 的浅/深两套值，
    固定为浅色（应用没有暗色模式），并把表面/文字/边框/品牌色对齐到项目的 `neutral-*`
    阶梯（spec §8.3）。`theme.css` 本身未改。
-11. `apps/web/src/index.css` 用 `@custom-variant dark (&:where(.dark, .dark *))` 把
+14. `apps/web/src/index.css` 用 `@custom-variant dark (&:where(.dark, .dark *))` 把
     `dark:` 改为 class 驱动，否则组件里的 `dark:` 类会跟着系统深色偏好乱亮。
 
 ## 维护约定
@@ -43,8 +49,8 @@
 - 不跟随上游自动升级；需要升级时重新 degit，并按上面清单重放改动。
 - 本目录整体排除在 Biome 之外（上游风格：双引号、有分号），但**必须**通过 `tsc`
   —— 不要在 `tsconfig` 里 exclude 它。
-- 排除的代价：第 5–8 条手改的 `DetailsView.tsx` / `TraceList*.tsx` / `Tabs.tsx` 同样没有 lint
-  兜底（`noExplicitAny`、hooks 规则都不生效）。改这几个文件时靠人工 review + `tsc`。
+- 排除的代价：第 5–11 条手改的 `DetailsView.tsx` / `TraceList*.tsx` / `Tabs.tsx` / `SpanCardTimeline.tsx`
+  同样没有 lint 兜底（`noExplicitAny`、hooks 规则都不生效）。改这几个文件时靠人工 review + `tsc`。
 - 新增 tab / 回调时优先改本目录的 `DetailsView`、`TraceList`，不要在外层包一层再转发。
 - inkloom 自己的适配层在 `apps/web/src/agent-trace/`（`to-trace.ts` 事件→span、
   `SessionList.tsx` 收窄 `TraceList`），不要去改上游的映射逻辑。

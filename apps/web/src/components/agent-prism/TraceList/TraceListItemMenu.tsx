@@ -9,12 +9,29 @@ import type { ReadonlyProps } from "../ReadonlyProps";
 import { IconButton } from "../IconButton";
 
 type TraceListItemMenuProps = {
-  /** Render the dropdown above the trigger (use for the last row of a scroll container) */
+  /** Hint to render the dropdown above the trigger regardless of space */
   above?: boolean | undefined;
   onDelete?: ((trace: TraceRecord) => void) | undefined;
   onRename?: ((trace: TraceRecord) => void) | undefined;
   trace: TraceRecord;
 };
+
+/** 菜单面板高度（两项 + 内边距）＋一点余量，用于判断要不要往上弹 */
+const MENU_HEIGHT = 92;
+
+/** 触发按钮所在的滚动容器在视口里的底边（没有滚动容器就用视口底边） */
+function visibleBottom(trigger: HTMLElement): number {
+  let bottom = window.innerHeight;
+  let node: HTMLElement | null = trigger.parentElement;
+  while (node !== null) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") {
+      return Math.min(bottom, node.getBoundingClientRect().bottom);
+    }
+    node = node.parentElement;
+  }
+  return bottom;
+}
 
 /**
  * Per-row "..." actions. Deliberately dependency-free: a plain trigger button
@@ -31,6 +48,9 @@ export const TraceListItemMenu = ({
   trace,
 }: ReadonlyProps<TraceListItemMenuProps>): ReactElement | null => {
   const [open, setOpen] = useState(false);
+  // ★ 不能按「数据最后一行」预判方向：列表会滚，可视区底部那一行往往不是最后一行，
+  //   菜单会被 overflow 容器裁掉。打开时量一下真实位置再决定往上还是往下。
+  const [openUp, setOpenUp] = useState(above);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -81,6 +101,14 @@ export const TraceListItemMenu = ({
         aria-expanded={open}
         aria-label={`更多操作：${trace.name}`}
         onClick={() => {
+          if (!open) {
+            const trigger = triggerRef.current;
+            setOpenUp(
+              trigger === null
+                ? above
+                : trigger.getBoundingClientRect().bottom + MENU_HEIGHT > visibleBottom(trigger),
+            );
+          }
           setOpen((value) => !value);
         }}
         ref={triggerRef}
@@ -93,7 +121,7 @@ export const TraceListItemMenu = ({
       {open ? (
         <div
           className={`border-agentprism-border bg-agentprism-background absolute right-0 z-10 w-28 overflow-hidden rounded-md border shadow-md ${
-            above ? "bottom-full mb-1" : "top-full mt-1"
+            openUp ? "bottom-full mb-1" : "top-full mt-1"
           }`}
         >
           {onRename === undefined ? null : (
