@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { InkloomError } from '@inkloom/shared'
 import { Hono } from 'hono'
 
@@ -48,6 +48,11 @@ const DEFAULTS: Record<string, string> = {
 }
 
 function envFile(): string {
+  // ★ 桌面版把 .env 放在用户目录（壳层设 INKLOOM_ENV_FILE）：装到 Program Files
+  //   样式的位置后，cwd 里的 .env 会在升级/卸载时跟着走，key 就丢了。
+  //   便携版与开发版不设这个变量，仍是老行为：cwd/.env。
+  const custom = (process.env['INKLOOM_ENV_FILE'] ?? '').trim()
+  if (custom.length > 0) return custom
   // 便携版 cwd 就是包根，开发时是仓库根——两者 .env 都在 cwd
   return join(process.cwd(), '.env')
 }
@@ -150,6 +155,7 @@ settings.put('/settings', async (c) => {
   }
 
   const text = `${lines.filter((l, i) => !(i === lines.length - 1 && l.trim() === '')).join('\n')}\n`
+  await mkdir(dirname(file), { recursive: true })
   await writeFile(file, text, 'utf8')
 
   return c.json({
